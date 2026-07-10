@@ -616,7 +616,10 @@
   }
   function releaseGreenPhages(c) {
     const n = Math.floor(rand(CFG.phage.burst[0], CFG.phage.burst[1] + 1)), host = upgradeTier(c); // progeny track this host's adaptation tier
-    for (let i = 0; i < n && phages.length < CFG.phage.maxCount; i++) phages.push(makePhage("green", c.x, c.y, host));
+    for (let i = 0; i < n && phages.length < CFG.phage.maxCount; i++) {
+      const a = rand(0, 6.28), d = rand(5, 13); // scatter a few px so virions don't spawn stacked on each other
+      phages.push(makePhage("green", c.x + Math.cos(a)*d, c.y + Math.sin(a)*d, host));
+    }
     burst(c.x, c.y, "#7CFC5A", 12);
     if (c.controlled) Audio.play("hit", 0.7);
   }
