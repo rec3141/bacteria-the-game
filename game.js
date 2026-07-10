@@ -1190,8 +1190,7 @@
     const MX = pc ? (ex) => cx0 + dx(ex, pc.x)*kx : (ex) => mx + ex*kx;
     const MY = pc ? (ey) => cy0 + dy(ey, pc.y)*ky : (ey) => my + ey*ky;
     ctx.beginPath(); ctx.rect(mx, my, mw, mh); ctx.clip(); // keep marks inside the frame
-    for (const p of substrates) { ctx.fillStyle = p.tint; const r = Math.max(2, p.R*kx);
-      ctx.beginPath(); ctx.arc(MX(p.x), MY(p.y), r, 0, 6.28); ctx.fill(); }
+    // particles are omitted — the map shows only the living things (you, colony, predators, gold phage)
     // colony dots coloured by generation (same palette as the chart); cysts hidden (too many, too cluttered)
     for (const c of cells) if (!c.controlled && !c.cyst) {
       ctx.fillStyle = levelColor(ecoMask(c), upgradeTier(c));
