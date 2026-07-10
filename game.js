@@ -107,7 +107,7 @@
     stage: document.getElementById("stage"), game: document.getElementById("game"),
     touch: document.getElementById("touch"), stickZone: document.getElementById("stickZone"),
     stickBase: document.getElementById("stickBase"), stickKnob: document.getElementById("stickKnob"),
-    tEnz: document.getElementById("tEnz"), tSwap: document.getElementById("tSwap"),
+    tEnz: document.getElementById("tEnz"),
     tLin: document.getElementById("tLin"), tPause: document.getElementById("tPause"),
     overTitle: document.getElementById("overTitle"), overMsg: document.getElementById("overMsg"),
     startBtn: document.getElementById("startBtn"), restartBtn: document.getElementById("restartBtn"),
@@ -152,7 +152,7 @@
     const files = { eat: "assets/sounds/sound_40.mp3", enzyme: "assets/sounds/sound_145.mp3",
       divide: "assets/sounds/sound_18.mp3", death: "assets/sounds/sound_42.mp3",
       hit: "assets/sounds/sound_146.mp3", spawn: "assets/sounds/sound_37.mp3" };
-    const SFX_MASTER = 0.4;   // effects were much louder than the DNA music — tame them all at one bus
+    const SFX_MASTER = 0.05;  // ~10% of the music bus (0.3) — effects sit well under the ambient track
     let actx = null, sfxBus = null; const buffers = {};
     async function init() {
       if (actx) { if (actx.state === "suspended") actx.resume(); return; }
@@ -283,6 +283,8 @@
   // --------------------------------------------------------------- game state
   let state = null, cells = [], substrates = [], enzymes = [], toxins = [], nutrients = [],
       predators = [], phages = [], particles = [], flagPhase = 0, cam = { x: 0, y: 0 }, paused = false;
+  let ZOOM = 1; // world magnification — bumped on touch devices so cells aren't tiny on a small screen
+  let chartLog = false; // generation-history charts: log vs. linear y-axis (toggled by clicking a chart)
 
   function cellHalfLen(c) {
     return clamp(CFG.cell.baseHalf + Math.max(0, c.energy - CFG.cell.lenBaseEnergy)*CFG.cell.elongK,
@@ -511,6 +513,14 @@
     const cur = owned.indexOf(state.activeEnzyme);
     state.activeEnzyme = owned[(cur + 1) % owned.length];
     Audio.play("eat", 0.3);
+  }
+  // directly load a specific deployable by tapping its gene (id 0-2 enzymes, 3 antibiotic); ignored if not owned
+  function selectEnzyme(id) {
+    if (!state || !state.running) return;
+    const c = controlledCell(); if (!c) return;
+    if (!ownedDeployables(c).includes(id)) return;
+    if (state.activeEnzyme === id) return;
+    state.activeEnzyme = id; Audio.play("eat", 0.3);
   }
   // hand control to a DIFFERENT lineage — cycle through the distinct generations (ecotype+tier) present,
   // so you can shepherd several populations at different adaptation tiers (diversity = virus resilience).
@@ -786,6 +796,17 @@
         let res = -1;
         for (let i = 0; i < 3; i++) if (c.enzLvl[i] > 0 && near.orgByType[i] > 0 && (res < 0 || near.orgByType[i] > near.orgByType[res])) res = i;
         if (res >= 0) releaseEnzyme(c, res);
+      }
+    }
+    // autonomous chemical defence: a cell that evolved the antibiotic zaps protists that close in,
+    // so a lineage with the toxin can hold off grazers on its own instead of being overrun.
+    if (c.antibiotic > 0 && c.energy > CFG.cell.antibioticCost*2.5) {
+      c.toxCd = (c.toxCd || 0) - dt;
+      if (c.toxCd <= 0) {
+        const maxR = CFG.toxin.maxRadius * (1 + (c.antibiotic-1)*CFG.toxin.radiusPer), rr = (maxR + 22)**2;
+        let threatened = false;
+        for (const pr of predators) if (toroDist2(c.x, c.y, pr.x, pr.y) <= rr) { threatened = true; break; }
+        if (threatened) { releaseAntibiotic(c); c.toxCd = rand(1.6, 2.6); } else c.toxCd = 0.5; // else re-check shortly
       }
     }
   }
@@ -1064,7 +1085,9 @@
 
   function draw() {
     ctx.clearRect(0, 0, VIEW_W, VIEW_H);
-    drawWater();
+    drawWater(); // ambient background stays unscaled so the corners never go empty
+    ctx.save();
+    if (ZOOM !== 1) { ctx.translate(VIEW_W/2, VIEW_H/2); ctx.scale(ZOOM, ZOOM); ctx.translate(-VIEW_W/2, -VIEW_H/2); }
     for (const p of substrates) drawSubstrate(p);
     for (const z of enzymes) drawEnzyme(z);
     for (const z of toxins) drawToxin(z);
@@ -1073,7 +1096,8 @@
     for (const ph of phages) drawPhage(ph);
     for (const pr of predators) drawPredator(pr);
     for (const c of cells) drawCell(c);
-    drawMinimap();
+    ctx.restore();
+    drawMinimap(); // HUD-space, never zoomed
   }
 
   const waterDots = Array.from({ length: 70 }, () => ({ x: Math.random()*VIEW_W, y: Math.random()*VIEW_H, r: Math.random()*2 + 0.5 }));
@@ -1295,7 +1319,7 @@
     for (let m = 0; m < 8; m++) if (eco[m] > 0) html += `<span class="ecoq">${ecoLabel(m)} <b>${eco[m]}</b></span>`;
     html += `<span><i class="eco-line" style="border-color:${PROTIST_COLOR}"></i>protists <b>${preds}</b></span>`;
     html += `<span><i class="eco-line" style="border-color:${VIRUS_COLOR}"></i>viruses <b>${green || 0}</b></span>`;
-    html += `<span id="chartTitle">ecotype abundance vs. time</span>`;
+    html += `<span id="chartTitle">ecotype abundance vs. time · click for ${chartLog ? "linear" : "log"}</span>`;
     el.legend.innerHTML = html;
   }
   function ecoCounts() { const e = [0,0,0,0,0,0,0,0]; for (const c of cells) e[ecoMask(c)]++; return e; }
@@ -1339,11 +1363,14 @@
     let maxY = 10, vMax = 10; // viruses get their OWN hidden axis (they hit the ~220 cap and would squash the cells)
     for (const s of hist) { let tot = 0; for (let i = 0; i < 8; i++) tot += s.eco[i]; if (tot > maxY) maxY = tot; if (s.p > maxY) maxY = s.p; if ((s.v || 0) > vMax) vMax = s.v; }
     const n = denom || Math.max(hist.length, 2), pad = H < 70 ? 8 : 14;
-    const xAt = (i) => i/(n-1)*W, yAt = (v) => H - (v/maxY)*(H-pad) - 2;
+    const xAt = (i) => i/(n-1)*W;
+    // log axis: log10(v+1) so 0 still sits on the baseline and a booming colony doesn't flatten everything else
+    const lgMax = Math.log10(maxY + 1) || 1, lgVMax = Math.log10(vMax + 1) || 1;
+    const yAt = chartLog ? (v) => H - (Math.log10(v + 1)/lgMax)*(H-pad) - 2 : (v) => H - (v/maxY)*(H-pad) - 2;
     g.strokeStyle = "rgba(255,255,255,0.06)"; g.lineWidth = 1;
     for (let k = 1; k <= 3; k++) { const y = H - k/4*(H-pad) - 2; g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }
     g.fillStyle = "rgba(215,245,238,0.5)"; g.font = "10px 'Trebuchet MS', sans-serif"; g.textAlign = "left";
-    g.fillText(String(Math.round(maxY)), 3, 10); g.fillText("0", 3, H - 3);
+    g.fillText(String(Math.round(maxY)) + (chartLog ? " ·log" : ""), 3, 10); g.fillText("0", 3, H - 3);
     if (hist.length > 1) {
       const last = hist.length - 1;
       // one FLAT-coloured polygon per GENERATION bucket (ecotype+tier), stacked from the baseline.
@@ -1364,7 +1391,7 @@
       for (let i = 0; i < hist.length; i++) { const x = xAt(i), y = yAt(hist[i].p); i ? g.lineTo(x, y) : g.moveTo(x, y); }
       g.stroke();
       // virus (green-phage) count — dashed line on its OWN hidden axis (scaled to vMax, not the cell axis)
-      const yAtV = (v) => H - (v/vMax)*(H-pad) - 2;
+      const yAtV = chartLog ? (v) => H - (Math.log10(v + 1)/lgVMax)*(H-pad) - 2 : (v) => H - (v/vMax)*(H-pad) - 2;
       g.strokeStyle = VIRUS_COLOR; g.lineWidth = H < 70 ? 1.1 : 1.5; g.setLineDash([3, 3]); g.beginPath();
       for (let i = 0; i < hist.length; i++) { const x = xAt(i), y = yAtV(hist[i].v || 0); i ? g.lineTo(x, y) : g.moveTo(x, y); }
       g.stroke(); g.setLineDash([]);
@@ -1517,8 +1544,10 @@
   function currentRunLine() {
     return { id: -1, date: -1, name: playerName, score: Math.round(state.score), gen: state.gen, dur: Math.round(state.elapsed), hist: state.fullHist, upgrades: state.upgrades };
   }
+  let _detailRec = null, _detailRank = "";
   function openScoreDetail(rankHtml, rec) {
     if (!el.scoreDetail || !el.detailChart) return;
+    _detailRec = rec; _detailRank = rankHtml; // remembered so the log/linear toggle can redraw it
     annotateRun(el.detailChart.getContext("2d"), el.detailChart.width, el.detailChart.height, rec.hist || [], rec.upgrades, rec.dur);
     if (el.detailSubChart) annotateSub(el.detailSubChart.getContext("2d"), el.detailSubChart.width, el.detailSubChart.height, rec.hist || [], rec.upgrades, rec.dur);
     if (el.detailStats) el.detailStats.innerHTML = runStatsHtml(rec.hist || [], rec.upgrades);
@@ -1649,8 +1678,9 @@
   if (el.nameInput) el.nameInput.addEventListener("input", (e) => setPlayerName(e.target.value));
 
   // --------------------------------------------------------- touch controls
-  // A floating thumbstick (left) drives movement; the right-hand pad fires the
-  // same actions as Space / Tab / Shift / Esc so the game is fully playable by touch.
+  // A visible fixed thumbstick (bottom-left) drives movement; the right-hand
+  // buttons + the tappable genome bar cover every action, so the game is fully
+  // playable by touch. Uses Touch events for the widest device support.
   let _stickId = null;
   function releaseStick() {
     _stickId = null; touchVec.active = false; touchVec.x = touchVec.y = 0;
@@ -1659,40 +1689,53 @@
   }
   function setupTouch() {
     const zone = el.stickZone, base = el.stickBase, knob = el.stickKnob;
-    const MAXR = 46, DEAD = 7; // knob travel / dead-zone in CSS px
+    const MAXR = 48, DEAD = 8; // knob travel / dead-zone in CSS px
     if (zone && base && knob) {
-      const place = (e) => {
-        const r = el.stage.getBoundingClientRect();
-        base.style.left = (e.clientX - r.left) + "px";
-        base.style.top = (e.clientY - r.top) + "px";
-      };
-      const track = (e) => {
-        const r = el.stage.getBoundingClientRect(), cx = r.left + parseFloat(base.style.left), cy = r.top + parseFloat(base.style.top);
-        let dxp = e.clientX - cx, dyp = e.clientY - cy;
+      const track = (t) => {
+        const r = base.getBoundingClientRect(), cx = r.left + r.width/2, cy = r.top + r.height/2;
+        let dxp = t.clientX - cx, dyp = t.clientY - cy;
         const d = Math.hypot(dxp, dyp), cl = d > MAXR ? MAXR / d : 1;
         knob.style.transform = `translate(calc(-50% + ${dxp*cl}px), calc(-50% + ${dyp*cl}px))`;
         touchVec.active = true;
         if (d > DEAD) { touchVec.x = dxp/d; touchVec.y = dyp/d; } else { touchVec.x = touchVec.y = 0; } // centre = tumble
       };
-      zone.addEventListener("pointerdown", (e) => {
+      const find = (list) => { for (const t of list) if (t.identifier === _stickId) return t; return null; };
+      zone.addEventListener("touchstart", (e) => {
         if (_stickId !== null) return;
-        _stickId = e.pointerId; try { zone.setPointerCapture(_stickId); } catch (_) {}
-        place(e); base.classList.add("on"); track(e); e.preventDefault();
-      });
-      zone.addEventListener("pointermove", (e) => { if (e.pointerId === _stickId) { track(e); e.preventDefault(); } });
-      const end = (e) => { if (e.pointerId === _stickId) releaseStick(); };
-      zone.addEventListener("pointerup", end);
-      zone.addEventListener("pointercancel", end);
+        _stickId = e.changedTouches[0].identifier; base.classList.add("on"); track(e.changedTouches[0]); e.preventDefault();
+      }, { passive: false });
+      zone.addEventListener("touchmove", (e) => { const t = find(e.changedTouches); if (t) { track(t); e.preventDefault(); } }, { passive: false });
+      const end = (e) => { if (find(e.changedTouches)) releaseStick(); };
+      zone.addEventListener("touchend", end); zone.addEventListener("touchcancel", end);
     }
-    const gated = (fn) => () => { if (!paused && !helpOpen && !sciOpen && state && state.running) fn(); };
-    const tap = (elm, fn) => elm && elm.addEventListener("pointerdown", (e) => { e.preventDefault(); fn(); });
+    const gated = (fn) => (e) => { if (e) e.preventDefault(); if (!paused && !helpOpen && !sciOpen && state && state.running) fn(); };
+    const tap = (elm, fn) => elm && elm.addEventListener("click", fn);
     tap(el.tEnz, gated(playerEnzyme));
-    tap(el.tSwap, gated(cycleEnzyme));
     tap(el.tLin, gated(switchControl));
     tap(el.tPause, () => togglePause());
+    // tap a gene on the genome bar to load that enzyme/antibiotic (works on desktop too)
+    el.enz.forEach((g, i) => g && g.addEventListener("click", () => selectEnzyme(i)));
+    if (el.enzTox) el.enzTox.addEventListener("click", () => selectEnzyme(3));
+    setupChartSwipe();
   }
+  // swipe up or down anywhere on the chart panel to fold it away during play (mobile)
+  function setupChartSwipe() {
+    const cw = el.chartwrap; if (!cw) return;
+    let y0 = null;
+    cw.addEventListener("touchstart", (e) => { y0 = e.touches[0].clientY; }, { passive: true });
+    cw.addEventListener("touchend", (e) => {
+      if (y0 == null) return;
+      if (Math.abs(e.changedTouches[0].clientY - y0) > 26) cw.classList.toggle("collapsed");
+      y0 = null;
+    }, { passive: true });
+  }
+  // click any generation-history chart to flip its y-axis between linear and log
+  if (el.chart) el.chart.addEventListener("click", () => { chartLog = !chartLog; }); // live chart redraws each frame
+  if (el.analysisChart) el.analysisChart.addEventListener("click", () => { chartLog = !chartLog; drawAnalysis(); });
+  if (el.detailChart) el.detailChart.addEventListener("click", () => { chartLog = !chartLog; if (_detailRec) openScoreDetail(_detailRank, _detailRec); });
+
   const coarse = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
-  if (coarse || "ontouchstart" in window) document.body.classList.add("touch");
+  if (coarse || "ontouchstart" in window) { document.body.classList.add("touch"); ZOOM = 1.35; }
   setupTouch();
 
   // temperature & salinity are held neutral for now (reserved for future levels:

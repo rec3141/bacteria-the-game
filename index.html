@@ -247,30 +247,40 @@
   #sciBody .game b { color: var(--ink); }
   #sciBody hr { border: none; border-top: 1px solid rgba(255,255,255,.08); margin: 18px 0; }
 
+  /* Tap any owned gene on the genome bar to load that enzyme/antibiotic (works with a mouse too) */
+  .gene { pointer-events: auto; }
+  .gene.owned { cursor: pointer; }
+
   /* On-screen touch controls (mobile) — only shown when the device has a coarse pointer */
   #touch { position: absolute; inset: 0; display: none; pointer-events: none; z-index: 4;
-    -webkit-tap-highlight-color: transparent; }
+    -webkit-tap-highlight-color: transparent; touch-action: none; }
   body.touch #touch { display: block; }
   #touch.hidden { display: none !important; }
-  #stickZone { position: absolute; left: 0; bottom: 0; width: 55%; height: 66%;
+  #stickZone { position: absolute; left: 12px; bottom: 78px; width: 124px; height: 124px;
     pointer-events: auto; touch-action: none; }
-  #stickBase { position: absolute; width: 96px; height: 96px; border-radius: 50%;
-    transform: translate(-50%, -50%); pointer-events: none; opacity: 0; transition: opacity .1s;
-    background: rgba(255,255,255,.05); border: 1.5px solid rgba(255,255,255,.2); }
-  #stickBase.on { opacity: 1; }
-  #stickKnob { position: absolute; left: 50%; top: 50%; width: 46px; height: 46px; border-radius: 50%;
-    transform: translate(-50%, -50%); background: rgba(87,224,192,.4); border: 1.5px solid var(--accent);
+  #stickBase { position: absolute; inset: 0; border-radius: 50%; opacity: .5; transition: opacity .1s;
+    background: rgba(255,255,255,.05); border: 1.5px solid rgba(255,255,255,.22); }
+  #stickBase.on { opacity: .9; }
+  #stickKnob { position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; border-radius: 50%;
+    transform: translate(-50%, -50%); background: rgba(87,224,192,.42); border: 1.5px solid var(--accent);
     box-shadow: 0 0 14px rgba(87,224,192,.4); }
-  #tbtns { position: absolute; right: 16px; bottom: 20px; display: flex; flex-direction: column-reverse;
+  #tbtns { position: absolute; right: 16px; bottom: 78px; display: flex; flex-direction: column-reverse;
     align-items: center; gap: 12px; pointer-events: none; }
   .tbtn { pointer-events: auto; touch-action: none; user-select: none; -webkit-user-select: none;
     background: rgba(9,28,34,.74); color: var(--ink); border: 1.5px solid rgba(87,224,192,.55);
-    border-radius: 50%; width: 58px; height: 58px; padding: 0; font: inherit; font-size: 11px; font-weight: bold;
+    border-radius: 50%; width: 62px; height: 62px; padding: 0; font: inherit; font-size: 11px; font-weight: bold;
     display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 12px rgba(0,0,0,.45); }
   .tbtn:active { background: rgba(87,224,192,.3); transform: scale(.93); box-shadow: 0 1px 6px rgba(0,0,0,.45); }
-  .tbtn.big { width: 84px; height: 84px; font-size: 13px; border-color: var(--accent);
+  .tbtn.big { width: 88px; height: 88px; font-size: 13px; border-color: var(--accent);
     color: var(--accent); border-width: 2px; }
-  .tbtn.pause { position: absolute; top: 12px; right: 12px; width: 42px; height: 42px; font-size: 13px; }
+  .tbtn.pause { position: absolute; top: 12px; right: 12px; bottom: auto; width: 44px; height: 44px; font-size: 13px; }
+
+  /* fold the live charts away with a swipe during play */
+  #chartwrap.collapsed > #chartlegend, #chartwrap.collapsed > #chart,
+  #chartwrap.collapsed > #subchartlegend, #chartwrap.collapsed > #subchart { display: none; }
+  #chartwrap.collapsed { padding: 7px 12px; }
+  #chartwrap.collapsed::before { content: "▾ charts hidden — swipe to show"; display: block;
+    text-align: center; font-size: 11px; opacity: .55; }
 
   .touchonly { display: none; }
   body.touch .touchonly { display: list-item; }
@@ -280,9 +290,21 @@
     #stage { width: min(800px, 100%, 86vh); } /* also bound by height so landscape doesn't overflow */
     /* Menus break out of the short game stage to fill the viewport, so their
        content fits the tall phone screen instead of scrolling in a tiny box. */
-    .screen { position: fixed; z-index: 50; }
+    .screen { position: fixed; z-index: 50; gap: 10px; padding: 14px; }
     #help, #science { z-index: 60; } /* stay above the screen they were opened from */
+    .screen h1 { font-size: 30px; }
+    #title .lede { font-size: 13px; line-height: 1.45; }
+    #analysisChart { height: 128px; } #analysisSubChart { height: 50px; }
+    #analysisWrap { padding: 6px 8px; }
+    #helpBody, #sciBody, #scoresList { max-height: 62vh; }
   }
+  /* On a phone the DNA/genome bar drops to the bottom, in easy thumb reach, and its
+     genes double as enzyme-select buttons; the decorative helix is dropped for clarity. */
+  body.touch #hud .genome-row { position: absolute; left: 6px; right: 6px; bottom: 6px; margin: 0; justify-content: center; }
+  body.touch .genome { justify-content: center; flex-wrap: wrap; gap: 6px; padding: 7px 8px;
+    background: rgba(6,22,27,.68); border: 1px solid rgba(255,255,255,.1); border-radius: 12px; }
+  body.touch #helix { display: none; }
+  body.touch .gene { font-size: 12px; padding: 5px 11px; }
 </style>
 </head>
 <body>
@@ -311,8 +333,7 @@
     <div id="touch" class="hidden">
       <div id="stickZone"><div id="stickBase"><div id="stickKnob"></div></div></div>
       <div id="tbtns">
-        <button id="tEnz" class="tbtn big" aria-label="Release enzyme">enzyme</button>
-        <button id="tSwap" class="tbtn" aria-label="Switch enzyme">swap</button>
+        <button id="tEnz" class="tbtn big" aria-label="Release enzyme">release</button>
         <button id="tLin" class="tbtn" aria-label="Switch lineage">lineage</button>
       </div>
       <button id="tPause" class="tbtn pause" aria-label="Pause">❚❚</button>
@@ -341,7 +362,7 @@
             <li><kbd>Tab</kbd> — switch which enzyme/antibiotic is loaded &nbsp;·&nbsp; <kbd>M</kbd> — toggle music</li>
             <li><kbd>Shift</kbd> — <b>switch lineage</b>: hand control to another of your lineages</li>
             <li><kbd>Esc</kbd> — pause &amp; high scores &nbsp;·&nbsp; <b>Help</b> button — this guide</li>
-            <li class="touchonly"><b>On a phone:</b> drag the left <b>thumbstick</b> to swim; tap <b>enzyme</b> / <b>swap</b> / <b>lineage</b> on the right; <b>❚❚</b> (top-right) to pause.</li>
+            <li class="touchonly"><b>On a phone:</b> drag the left <b>thumbstick</b> to swim; tap <b>release</b> / <b>lineage</b> on the right and <b>❚❚</b> to pause; tap a gene on the bottom <b>genome bar</b> to load that enzyme; swipe the chart to fold it away.</li>
           </ul>
         </section>
         <section>
@@ -413,6 +434,9 @@
         <section><h2><span class="n">14</span>Many ways to make a living</h2>
           <p>Because different genes suit different conditions, a species splits into varieties adapted to different niches — <a class="wiki" href="https://en.wikipedia.org/wiki/Ecotype">ecotypes</a>, each filling its own <a class="wiki" href="https://en.wikipedia.org/wiki/Ecological_niche">niche</a>. This diversity makes a community resilient: knock one type back and another takes its place.</p>
           <p class="game">The coloured bands on the chart are your <b>ecotypes and generations</b> over time — you watch evolution happen, lineage by lineage, as colours rise and fall.</p></section>
+        <section><h2><span class="n">15</span>The music is real DNA</h2>
+          <p>The ambient soundtrack isn't composed — it's <a class="wiki" href="https://en.wikipedia.org/wiki/Sonification">sonified</a> from an actual gene. Each letter of a real <a class="wiki" href="https://en.wikipedia.org/wiki/16S_ribosomal_RNA">16S ribosomal RNA</a> sequence from <a class="wiki" href="https://en.wikipedia.org/wiki/Escherichia_coli"><em>E. coli</em></a> — the very gene biologists use to identify and classify bacteria — is read base by base (A, C, G, T) and mapped to notes in a minor scale, so you are literally listening to a bacterium's DNA.</p>
+          <p class="game">Press <b>M</b> to toggle it. The melody you hear is one pass through the 16S gene; the low drone and echo are just for mood.</p></section>
         <hr>
         <p style="color:var(--muted);font-size:13px;">The real ocean is far messier and more wonderful than any game — but if this made a bacterium, a virus, or the microbial loop feel a little more alive, that's the point. Now go evolve something.</p>
       </div>
