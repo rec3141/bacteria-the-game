@@ -713,7 +713,10 @@
     // encystment: a starving AUTONOMOUS cell forms a resistant cyst (the player never does)
     if (c.controlled) c.cyst = false;
     else if (c.cyst && c.energy >= CFG.cell.cystWake) c.cyst = false;
-    else if (!c.cyst && c.energy <= CFG.cell.cystBelow) c.cyst = true;
+    else if (!c.cyst && c.energy <= CFG.cell.cystBelow) {
+      if (c.infectedGreen) { onCellDeath(c, "lysis"); return; } // an infected cell can't wait it out in a cyst — starvation bursts it, releasing virions
+      c.cyst = true;
+    }
 
     if (c.controlled) {
       const a = axis();
@@ -1644,7 +1647,7 @@
     drawHelix(c); // DNA double-helix backbone under the genome, drawn in the current lineage's colour
     if (el.tLin && c) el.tLin.style.background = levelColor(ecoMask(c), upgradeTier(c)); // lineage button = a dot in the current lineage colour
     const pc = controlledCell();
-    const amp = (n) => n > 1 ? ` <span class="amp">×${n}</span>` : ""; // expression level shown as gene amplification (×N)
+    const amp = (n) => n >= 1 ? ` <span class="amp">×${n}</span>` : ""; // expression as gene amplification (×N); shown from ×1 so the chip width doesn't jump
     for (let i = 0; i < 3; i++) if (el.enz[i]) {
       const lvl = pc ? pc.enzLvl[i] : (i === 2 ? 1 : 0), owned = lvl > 0;
       el.enz[i].classList.toggle("owned", owned);
