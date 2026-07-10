@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Bacteria! — the video game</title>
+<style>
+  :root {
+    --bg: #071a1f;
+    --panel: #0d2a30;
+    --ink: #d7f5ee;
+    --accent: #57e0c0;
+    --warn: #ff7a6b;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%;
+    background: radial-gradient(circle at 50% 30%, #0b2b31 0%, #04141a 70%, #020c10 100%);
+    color: var(--ink);
+    font-family: "Trebuchet MS", "Segoe UI", system-ui, sans-serif;
+    overflow: hidden;
+  }
+  #wrap {
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; height: 100%; gap: 10px; padding: 10px;
+  }
+  #stage {
+    position: relative;
+    box-shadow: 0 0 40px rgba(0,0,0,.6), inset 0 0 60px rgba(0,0,0,.4);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  canvas { display: block; background: #06232a; }
+
+  /* HUD overlay */
+  #hud {
+    position: absolute; inset: 0; pointer-events: none;
+    padding: 12px; display: flex; flex-direction: column; gap: 8px;
+    font-size: 13px; text-shadow: 0 1px 2px rgba(0,0,0,.8);
+  }
+  .bar { width: 200px; height: 14px; border-radius: 7px; background: rgba(0,0,0,.4);
+         border: 1px solid rgba(255,255,255,.15); overflow: hidden; }
+  .bar > span { display: block; height: 100%; width: 50%; transition: width .08s linear; }
+  #energyFill { background: linear-gradient(90deg,#ffd24a,#57e0c0); }
+  .hudrow { display: flex; align-items: center; gap: 8px; }
+  .stat { font-variant-numeric: tabular-nums; }
+  .enz { padding: 1px 7px; border-radius: 7px; border: 1px solid rgba(255,255,255,.15);
+         margin-right: 4px; opacity: .28; font-size: 12px; transition: opacity .1s; }
+  .enz::before { content: "🔒 "; font-size: 9px; }
+  .enz.owned { opacity: .6; }
+  .enz.owned::before { content: ""; }
+  .enz.active { opacity: 1; font-weight: bold; box-shadow: 0 0 0 2px currentColor; }
+
+  /* Ecotype-vs-time chart */
+  #chartwrap {
+    background: var(--panel); padding: 8px 12px 6px; border-radius: 10px;
+    border: 1px solid rgba(255,255,255,.08); width: 800px; max-width: 100%;
+  }
+  #chartlegend { display: flex; gap: 6px 14px; align-items: center; flex-wrap: wrap; font-size: 11.5px; margin-bottom: 4px; opacity: .92; min-height: 16px; }
+  #chartlegend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+  #chartlegend b { font-variant-numeric: tabular-nums; }
+  #chartlegend .eco-line { border-radius: 0; width: 12px; height: 0; border-top: 2px solid; }
+  #chartTitle { margin-left: auto; opacity: .55; font-style: italic; }
+  #chart { display: block; width: 100%; height: 96px; border-radius: 6px; }
+
+  /* Overlays (title / death / win) */
+  .screen {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 14px; text-align: center;
+    background: rgba(3,14,18,.82); backdrop-filter: blur(2px);
+    pointer-events: auto; padding: 20px;
+  }
+  .screen h1 { margin: 0; font-size: 42px; letter-spacing: 1px;
+    color: var(--accent); text-shadow: 0 2px 20px rgba(87,224,192,.4); }
+  .screen p { margin: 4px 0; max-width: 460px; line-height: 1.5; }
+  .screen .keys { font-size: 13px; opacity: .85; }
+  button {
+    pointer-events: auto; cursor: pointer; font: inherit; font-weight: bold;
+    color: #04141a; background: var(--accent); border: none;
+    padding: 12px 28px; border-radius: 24px; letter-spacing: .5px;
+    box-shadow: 0 4px 0 #2a9d84; transition: transform .05s;
+  }
+  button:active { transform: translateY(3px); box-shadow: 0 1px 0 #2a9d84; }
+  .hidden { display: none !important; }
+  /* upgrade announcement bubble */
+  #toast {
+    position: absolute; top: 50%; left: 50%; z-index: 5;
+    transform: translate(-50%, -100%) translateY(-10px) scale(.96);
+    background: rgba(255,210,90,.16); border: 1.5px solid #ffd24a; color: #ffe9a8;
+    padding: 8px 18px; border-radius: 22px; font-weight: bold; font-size: 14px;
+    white-space: nowrap; pointer-events: none; opacity: 0;
+    box-shadow: 0 4px 18px rgba(255,210,90,.25);
+    transition: opacity .25s ease, transform .25s ease;
+  }
+  #toast::before { content: "🧬 "; }
+  #toast.show { opacity: 1; transform: translate(-50%, -100%) translateY(0) scale(1); }
+  .btnrow { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; justify-content: center; }
+  button.ghost { background: transparent; color: var(--accent); box-shadow: none;
+    border: 1.5px solid var(--accent); padding: 10px 22px; }
+  button.ghost:active { transform: translateY(2px); box-shadow: none; }
+
+  /* High scores screen */
+  #scores { justify-content: flex-start; padding-top: 24px; gap: 10px;
+    background: #04141a; backdrop-filter: none; } /* opaque — clean high-score backdrop */
+  #scoresKey { display: flex; flex-wrap: wrap; gap: 4px 12px; justify-content: center;
+    max-width: 620px; font-size: 11px; opacity: .85; }
+  #scoresKey i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+  #scoresKey .eco-line { border-radius: 0; height: 0; border-top: 2px solid; }
+  #scoresKey em { opacity: .6; font-style: normal; }
+  .gen-swatch { background: linear-gradient(90deg,#6fa8ff,#b06bd8,#e0645a,#efd98a,#7fd8c4); }
+  .ecoq { opacity: .8; }
+  #scoresList { width: 660px; max-width: 94%; max-height: 380px; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 6px; padding-right: 4px; }
+  .score-row { display: flex; align-items: center; gap: 12px; text-align: left;
+    background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.08);
+    border-radius: 8px; padding: 6px 10px; }
+  .score-meta { display: flex; flex-direction: column; gap: 0; min-width: 140px; font-size: 12px; }
+  .score-meta .rank { opacity: .5; font-size: 11px; }
+  .score-meta .sc { font-size: 22px; color: var(--accent); line-height: 1.1; }
+  .score-meta .date { opacity: .5; font-size: 10px; }
+  .score-chart { width: 340px; height: 58px; border-radius: 5px; }
+  #scoresList .empty { opacity: .7; max-width: 420px; text-align: center; margin: 30px auto; }
+  #analysisWrap { width: 760px; max-width: 96%; background: var(--panel);
+    border: 1px solid rgba(255,255,255,.08); border-radius: 10px; padding: 8px 10px; margin: 4px 0; }
+  #analysisWrap .alabel { font-size: 11px; opacity: .6; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 1px; }
+  #analysisChart { display: block; width: 100%; height: 210px; border-radius: 6px; }
+  #analysisStats, #detailStats { font-size: 12px; margin-top: 6px; opacity: .9; font-variant-numeric: tabular-nums; }
+  #analysisStats b, #detailStats b { color: var(--accent); }
+  #nameRow { display: flex; align-items: center; gap: 8px; margin: 8px 0 2px; font-size: 12px; }
+  #nameRow label { opacity: .7; }
+  #nameInput { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.18); color: #eafff8;
+    border-radius: 7px; padding: 5px 10px; font-size: 13px; font-family: inherit; width: 180px; outline: none; }
+  #nameInput:focus { border-color: var(--accent); }
+  .score-row.clickable { cursor: pointer; transition: background .12s, border-color .12s; }
+  .score-row.clickable:hover { background: rgba(87,224,192,.10); border-color: rgba(87,224,192,.45); }
+  .score-meta .pname { font-weight: bold; font-size: 13px; color: #eafff8; }
+  #scoreDetail { width: 760px; max-width: 96%; background: var(--panel);
+    border: 1px solid rgba(255,255,255,.08); border-radius: 10px; padding: 10px 12px; margin: 4px 0;
+    display: flex; flex-direction: column; align-items: stretch; }
+  #scoreDetail .alabel { font-size: 12px; opacity: .8; margin-bottom: 6px; }
+  #detailChart { display: block; width: 100%; height: 240px; border-radius: 6px; }
+  #detailBack { align-self: flex-start; margin-top: 8px; }
+  #currentRun { width: 660px; max-width: 94%; }
+  #currentRun .label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; opacity: .6; margin: 0 0 3px 2px; }
+  .score-row.current { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); background: rgba(87,224,192,.08); }
+  .score-row.current .rank { color: var(--accent); opacity: 1; }
+  button.danger { color: var(--warn); border-color: var(--warn); }
+  kbd {
+    background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.2);
+    border-radius: 4px; padding: 1px 6px; font-family: inherit; font-size: 12px;
+  }
+
+  /* Title screen */
+  #title { gap: 20px; }
+  .titlecard { text-align: center; }
+  .titlecard h1 { margin: 0; font-size: 68px; letter-spacing: 2px;
+    background: linear-gradient(180deg, #b8ffec, #57e0c0 55%, #2a9d84);
+    -webkit-background-clip: text; background-clip: text; color: var(--accent);
+    text-shadow: 0 4px 40px rgba(87,224,192,.45); }
+  .titlecard .tag { margin: 6px 0 0; font-size: 14px; letter-spacing: 4px;
+    text-transform: uppercase; opacity: .65; }
+  #title .lede { max-width: 480px; text-align: center; line-height: 1.6; opacity: .92; font-size: 15px; }
+  .titlehint { font-size: 12px; opacity: .5; margin: 2px 0 0; }
+
+  /* Help screen */
+  #help { justify-content: flex-start; padding-top: 22px; gap: 10px; background: #04141a; }
+  #helpBody { width: 640px; max-width: 94%; max-height: 400px; overflow-y: auto; text-align: left;
+    padding-right: 8px; }
+  #helpBody section { margin-bottom: 14px; }
+  #helpBody h3 { margin: 0 0 5px; font-size: 15px; color: var(--accent); }
+  #helpBody p { margin: 0; font-size: 13px; line-height: 1.55; opacity: .9; }
+  #helpBody ul { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.7; opacity: .9; }
+  .c-lip { color: #efd98a; } .c-pro { color: #e0645a; } .c-carb { color: #6fa8ff; }
+  .c-gold { color: #ffd24a; } .c-vir { color: #8bf06a; } .c-cyst { color: #9aa6a0; } .c-prot { color: #ff9ec0; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="stage">
+    <canvas id="game" width="800" height="600"></canvas>
+    <div id="hud">
+      <div class="hudrow"><span>Energy</span>
+        <div class="bar"><span id="energyFill"></span></div>
+        <span id="energyTxt" class="stat"></span>
+      </div>
+      <div class="hudrow stat">Colony <b id="colony">1</b> cells &nbsp;·&nbsp; Generation <b id="gen">1</b> &nbsp;·&nbsp; Score <b id="score">0</b></div>
+      <div class="hudrow">Deploy <kbd>X</kbd>
+        <span class="enz" id="enz0">lipase</span>
+        <span class="enz" id="enz1">protease</span>
+        <span class="enz" id="enz2">carbohydrase</span>
+        <span class="enz" id="enzTox">antibiotic</span>
+      </div>
+      <div class="hudrow">Genes
+        <span class="enz" id="abilChemo">chemotaxis</span>
+        <span class="enz" id="abilCrispr">CRISPR</span>
+      </div>
+    </div>
+    <div id="toast"></div>
+    <div id="title" class="screen">
+      <div class="titlecard">
+        <h1>Bacteria!</h1>
+        <p class="tag">forage · evolve · divide · endure</p>
+      </div>
+      <p class="lede">You are a single bacterium adrift in a drop of the sea. Dissolve the marine particles around you for food, harvest genes from rare viruses, and divide to make your evolution count — everything out here is trying to eat, infect, or outcompete you. Such is life.</p>
+      <div class="btnrow">
+        <button id="startBtn">Begin life</button>
+        <button id="scoresBtn" class="ghost">High scores</button>
+        <button id="helpBtn" class="ghost">How to play</button>
+      </div>
+      <p class="titlehint">press <kbd>?</kbd> any time for the guide</p>
+    </div>
+    <div id="help" class="screen hidden">
+      <h1 id="helpTitle">How to play</h1>
+      <div id="helpBody">
+        <section>
+          <h3>Controls</h3>
+          <ul>
+            <li><kbd>W A S D</kbd> / arrows — <b>run</b> in a direction; let go to <b>tumble</b> (reorient randomly)</li>
+            <li><kbd>Space</kbd> — release the loaded <b>enzyme</b> (dissolve the particle ahead) or <b>antibiotic</b> (poison nearby protists)</li>
+            <li><kbd>X</kbd> — switch which enzyme/antibiotic is loaded &nbsp;·&nbsp; <kbd>M</kbd> — toggle music</li>
+            <li><kbd>Esc</kbd> — pause &amp; high scores &nbsp;·&nbsp; <kbd>?</kbd> — this guide</li>
+          </ul>
+        </section>
+        <section>
+          <h3>The loop</h3>
+          <p>You can't swim through the big particles, but you can <b>dissolve</b> them with extracellular enzymes — carve a tunnel to the rich core, absorb the freed nutrients, and shelter inside where the big protists can't follow. Eat enough and you <b>elongate and divide</b>; daughters forage on their own and inherit everything you've evolved. Respiration burns energy every second, so keep foraging. Low on energy? You'll form a resistant <b>cyst</b> and wait it out.</p>
+        </section>
+        <section>
+          <h3>Food — three resources</h3>
+          <p>Particles are patchy mixes of <span class="c-lip">lipid</span>, <span class="c-pro">protein</span> and <span class="c-carb">carbohydrate</span>. Each needs its own enzyme, and you start able to digest only <span class="c-carb">carbohydrate</span> (<b>carbohydrase</b>). Locked enzymes show a 🔒 in the HUD.</p>
+        </section>
+        <section>
+          <h3>Gold phages — upgrades <span class="c-gold">🧬</span></h3>
+          <p>Chase down the rare <span class="c-gold">gold phage</span> (a star on the minimap, often buried in a particle) to gain a random heritable upgrade: a new enzyme (<span class="c-lip">lipase</span>/<span class="c-pro">protease</span>), higher enzyme <b>expression</b> (bigger reach), <b>chemotaxis</b> (auto-seek food), an <span style="color:#f05ad0">antibiotic</span> (an anti-protist toxin — level it up to make it more lethal), or <b>CRISPR</b>. Upgrades only truly count once you <b>divide</b> and pass them on.</p>
+        </section>
+        <section>
+          <h3>Viruses — phages</h3>
+          <p>They drift, stick to particles, and infect you — but a virus only infects cells at a similar <b>adaptation level</b> to the host it came from, so it's colour-coded to you: <span style="color:#ff5a52">red</span> ones can infect your current cell, <span class="c-vir">green</span> ones can't. The catch: <b>every upgrade you take shifts your level</b>, so you can <b>outrun</b> a red swarm by upgrading — they turn green — until new phages evolve to catch up. Infected? <b>Divide before it lyses you</b> and the virus goes to one daughter while your lineage stays clean. With <b>CRISPR</b>, the <span class="c-vir">green</span> (immune) viruses become <b>food</b>.</p>
+        </section>
+        <section>
+          <h3>The chart</h3>
+          <p>The graph below the ocean tracks your colony's <b>ecotypes</b> over time (each colour = a set of acquired genes; the colour <b>steps</b> to a new shade each time that lineage levels up, so you can read the generations), stacked on a grey <span class="c-cyst">cyst</span> foundation, plus lines for <span class="c-prot">protists</span> and <span class="c-vir">viruses</span>. Your run's full story — and where each upgrade happened — is shown when you die.</p>
+        </section>
+      </div>
+      <button id="helpBack" class="ghost">Back</button>
+    </div>
+    <div id="over" class="screen hidden">
+      <h1 id="overTitle">You died</h1>
+      <p id="overMsg"></p>
+      <div id="analysisWrap">
+        <div class="alabel">Colony &amp; your upgrades over the run</div>
+        <canvas id="analysisChart" width="900" height="200"></canvas>
+        <div id="analysisStats"></div>
+      </div>
+      <div id="nameRow"><label for="nameInput">Name for the leaderboard</label>
+        <input id="nameInput" maxlength="18" placeholder="your name" autocomplete="off" spellcheck="false"></div>
+      <div class="btnrow"><button id="restartBtn">Try again</button>
+      <button id="scoresBtn2" class="ghost">High scores</button></div>
+    </div>
+    <div id="scores" class="screen hidden">
+      <h1 id="scoresTitle">High Scores</h1>
+      <div id="scoresKey"></div>
+      <div id="currentRun" class="hidden"></div>
+      <div id="scoresList"></div>
+      <div id="scoreDetail" class="hidden">
+        <div class="alabel" id="detailTitle"></div>
+        <canvas id="detailChart" width="900" height="240"></canvas>
+        <div id="detailStats"></div>
+        <button id="detailBack" class="ghost">← Back to list</button>
+      </div>
+      <div class="btnrow">
+        <button id="scoresBack" class="ghost">Back</button>
+        <button id="endGameBtn" class="ghost danger hidden">End game</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="chartwrap">
+    <div id="chartlegend"></div>
+    <canvas id="chart" width="800" height="96"></canvas>
+  </div>
+</div>
+<script src="game.js"></script>
+</body>
+</html>
