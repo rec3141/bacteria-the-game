@@ -58,11 +58,11 @@
     predator: {
       count: 4, radius: 22, wanderSpeed: 50, chaseSpeed: 85, senseRange: 170, satiatedTime: 4.5,
       startEnergy: 100, mealEnergy: 58, metabolism: 1.44, // eats cells for energy, drains over time (raised 25% to curb the boom from doubled food)
-      maturity: 10, lifespan: [55, 100],                 // senescence: dies of old age
-      reproEnergy: 190, reproCooldown: 17,               // reproduction, gated only by feeding (raised to curb the boom from doubled food)
+      maturity: 8, lifespan: [55, 100],                  // senescence: dies of old age
+      reproEnergy: 160, reproCooldown: 11,               // reproduction, gated only by feeding — faster so grazers can chase a bacterial boom
       safetyMax: 600,                                    // perf backstop only — never binds ecologically
       minCount: 2, immigrateEvery: 8,                    // starting immigration/respawn interval (halves on each protist extinction)
-      immigratePerPrey: 0.02, immigrateCap: 80, immigrateMax: 6, // grazers immigrate toward a target that rises with bacterial abundance (density-dependent pressure)
+      immigratePerPrey: 0.04, immigrateCap: 150, immigrateMax: 14, // grazers immigrate toward a target that rises with bacterial abundance; more per step so they can catch a boom
       respawnFloor: 0.5,                                 // the respawn interval halves on each protist extinction, down to this floor
       cystMealFactor: 0.45, cystEatChance: 0.35,         // cysts aren't hunted; a bumped one is usually resisted, rarely eaten (for little energy)
       killMotes: 8,                                      // biomass released as food when an antibiotic KILLS a protist (natural death releases nothing)
