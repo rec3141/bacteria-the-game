@@ -138,6 +138,7 @@
     detailStats: document.getElementById("detailStats"), detailTitle: document.getElementById("detailTitle"),
     detailBack: document.getElementById("detailBack"),
     analysisSubChart: document.getElementById("analysisSubChart"), detailSubChart: document.getElementById("detailSubChart"),
+    analysisSubLabel: document.getElementById("analysisSubLabel"), detailSubLabel: document.getElementById("detailSubLabel"),
   };
   const actx = el.analysisChart ? el.analysisChart.getContext("2d") : null;
   const asctx = el.analysisSubChart ? el.analysisSubChart.getContext("2d") : null;
@@ -150,9 +151,6 @@
   const el_subchart = document.getElementById("subchart");
   const sctx = el_subchart ? el_subchart.getContext("2d") : null;
   const el_subchartlegend = document.getElementById("subchartlegend");
-  if (el_subchartlegend) el_subchartlegend.innerHTML = // static — the resource colours match the particle blocks
-    RESOURCES.map((r) => `<span><i style="background:${r.color}"></i>${r.key}</span>`).join("") +
-    `<span id="subchartTitle">food available vs. time</span>`;
 
   // -------------------------------------------------------------------- audio
   const Audio = (() => {
@@ -312,6 +310,7 @@
       predators = [], phages = [], particles = [], flagPhase = 0, cam = { x: 0, y: 0 }, paused = false;
   let ZOOM = 1; // world magnification — bumped on touch devices so cells aren't tiny on a small screen
   let chartLog = false; // generation-history charts: log vs. linear y-axis (toggled by clicking a chart)
+  let subMode = 0;      // lower chart: 0 = food available, 1 = cause of mortality (toggled by clicking it)
 
   function cellHalfLen(c) {
     return clamp(CFG.cell.baseHalf + Math.max(0, c.energy - CFG.cell.lenBaseEnergy)*CFG.cell.elongK,
@@ -332,7 +331,7 @@
       controlled: false, alive: true, invuln: CFG.cell.invulnTime, cyst: false,
       tumbling: false, runTimer: rand(CFG.cell.runMin, CFG.cell.runMax), tumbleT: 0, tumbleTarget: angle,
       fed: 0, enzCd: rand(CFG.cell.enzymeCooldown[0], CFG.cell.enzymeCooldown[1]),
-      infectedGreen: false, lysisT: 0, chemotaxis: false, chemoLevel: 0, crispr: false, antibiotic: 0,
+      infectedGreen: false, lysisT: 0, chemotaxis: false, chemoLevel: 0, crispr: false, antibiotic: 0, toxT: 0,
       enzLvl: [0, 0, 1] }; // per-enzyme expression level [lipase, protease, carbohydrase]; 0 = locked, carb starts at 1
   }
   function ownedEnzymes(c) { const o = []; for (let i = 0; i < 3; i++) if (c.enzLvl[i] > 0) o.push(i); return o; }
@@ -500,6 +499,7 @@
       greenSeedT: rand(CFG.phage.greenSeed[0], CFG.phage.greenSeed[1]),
       predImmigrateT: CFG.predator.immigrateEvery,
       predRespawn: CFG.predator.immigrateEvery, predExtinct: false, // respawn interval halves each time protists go fully extinct
+      mortLive: [0, 0, 0, 0], mortFull: [0, 0, 0, 0], // cause-of-death tallies (grazing/viral/starvation/antibiotic) per sample interval
       chartT: 0, history: [], fullT: 0, fullHist: [], fullInterval: 1, upgrades: [] };
     Audio.play("spawn", 0.5);
   }
@@ -541,7 +541,7 @@
     // cross-reactive: also hit bacteria genetically distant from the releaser (kin are spared)
     for (const oc of cells) {
       if (oc === c || !oc.alive || oc.cyst || oc.invuln > 0) continue;
-      if (toroDist2(tx, ty, oc.x, oc.y) <= rr && genDist(gsnap, oc) >= CFG.toxin.crossDist) oc.energy -= dose*CFG.toxin.crossFactor;
+      if (toroDist2(tx, ty, oc.x, oc.y) <= rr && genDist(gsnap, oc) >= CFG.toxin.crossDist) { oc.energy -= dose*CFG.toxin.crossFactor; oc.toxT = 0.5; }
     }
     return true;
   }
@@ -626,16 +626,19 @@
     burst(c.x, c.y, "#7CFC5A", 12);
     if (c.controlled) Audio.play("hit", 0.7);
   }
+  // cause-of-mortality buckets: 0 grazing, 1 viral lysis, 2 starvation, 3 antibiotic
+  const MORT_IDX = { predator: 0, lysis: 1, starve: 2, toxin: 3 };
   // all cell deaths funnel through here so infected hosts always lyse into phages
   function onCellDeath(c, cause) {
     c.alive = false;
+    if (state) { const k = MORT_IDX[cause]; if (k != null) { state.mortLive[k]++; state.mortFull[k]++; } }
     if (c.infectedGreen) releaseGreenPhages(c);
     burst(c.x, c.y, cause === "predator" ? "#ff7a6b" : cause === "lysis" ? "#7CFC5A" : "#9fb0aa", 18);
     if (c.controlled) transferControl(c);
   }
   function killCell(c, byPredator) {
     if (!c.alive || c.invuln > 0) return;
-    onCellDeath(c, byPredator ? "predator" : "starve");
+    onCellDeath(c, byPredator ? "predator" : (c.toxT > 0 ? "toxin" : "starve")); // energy-zero death: antibiotic if recently poisoned, else starvation
   }
 
   // vertical markers where each adaptation happened — overlaid on both the ecotype and substrate charts
@@ -668,6 +671,7 @@
     if (!actx || !state) return;
     annotateRun(actx, el.analysisChart.width, el.analysisChart.height, state.fullHist, state.upgrades, state.elapsed);
     if (asctx) annotateSub(asctx, el.analysisSubChart.width, el.analysisSubChart.height, state.fullHist, state.upgrades, state.elapsed);
+    if (el.analysisSubLabel) el.analysisSubLabel.textContent = subLabelText();
     if (el.analysisStats) el.analysisStats.innerHTML = runStatsHtml(state.fullHist, state.upgrades);
   }
   function gameOver() {
@@ -731,7 +735,8 @@
     if (state.chartT <= 0) {
       state.chartT = CHART.interval;
       const s = ecoSample();
-      state.history.push({ eco: s.eco, buckets: s.buckets, sub: subTotals.slice(), p: predators.length, v: greenCount });
+      state.history.push({ eco: s.eco, buckets: s.buckets, sub: subTotals.slice(), p: predators.length, v: greenCount, mort: state.mortLive });
+      state.mortLive = [0, 0, 0, 0]; // reset the per-interval death tally for the next sample
       if (state.history.length > CHART.samples) state.history.shift();
       updateLegend(s.eco, predators.length, greenCount);
     }
@@ -740,7 +745,8 @@
     if (state.fullT <= 0) {
       state.fullT = state.fullInterval;
       const fs = ecoSample();
-      state.fullHist.push({ eco: fs.eco, buckets: fs.buckets, sub: subTotals.slice(), p: predators.length, v: greenCount });
+      state.fullHist.push({ eco: fs.eco, buckets: fs.buckets, sub: subTotals.slice(), p: predators.length, v: greenCount, mort: state.mortFull });
+      state.mortFull = [0, 0, 0, 0];
       if (state.fullHist.length > 600) { state.fullHist = state.fullHist.filter((_, i) => i % 2 === 0); state.fullInterval *= 2; }
     }
     flagPhase += dt*12;
@@ -787,6 +793,7 @@
     const genomeF = 1 + upgradeTier(c)*CFG.cell.genomeUpkeep; // a bigger genome costs more upkeep (streamlining pressure)
     c.energy -= CFG.respirationBase*env.metabolismMult*sizeF*metab*genomeF*dt;
     if (c.invuln > 0) c.invuln -= dt;
+    if (c.toxT > 0) c.toxT -= dt; // antibiotic-poisoned marker fades (so a death here still counts as antibiotic)
     if (c.energy <= 0) { c.energy = 0; killCell(c, false); return; }
     c.energy = Math.min(c.energy, CFG.cell.maxEnergy);
 
@@ -909,7 +916,7 @@
       // cross-reactive: the cloud also drains genetically distant bacteria (kin/self are spared)
       if (z.genome) for (const oc of cells) {
         if (oc.cyst || oc.invuln > 0 || !oc.alive) continue;
-        if (toroDist2(z.x, z.y, oc.x, oc.y) <= r2 && genDist(z.genome, oc) >= P.crossDist) oc.energy -= z.potency*P.crossFactor*dt;
+        if (toroDist2(z.x, z.y, oc.x, oc.y) <= r2 && genDist(z.genome, oc) >= P.crossDist) { oc.energy -= z.potency*P.crossFactor*dt; oc.toxT = 0.5; }
       }
     }
     toxins = toxins.filter((z) => z.life > 0);
@@ -1383,6 +1390,20 @@
   const CHART = { interval: 0.5, samples: 200, W: 800, H: 96, subH: 64, surface: "#06181d" };
   const ECO_COLOR = ["#3987e5", "#199e70", "#c98500", "#008300", "#9085e9", "#e66767", "#d55181", "#d95926"];
   const PROTIST_COLOR = "#ff9ec0", VIRUS_COLOR = "#8bf06a", CYST_COLOR = "#9aa6a0", CRISPR_COLOR = "#c39bff", TOXIN_COLOR = "#f05ad0";
+  // cause-of-mortality series (index order matches MORT_IDX: grazing / viral / starvation / antibiotic)
+  const MORT_COLORS = [PROTIST_COLOR, VIRUS_COLOR, CYST_COLOR, TOXIN_COLOR];
+  const MORT_LABELS = ["grazing", "viral", "starvation", "antibiotic"];
+  function subVals(s) { return subMode ? (s && s.mort ? s.mort : [0,0,0,0]) : (s && s.sub ? s.sub : [0,0,0]); }
+  function subColors() { return subMode ? MORT_COLORS : RESOURCES.map((r) => r.color); }
+  function subLabelText() { return subMode ? "Cause of mortality (grazing · viral · starvation · antibiotic)" : "Food available (lipid · protein · carb)"; }
+  function updateSubLegend() {
+    if (!el_subchartlegend) return;
+    const items = subMode
+      ? MORT_LABELS.map((l, k) => `<span><i style="background:${MORT_COLORS[k]}"></i>${l}</span>`).join("")
+      : RESOURCES.map((r) => `<span><i style="background:${r.color}"></i>${r.key}</span>`).join("");
+    el_subchartlegend.innerHTML = items + `<span id="subchartTitle">${subMode ? "cause of mortality" : "food available"} vs. time · click to swap</span>`;
+  }
+  function toggleSubMode() { subMode ^= 1; updateSubLegend(); }
   function ecoMask(c) { return (c.enzLvl[0] > 0 ? 1 : 0) | (c.enzLvl[1] > 0 ? 2 : 0) | (c.chemotaxis ? 4 : 0); }
   function ecoLabel(mask) {
     if (mask === 0) return "carb only";
@@ -1481,23 +1502,28 @@
   function renderSubChart(g, W, H, hist, denom) {
     g.clearRect(0, 0, W, H);
     g.fillStyle = CHART.surface; g.fillRect(0, 0, W, H);
-    let maxY = 10;
-    for (const s of hist) { if (!s.sub) continue; const tot = s.sub[0] + s.sub[1] + s.sub[2]; if (tot > maxY) maxY = tot; }
+    const colors = subColors(), K = colors.length;
+    // per-sample values; for mortality we CUMULATE so the bands grow smoothly and the
+    // end-of-window proportions read directly as the grazing/viral/etc. split.
+    const vals = hist.map((s) => subVals(s).slice());
+    if (subMode) { const run = new Array(K).fill(0); for (let i = 0; i < vals.length; i++) for (let k = 0; k < K; k++) { run[k] += vals[i][k] || 0; vals[i][k] = run[k]; } }
+    let maxY = subMode ? 1 : 10;
+    for (const v of vals) { let tot = 0; for (let k = 0; k < K; k++) tot += v[k] || 0; if (tot > maxY) maxY = tot; }
     const n = denom || Math.max(hist.length, 2), pad = H < 70 ? 8 : 14;
     const xAt = (i) => i/(n-1)*W, yAt = (v) => H - (v/maxY)*(H-pad) - 2;
     g.strokeStyle = "rgba(255,255,255,0.06)"; g.lineWidth = 1;
     for (let k = 1; k <= 3; k++) { const y = H - k/4*(H-pad) - 2; g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }
     g.fillStyle = "rgba(215,245,238,0.5)"; g.font = "10px 'Trebuchet MS', sans-serif"; g.textAlign = "left";
-    g.fillText(String(Math.round(maxY)), 3, 10); g.fillText("0", 3, H - 3);
-    if (hist.length > 1) {
-      const last = hist.length - 1, cum = hist.map(() => 0);
-      for (let r = 0; r < 3; r++) { // stack lipid / protein / carbohydrate in their resource colours
-        g.fillStyle = RESOURCES[r].color;
+    g.fillText(String(Math.round(maxY)) + (subMode ? " deaths" : ""), 3, 10); g.fillText("0", 3, H - 3);
+    if (vals.length > 1) {
+      const last = vals.length - 1, cum = vals.map(() => 0);
+      for (let k = 0; k < K; k++) {
+        g.fillStyle = colors[k];
         g.beginPath(); g.moveTo(xAt(0), yAt(cum[0]));
         for (let i = 1; i <= last; i++) g.lineTo(xAt(i), yAt(cum[i]));
-        for (let i = last; i >= 0; i--) g.lineTo(xAt(i), yAt(cum[i] + (hist[i].sub ? hist[i].sub[r] : 0)));
+        for (let i = last; i >= 0; i--) g.lineTo(xAt(i), yAt(cum[i] + (vals[i][k] || 0)));
         g.closePath(); g.fill();
-        for (let i = 0; i <= last; i++) cum[i] += (hist[i].sub ? hist[i].sub[r] : 0);
+        for (let i = 0; i <= last; i++) cum[i] += (vals[i][k] || 0);
       }
     }
   }
@@ -1633,6 +1659,7 @@
     _detailRec = rec; _detailRank = rankHtml; // remembered so the log/linear toggle can redraw it
     annotateRun(el.detailChart.getContext("2d"), el.detailChart.width, el.detailChart.height, rec.hist || [], rec.upgrades, rec.dur);
     if (el.detailSubChart) annotateSub(el.detailSubChart.getContext("2d"), el.detailSubChart.width, el.detailSubChart.height, rec.hist || [], rec.upgrades, rec.dur);
+    if (el.detailSubLabel) el.detailSubLabel.textContent = subLabelText();
     if (el.detailStats) el.detailStats.innerHTML = runStatsHtml(rec.hist || [], rec.upgrades);
     if (el.detailTitle) el.detailTitle.innerHTML =
       `${rankHtml}${rec.name ? " · " + escapeHtml(rec.name) : ""} · <b>${rec.score}</b> · generation ${rec.gen} · survived ${fmtDur(rec.dur)}`;
@@ -1827,6 +1854,11 @@
   if (el.chart) el.chart.addEventListener("click", () => { if (!document.body.classList.contains("touch")) chartLog = !chartLog; });
   if (el.analysisChart) el.analysisChart.addEventListener("click", () => { chartLog = !chartLog; drawAnalysis(); });
   if (el.detailChart) el.detailChart.addEventListener("click", () => { chartLog = !chartLog; if (_detailRec) openScoreDetail(_detailRank, _detailRec); });
+  // click the lower chart to swap food-available ↔ cause-of-mortality (live chart is desktop-only: tap folds it on mobile)
+  if (el_subchart) el_subchart.addEventListener("click", () => { if (!document.body.classList.contains("touch")) toggleSubMode(); });
+  if (el.analysisSubChart) el.analysisSubChart.addEventListener("click", () => { toggleSubMode(); drawAnalysis(); });
+  if (el.detailSubChart) el.detailSubChart.addEventListener("click", () => { toggleSubMode(); if (_detailRec) openScoreDetail(_detailRank, _detailRec); });
+  updateSubLegend();
 
   const coarse = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
   if (coarse || "ontouchstart" in window) { document.body.classList.add("touch"); ZOOM = 1.35; }
