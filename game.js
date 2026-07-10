@@ -58,6 +58,14 @@
     // trophic role-swap: when your whole population dies you flip to the other trophic level
     // instead of a game-over — bacteria extinct → you become a protist (grazer); protists extinct → back to a bacterium.
     cycle: { reseedBacteria: 16, reseedProtists: 4, protistThrust: 240, protistEatScore: 3 },
+    // "A day in the life": a 24h clock at 1h = 1min (24-min day); conditions follow a diel cycle.
+    // tod (time-of-day) runs 0→1 over the day, starting at DAWN (6am). Curves below drive it.
+    day: { lengthSec: 1440, startHour: 6 },
+    diel: {
+      tempBase: 17, tempAmp: 5, tempLag: 0.05,   // warmest early afternoon (temp lags the sun)
+      foodFloor: 0.35,                            // night food supply as a fraction of the midday bloom
+      grazeNight: 1.0,                            // extra grazing pressure at night (diel vertical migration)
+    },
     predator: {
       count: 4, radius: 22, wanderSpeed: 50, chaseSpeed: 85, senseRange: 170, satiatedTime: 4.5,
       startEnergy: 100, mealEnergy: 58, metabolism: 1.44, // eats cells for energy, drains over time (raised 25% to curb the boom from doubled food)
@@ -268,6 +276,33 @@
       this.metabolismMult = Math.pow(2, (this.tempC-20)/10);
     },
   };
+  const TAU = Math.PI*2;
+  // diel cycle: drive light/temp/food-supply/grazing from the time of day (tod 0→1 across the day).
+  // Daylight over tod 0–0.5 (6am–6pm), night 0.5–1; the sun peaks at tod 0.25 (noon).
+  function dielLight(tod) { return Math.max(0, Math.sin(tod*TAU)); }
+  function dayHour(tod) { return (CFG.day.startHour + tod*24) % 24; }
+  function updateDiel() {
+    const D = CFG.diel, tod = clamp(state.elapsed / CFG.day.lengthSec, 0, 1);
+    const light = dielLight(tod);
+    state.tod = tod; state.light = light;
+    env.tempC = D.tempBase + D.tempAmp*Math.sin((tod - D.tempLag)*TAU); // warmest early afternoon
+    env.salinity = 35;
+    env.update();
+    state.foodTarget = Math.round(CFG.substrate.count * (D.foodFloor + (1 - D.foodFloor)*light)); // photosynthesis: food blooms with light
+    state.graze = 0.6 + D.grazeNight*(1 - light); // grazers press harder at night
+  }
+  // composition succession over the day: fresh diatoms (lipid) bloom in the light → grazing makes
+  // fecal pellets (protein) → it all ages into marine snow / chitin (carb detritus) by night.
+  function dielKind() {
+    const light = state ? (state.light || 0) : 0.5, tod = state ? (state.tod || 0) : 0;
+    const afternoon = Math.max(0, Math.sin((tod - 0.12)*TAU)); // grazing response lags the bloom
+    const night = 1 - light;
+    const w = { diatom: 0.15 + 1.6*light, fecalPellet: 0.15 + 1.3*afternoon, marineSnow: 0.25 + 1.1*night, chitin: 0.3 };
+    let tot = 0; for (const k in w) tot += w[k];
+    let r = Math.random()*tot;
+    for (const k in w) { r -= w[k]; if (r <= 0) return k; }
+    return "marineSnow";
+  }
 
   // ------------------------------------------------------------------- input
   const keys = {};
@@ -387,7 +422,7 @@
     let need = -1, low = CFG.substrate.minPerRes;
     for (let r = 0; r < 3; r++) if (RES_KINDS[r].length && have[r] < low) { low = have[r]; need = r; }
     if (need >= 0) return RES_KINDS[need][(Math.random()*RES_KINDS[need].length)|0];
-    return PARTICLE_KEYS[(Math.random()*PARTICLE_KEYS.length)|0];
+    return dielKind(); // otherwise the composition follows the daily production→grazing→detritus succession
   }
   function makeSubstrate(kind) {
     const k = kind || pickBalancedKind();
@@ -503,7 +538,9 @@
       predImmigrateT: CFG.predator.immigrateEvery,
       predRespawn: CFG.predator.immigrateEvery, predExtinct: false, // respawn interval halves each time protists go fully extinct
       mortLive: [0, 0, 0, 0], mortFull: [0, 0, 0, 0], // cause-of-death tallies (grazing/viral/starvation/antibiotic) per sample interval
+      tod: 0, light: 0, foodTarget: CFG.substrate.count, graze: 1, // diel state (set by updateDiel each frame)
       chartT: 0, history: [], fullT: 0, fullHist: [], fullInterval: 1, upgrades: [] };
+    updateDiel();
     Audio.play("spawn", 0.5);
   }
 
@@ -728,14 +765,17 @@
     if (el.analysisSubLabel) el.analysisSubLabel.textContent = subLabelText();
     if (el.analysisStats) el.analysisStats.innerHTML = runStatsHtml(state.fullHist, state.upgrades);
   }
-  function gameOver() {
+  function gameOver(dayComplete) {
     state.running = false;
     recordGame();
-    el.overTitle.textContent = "Run ended";
-    el.overMsg.innerHTML = `Your lineage reached <b>generation ${state.gen}</b> and consumed <b>${Math.round(state.score).toLocaleString()}</b> calories.`;
+    const cal = `<b>${Math.round(state.score).toLocaleString()}</b> calories`;
+    el.overTitle.textContent = dayComplete ? "You survived the day! 🌅" : "Run ended";
+    el.overMsg.innerHTML = dayComplete
+      ? `A full day in the life — your lineage reached <b>generation ${state.gen}</b> and consumed ${cal}.`
+      : `Your lineage reached <b>generation ${state.gen}</b> and consumed ${cal}.`;
     drawAnalysis();
     if (el.nameInput) el.nameInput.value = playerName; // prefill with the remembered name
-    Audio.play("death", 0.9);
+    Audio.play(dayComplete ? "spawn" : "death", dayComplete ? 0.7 : 0.9);
     setTimeout(() => el.over.classList.remove("hidden"), 400);
   }
   function setPlayerName(val) { // remember the name, and stamp it onto the run just recorded
@@ -751,7 +791,8 @@
   // ------------------------------------------------------------------- update
   function update(dt) {
     if (!state || !state.running) return;
-    state.elapsed += dt; env.update();
+    state.elapsed += dt; updateDiel();               // advance the day; drive light/temp/food/grazing
+    if (state.elapsed >= CFG.day.lengthSec) { gameOver(true); return; } // the day is over — you made it (or the run ends)
     for (const c of cells) if (c.alive) updateCell(c, dt);
     // dividing before lysis lets a cell shed the virus into one daughter and escape clean
     for (const c of cells) if (c.alive && c.energy >= CFG.cell.divideThreshold) divide(c);
@@ -766,7 +807,7 @@
       s.x = wrapX(s.x + s.vx*dt); s.y = wrapY(s.y + s.vy*dt);
       if (s.phase === "live") {
         s.age += dt;
-        if (s.organic <= 0) { recycleSubstrate(s); continue; }
+        if (s.organic <= 0) { retireSubstrate(s); continue; }
         if (s.age >= s.maxAge) startDissolve(s);
       } else {                                   // dissolving — erode a chunk of voxels per second
         s.dissolveAcc += s.dissolveRate*dt;
@@ -774,9 +815,12 @@
           s.dissolveAcc -= 1; const idx = s.dissolveOrder[s.dissolveI++];
           if (s.grid[idx] > 0) { s.orgByType[s.gtype[idx]]--; s.grid[idx] = 0; s.organic--; s.dirty = true; }
         }
-        if (s.organic <= 0 || s.dissolveI >= s.dissolveOrder.length) recycleSubstrate(s);
+        if (s.organic <= 0 || s.dissolveI >= s.dissolveOrder.length) retireSubstrate(s);
       }
     }
+    // diel food supply: shrink the field toward the production target when spent; grow it back as the bloom returns
+    if (substrates.some((s) => s.remove)) substrates = substrates.filter((s) => !s.remove);
+    if (substrates.length < state.foodTarget) substrates.push(spawnDriftingSubstrate());
     updateEnzymes(dt); updateToxins(dt); updateNutrients(dt); updatePredators(dt); updatePhages(dt);
     // while you're a protist: keep control on a living grazer, or flip back to a bacterium when they die out
     if (state.role === "protist" && !controlledProtist()) {
@@ -989,14 +1033,25 @@
     p.dissolveRate = Math.max(1, order.length / CFG.substrate.dissolveTime);
     p.phase = "dissolving";
   }
+  function driftInOffscreen(p) { // place a particle just offscreen, drifting into view
+    const a = rand(0, 6.28), dist = Math.hypot(VIEW_W, VIEW_H)/2 + p.half + 80, spd = rand(CFG.substrate.driftMin, CFG.substrate.driftMax);
+    p.x = wrapX(cam.x + Math.cos(a)*dist); p.y = wrapY(cam.y + Math.sin(a)*dist);
+    p.vx = -Math.cos(a)*spd; p.vy = -Math.sin(a)*spd;
+  }
   function recycleSubstrate(p) {
     // don't strand an embedded gold phage — carry it off so a fresh one respawns in a new particle
     for (const ph of phages) if (ph.type === "gold" && toroDist2(ph.x, ph.y, p.x, p.y) < p.R*p.R) ph.dead = true;
     Object.assign(p, makeSubstrate(pickBalancedKind(p))); // keep every resource above its floor as particles cycle
-    // reborn offscreen, drifting into the play area so it eases into view instead of popping in
-    const a = rand(0, 6.28), dist = Math.hypot(VIEW_W, VIEW_H)/2 + p.half + 80, spd = rand(CFG.substrate.driftMin, CFG.substrate.driftMax);
-    p.x = wrapX(cam.x + Math.cos(a)*dist); p.y = wrapY(cam.y + Math.sin(a)*dist);
-    p.vx = -Math.cos(a)*spd; p.vy = -Math.sin(a)*spd;
+    driftInOffscreen(p);
+  }
+  function spawnDriftingSubstrate() { const p = makeSubstrate(pickBalancedKind()); driftInOffscreen(p); return p; }
+  // a spent particle either recycles (steady state) or is let go when the food field is above the
+  // current diel production target (so the field shrinks at night and blooms back by day).
+  function retireSubstrate(s) {
+    if (state && substrates.length > state.foodTarget) {
+      for (const ph of phages) if (ph.type === "gold" && toroDist2(ph.x, ph.y, s.x, s.y) < s.R*s.R) ph.dead = true;
+      s.remove = true;
+    } else recycleSubstrate(s);
   }
 
   function updateNutrients(dt) {
@@ -1092,7 +1147,7 @@
     if (state.predImmigrateT <= 0) {
       const P = CFG.predator;
       state.predImmigrateT = state.predRespawn;
-      const target = clamp(P.minCount + cells.length*P.immigratePerPrey, P.minCount, P.immigrateCap);
+      const target = clamp(P.minCount + cells.length*P.immigratePerPrey*(state.graze || 1), P.minCount, P.immigrateCap);
       const n = Math.min(P.immigrateMax, Math.ceil(target - predators.length));
       const pc = controlledCell();
       for (let k = 0; k < n; k++) {
@@ -1251,7 +1306,15 @@
     for (const pr of predators) drawPredator(pr);
     for (const c of cells) drawCell(c);
     ctx.restore();
+    drawDayNight(); // time-of-day colour wash (screen space, over the world, under the minimap)
     drawMinimap(); // HUD-space, never zoomed
+  }
+  function drawDayNight() {
+    if (!state) return;
+    const light = state.light || 0, night = 1 - light;
+    if (night > 0.01) { ctx.fillStyle = `rgba(4,10,34,${(0.52*night).toFixed(3)})`; ctx.fillRect(0, 0, VIEW_W, VIEW_H); } // navy night
+    const gold = clamp((0.4 - light)/0.4, 0, 1) * clamp(light*5, 0, 1); // warm glow when the sun is low (dawn/dusk)
+    if (gold > 0.01) { ctx.fillStyle = `rgba(255,150,60,${(0.18*gold).toFixed(3)})`; ctx.fillRect(0, 0, VIEW_W, VIEW_H); }
   }
 
   let waterDots = makeWaterDots();
@@ -1711,6 +1774,10 @@
     }));
   }
   function fmtDur(s) { const m = Math.floor(s/60); return m + ":" + String(s % 60).padStart(2, "0"); }
+  function clockStr() { // in-game 24h clock (1 real-min = 1 game-hour)
+    const h = dayHour(state.tod || 0), hh = Math.floor(h), mm = Math.floor((h - hh)*60);
+    return ((state.light || 0) > 0.05 ? "☀ " : "☾ ") + String(hh).padStart(2, "0") + ":" + String(mm).padStart(2, "0");
+  }
   function fmtDate(ms) { const d = new Date(ms);
     return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }); }
   let scoreSort = { key: "score", dir: -1 }; // leaderboard sort — default calories, descending
@@ -1802,7 +1869,7 @@
     el.energyFill.style.width = Math.min(100, e/full*100) + "%";
     el.energyTxt.textContent = Math.round(e);
     el.colony.textContent = cells.length; el.gen.textContent = state.gen; el.score.textContent = Math.round(state.score);
-    if (el.time) el.time.textContent = fmtDur(Math.floor(state.elapsed));
+    if (el.time) el.time.textContent = clockStr(); // shows the in-game time of day, not raw elapsed
     if (el.colonyWord) el.colonyWord.textContent = cells.length === 1 ? "bacterium" : "bacteria";
     // as a protist there's no genome to show — hide the strand and flag the role instead
     if (el.genome) el.genome.style.display = protist ? "none" : "";
