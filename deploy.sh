@@ -15,7 +15,9 @@ STAGE="$(mktemp -d)"
 cp -R index.html game.js scores.php README.md Bacteria.swf assets \
       manifest.webmanifest icon.svg .htaccess "$STAGE"/
 sed -i "s/__BUILD__/$BUILD/g" "$STAGE/index.html" "$STAGE/game.js"
-rsync -avz "$STAGE"/ "$REMOTE"
+# --chmod forces web-sane modes on the destination so a private staging dir can
+# never poison the live docroot's permissions (a 700 docroot = instant 403).
+rsync -rlvz --chmod=D755,F644 "$STAGE"/ "$REMOTE"
 rm -rf "$STAGE"
 
 echo "==> ensure the leaderboard store exists and is writable by PHP"

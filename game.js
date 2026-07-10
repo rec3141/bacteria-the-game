@@ -18,7 +18,7 @@
   const BUILD = "__BUILD__"; // stamped by deploy.sh with the git commit; used to detect a newer live build
 
   // ------------------------------------------------------------ world / view
-  const VIEW_W = 800, VIEW_H = 680;
+  let VIEW_W = 800, VIEW_H = 680; // canvas backing size; on mobile it tracks the stage so the game fills the screen
   const WORLD_W = 2600, WORLD_H = 2000;
 
   const CFG = {
@@ -107,9 +107,7 @@
     genome: document.getElementById("genome"), helix: document.getElementById("helix"),
     title: document.getElementById("title"), over: document.getElementById("over"), chartwrap: document.getElementById("chartwrap"), hud: document.getElementById("hud"),
     stage: document.getElementById("stage"), game: document.getElementById("game"),
-    touch: document.getElementById("touch"), stickZone: document.getElementById("stickZone"),
-    stickBase: document.getElementById("stickBase"), stickKnob: document.getElementById("stickKnob"),
-    tEnz: document.getElementById("tEnz"),
+    touch: document.getElementById("touch"), moveZone: document.getElementById("moveZone"),
     tLin: document.getElementById("tLin"), tPause: document.getElementById("tPause"),
     overTitle: document.getElementById("overTitle"), overMsg: document.getElementById("overMsg"),
     startBtn: document.getElementById("startBtn"), restartBtn: document.getElementById("restartBtn"),
@@ -1103,7 +1101,8 @@
     drawMinimap(); // HUD-space, never zoomed
   }
 
-  const waterDots = Array.from({ length: 70 }, () => ({ x: Math.random()*VIEW_W, y: Math.random()*VIEW_H, r: Math.random()*2 + 0.5 }));
+  let waterDots = makeWaterDots();
+  function makeWaterDots() { return Array.from({ length: 70 }, () => ({ x: Math.random()*VIEW_W, y: Math.random()*VIEW_H, r: Math.random()*2 + 0.5 })); }
   function drawWater() {
     ctx.save(); ctx.globalAlpha = 0.2; ctx.fillStyle = "#bfeee0";
     const ox = ((cam.x*0.3)%40+40)%40, oy = ((cam.y*0.3)%40+40)%40;
@@ -1597,7 +1596,7 @@
   function showScience() { if (el.science) { el.science.classList.remove("hidden"); sciOpen = true; if (el.sciBody) el.sciBody.scrollTop = 0; } }
   function hideScience() { if (el.science) { el.science.classList.add("hidden"); sciOpen = false; } }
   function toggleHelp() { helpOpen ? hideHelp() : showHelp(); }
-  function pauseGame() { if (!state || !state.running || paused) return; paused = true; releaseStick(); showScores(); }
+  function pauseGame() { if (!state || !state.running || paused) return; paused = true; resetTouch(); showScores(); }
   function resumeGame() { paused = false; hideScores(); }
   function endGame() { if (!state || !state.running) return; paused = false; hideScores(); gameOver(); }
   let _toastTimer = null;
@@ -1631,6 +1630,7 @@
     el.colony.textContent = cells.length; el.gen.textContent = state.gen; el.score.textContent = Math.round(state.score);
     if (el.colonyWord) el.colonyWord.textContent = cells.length === 1 ? "bacterium" : "bacteria";
     drawHelix(c); // DNA double-helix backbone under the genome, drawn in the current lineage's colour
+    if (el.tLin && c) el.tLin.style.background = levelColor(ecoMask(c), upgradeTier(c)); // lineage button = a dot in the current lineage colour
     const pc = controlledCell();
     const amp = (n) => n > 1 ? ` <span class="amp">×${n}</span>` : ""; // expression level shown as gene amplification (×N)
     for (let i = 0; i < 3; i++) if (el.enz[i]) {
@@ -1648,8 +1648,21 @@
   }
 
   // -------------------------------------------------------------------- loop
+  // Match the canvas backing store to the stage's on-screen size so the world fills
+  // the available space (and grows when the charts are folded away). Desktop stays
+  // 800×680; on a phone the stage flexes and the canvas follows.
+  function resizeCanvas() {
+    if (!canvas || !el.stage || !el.stage.getBoundingClientRect) return;
+    const r = el.stage.getBoundingClientRect();
+    if (!r.width || !r.height) return; // not laid out yet (or headless)
+    const w = Math.round(r.width), h = Math.round(r.height);
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w; canvas.height = h; VIEW_W = w; VIEW_H = h; waterDots = makeWaterDots();
+    }
+  }
   let last = 0;
   function frame(now) {
+    resizeCanvas();
     const dt = last ? Math.min((now-last)/1000, 0.05) : 0; last = now;
     if (!paused) update(dt);
     draw(); syncHud(); drawChart();
@@ -1681,59 +1694,67 @@
   if (el.nameInput) el.nameInput.addEventListener("input", (e) => setPlayerName(e.target.value));
 
   // --------------------------------------------------------- touch controls
-  // A visible fixed thumbstick (bottom-left) drives movement; the right-hand
-  // buttons + the tappable genome bar cover every action, so the game is fully
-  // playable by touch. Uses Touch events for the widest device support.
-  let _stickId = null;
-  function releaseStick() {
-    _stickId = null; touchVec.active = false; touchVec.x = touchVec.y = 0;
-    if (el.stickBase) el.stickBase.classList.remove("on");
-    if (el.stickKnob) el.stickKnob.style.transform = "translate(-50%,-50%)";
-  }
+  // Single-finger play: press & hold anywhere on the field and the cell swims toward
+  // your finger (relative to the cell at screen centre); a quick tap fires the enzyme.
+  // Pause + lineage sit up top; the genome bar (bottom) loads enzymes. Touch events
+  // for the widest device support.
+  function resetTouch() { touchVec.active = false; touchVec.x = touchVec.y = 0; }
   function setupTouch() {
-    const zone = el.stickZone, base = el.stickBase, knob = el.stickKnob;
-    const MAXR = 48, DEAD = 8; // knob travel / dead-zone in CSS px
-    if (zone && base && knob) {
-      const track = (t) => {
-        const r = base.getBoundingClientRect(), cx = r.left + r.width/2, cy = r.top + r.height/2;
-        let dxp = t.clientX - cx, dyp = t.clientY - cy;
-        const d = Math.hypot(dxp, dyp), cl = d > MAXR ? MAXR / d : 1;
-        knob.style.transform = `translate(calc(-50% + ${dxp*cl}px), calc(-50% + ${dyp*cl}px))`;
+    const zone = el.moveZone;
+    if (zone) {
+      let id = null, holdT = null, held = false, sx0 = 0, sy0 = 0, last = null;
+      const DEAD = 16, HOLD_MS = 140, TAP_MOVE = 12;
+      const aim = (t) => {
+        const r = el.stage.getBoundingClientRect(), cx = r.left + r.width/2, cy = r.top + r.height/2;
+        const dxp = t.clientX - cx, dyp = t.clientY - cy, d = Math.hypot(dxp, dyp);
         touchVec.active = true;
-        if (d > DEAD) { touchVec.x = dxp/d; touchVec.y = dyp/d; } else { touchVec.x = touchVec.y = 0; } // centre = tumble
+        if (d > DEAD) { touchVec.x = dxp/d; touchVec.y = dyp/d; } else { touchVec.x = touchVec.y = 0; }
       };
-      const find = (list) => { for (const t of list) if (t.identifier === _stickId) return t; return null; };
+      const find = (l) => { for (const t of l) if (t.identifier === id) return t; return null; };
+      const clearHold = () => { if (holdT) { clearTimeout(holdT); holdT = null; } };
       zone.addEventListener("touchstart", (e) => {
-        if (_stickId !== null) return;
-        _stickId = e.changedTouches[0].identifier; base.classList.add("on"); track(e.changedTouches[0]); e.preventDefault();
+        if (id !== null) return; const t = e.changedTouches[0];
+        id = t.identifier; sx0 = t.clientX; sy0 = t.clientY; last = t; held = false;
+        holdT = setTimeout(() => { held = true; if (last) aim(last); }, HOLD_MS); // hold in place → start moving toward finger
+        e.preventDefault();
       }, { passive: false });
-      zone.addEventListener("touchmove", (e) => { const t = find(e.changedTouches); if (t) { track(t); e.preventDefault(); } }, { passive: false });
-      const end = (e) => { if (find(e.changedTouches)) releaseStick(); };
+      zone.addEventListener("touchmove", (e) => {
+        const t = find(e.changedTouches); if (!t) return; last = t;
+        if (!held && Math.hypot(t.clientX - sx0, t.clientY - sy0) > TAP_MOVE) { held = true; clearHold(); } // a drag, not a tap
+        if (held) aim(t);
+        e.preventDefault();
+      }, { passive: false });
+      const end = (e) => {
+        if (!find(e.changedTouches)) return;
+        clearHold();
+        if (!held && !paused && !helpOpen && !sciOpen && state && state.running) playerEnzyme(); // quick tap = fire enzyme
+        id = null; held = false; resetTouch();
+      };
       zone.addEventListener("touchend", end); zone.addEventListener("touchcancel", end);
     }
     const gated = (fn) => (e) => { if (e) e.preventDefault(); if (!paused && !helpOpen && !sciOpen && state && state.running) fn(); };
-    const tap = (elm, fn) => elm && elm.addEventListener("click", fn);
-    tap(el.tEnz, gated(playerEnzyme));
-    tap(el.tLin, gated(switchControl));
-    tap(el.tPause, () => togglePause());
+    if (el.tLin) el.tLin.addEventListener("click", gated(switchControl));
+    if (el.tPause) el.tPause.addEventListener("click", () => togglePause());
     // tap a gene on the genome bar to load that enzyme/antibiotic (works on desktop too)
     el.enz.forEach((g, i) => g && g.addEventListener("click", () => selectEnzyme(i)));
     if (el.enzTox) el.enzTox.addEventListener("click", () => selectEnzyme(3));
-    setupChartSwipe();
+    setupChartToggle();
   }
-  // swipe up or down anywhere on the chart panel to fold it away during play (mobile)
-  function setupChartSwipe() {
+  // tap OR swipe anywhere on the chart panel to fold it away / bring it back (mobile)
+  function setupChartToggle() {
     const cw = el.chartwrap; if (!cw) return;
-    let y0 = null;
-    cw.addEventListener("touchstart", (e) => { y0 = e.touches[0].clientY; }, { passive: true });
+    let x0 = null, y0 = null;
+    cw.addEventListener("touchstart", (e) => { x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; }, { passive: true });
     cw.addEventListener("touchend", (e) => {
       if (y0 == null) return;
-      if (Math.abs(e.changedTouches[0].clientY - y0) > 26) cw.classList.toggle("collapsed");
-      y0 = null;
+      const t = e.changedTouches[0], moved = Math.hypot(t.clientX - x0, t.clientY - y0);
+      if (moved < 12 || Math.abs(t.clientY - y0) > 24) cw.classList.toggle("collapsed"); // tap or vertical swipe
+      x0 = y0 = null;
     }, { passive: true });
   }
   // click any generation-history chart to flip its y-axis between linear and log
-  if (el.chart) el.chart.addEventListener("click", () => { chartLog = !chartLog; }); // live chart redraws each frame
+  // (on touch the live chart's tap is used to fold it away, so skip the log flip there)
+  if (el.chart) el.chart.addEventListener("click", () => { if (!document.body.classList.contains("touch")) chartLog = !chartLog; });
   if (el.analysisChart) el.analysisChart.addEventListener("click", () => { chartLog = !chartLog; drawAnalysis(); });
   if (el.detailChart) el.detailChart.addEventListener("click", () => { chartLog = !chartLog; if (_detailRec) openScoreDetail(_detailRank, _detailRec); });
 
