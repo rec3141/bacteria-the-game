@@ -52,7 +52,8 @@
       minPerRes: 2,                  // always keep at least this many particles dominant in EACH resource (so every enzyme has food)
     },
     enzyme: { life: 5.0, maxRadius: 24, growTime: 0.4 },
-    toxin: { life: 4.5, maxRadius: 40, growTime: 0.4, dose: 55, potency: 18, radiusPer: 0.34 }, // anti-protist antibiotic: fixed `dose` hit + lingering `potency`/s (NOT scaled by level); leveling GROWS the radius (radiusPer) so it hits more protists at once
+    toxin: { life: 4.5, maxRadius: 40, growTime: 0.4, dose: 55, potency: 18, radiusPer: 0.34, // anti-protist antibiotic: fixed `dose` hit + lingering `potency`/s (NOT scaled by level); leveling GROWS the radius (radiusPer) so it hits more protists at once
+             crossDist: 3, crossFactor: 1 }, // cross-reactive: bacteria a genetic distance ≥ crossDist from the releaser also take damage (×crossFactor)
     nutrient: { life: 16, radius: 3.2, maxCount: 600 },
     predator: {
       count: 4, radius: 22, wanderSpeed: 50, chaseSpeed: 85, senseRange: 170, satiatedTime: 4.5,
@@ -348,6 +349,12 @@
   // so you can OUTRUN a virus cohort by upgrading (they turn green) until new phages evolve to your tier.
   function upgradeTier(c) { return (c.enzLvl[0] + c.enzLvl[1] + c.enzLvl[2] - 1) + c.chemoLevel + (c.crispr ? 1 : 0) + (c.antibiotic || 0); }
   function hostMatch(phHost, tier) { return Math.abs(phHost - tier) <= CFG.phage.hostTolerance; }
+  // genome as a vector of loci → "genetic distance" (Manhattan) between two cells, for cross-reactive antibiotics
+  function genomeOf(c) { return [c.enzLvl[0], c.enzLvl[1], c.enzLvl[2], c.chemoLevel, c.crispr ? 1 : 0, c.antibiotic || 0]; }
+  function genDist(g, c) {
+    return Math.abs(g[0]-c.enzLvl[0]) + Math.abs(g[1]-c.enzLvl[1]) + Math.abs(g[2]-c.enzLvl[2])
+         + Math.abs(g[3]-c.chemoLevel) + Math.abs(g[4]-(c.crispr?1:0)) + Math.abs(g[5]-(c.antibiotic||0));
+  }
 
   // ----------------------------------------------------- destructible particle
   function shapeInside(spec, lx, ly, R, subs, seed) {
@@ -523,11 +530,16 @@
     c.energy -= CFG.cell.antibioticCost;
     const p = cellPolesLocal(c), lvl = c.antibiotic;
     const maxR = CFG.toxin.maxRadius * (1 + (lvl-1)*CFG.toxin.radiusPer); // leveling GROWS the reach (bigger AoE), not the damage
-    const tx = wrapX(c.x + p[0]), ty = wrapY(c.y + p[1]);
-    toxins.push({ x: tx, y: ty, r: 4, life: CFG.toxin.life, age: 0, maxR, potency: CFG.toxin.potency });
+    const tx = wrapX(c.x + p[0]), ty = wrapY(c.y + p[1]), gsnap = genomeOf(c);
+    toxins.push({ x: tx, y: ty, r: 4, life: CFG.toxin.life, age: 0, maxR, potency: CFG.toxin.potency, genome: gsnap });
     // instant dose to every protist caught in the release — the reliable "hit" (the cloud is lingering bonus)
     const dose = CFG.toxin.dose, rr = maxR*maxR;
     for (const pr of predators) if (toroDist2(tx, ty, pr.x, pr.y) <= rr) { pr.energy -= dose; pr.toxT = 0.5; }
+    // cross-reactive: also hit bacteria genetically distant from the releaser (kin are spared)
+    for (const oc of cells) {
+      if (oc === c || !oc.alive || oc.cyst || oc.invuln > 0) continue;
+      if (toroDist2(tx, ty, oc.x, oc.y) <= rr && genDist(gsnap, oc) >= CFG.toxin.crossDist) oc.energy -= dose*CFG.toxin.crossFactor;
+    }
     return true;
   }
   function cycleEnzyme() {
@@ -888,6 +900,11 @@
       z.r = z.maxR*grow*(0.6 + 0.4*clamp(z.life/P.life, 0, 1));
       const r2 = z.r*z.r;
       for (const pr of predators) if (toroDist2(z.x, z.y, pr.x, pr.y) <= r2) { pr.energy -= z.potency*dt; pr.toxT = 0.5; } // mark recently poisoned → death here counts as a KILL
+      // cross-reactive: the cloud also drains genetically distant bacteria (kin/self are spared)
+      if (z.genome) for (const oc of cells) {
+        if (oc.cyst || oc.invuln > 0 || !oc.alive) continue;
+        if (toroDist2(z.x, z.y, oc.x, oc.y) <= r2 && genDist(z.genome, oc) >= P.crossDist) oc.energy -= z.potency*P.crossFactor*dt;
+      }
     }
     toxins = toxins.filter((z) => z.life > 0);
   }
