@@ -7,11 +7,16 @@ cd "$(dirname "$0")"
 
 REMOTE="dreamhost:bacteria.cryomics.org/"  # home-relative on the remote (avoid local ~ expansion)
 
-echo "==> deploy game files → $REMOTE"
-rsync -avz \
-  index.html game.js scores.php README.md Bacteria.swf assets \
-  manifest.webmanifest icon.svg \
-  "$REMOTE"
+# Unique per-deploy build id (git commit + timestamp) — stamped into index.html
+# and game.js so the app can tell when a newer build is live and bust the cache.
+BUILD="$(git rev-parse --short HEAD 2>/dev/null || echo dev)-$(date +%y%m%d%H%M)"
+echo "==> deploy game files (build $BUILD) → $REMOTE"
+STAGE="$(mktemp -d)"
+cp -R index.html game.js scores.php README.md Bacteria.swf assets \
+      manifest.webmanifest icon.svg .htaccess "$STAGE"/
+sed -i "s/__BUILD__/$BUILD/g" "$STAGE/index.html" "$STAGE/game.js"
+rsync -avz "$STAGE"/ "$REMOTE"
+rm -rf "$STAGE"
 
 echo "==> ensure the leaderboard store exists and is writable by PHP"
 ssh dreamhost 'cd ~/bacteria.cryomics.org && { [ -f scores.json ] || printf "[]" > scores.json; } && chmod 664 scores.json && echo "   scores.json ready"'

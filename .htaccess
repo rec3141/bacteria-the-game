@@ -1,0 +1,20 @@
+# Make PWA / browser updates instant.
+#
+# DreamHost's defaults cache .js for 30 days, which pins an installed PWA to the
+# build it first downloaded. Instead, have the app's entry files revalidate on
+# every load: the browser sends a conditional request and gets a cheap 304 when
+# nothing changed, or the new file the moment we deploy one. Media (sounds, icon)
+# rarely changes, so it may still cache for a week.
+<IfModule mod_headers.c>
+  <FilesMatch "\.(html|js|css|webmanifest)$">
+    Header set Cache-Control "no-cache, must-revalidate"
+    Header unset Expires
+  </FilesMatch>
+  <FilesMatch "\.php$">
+    Header set Cache-Control "no-store"
+    Header unset Expires
+  </FilesMatch>
+  <FilesMatch "\.(mp3|svg|png|ico|swf)$">
+    Header set Cache-Control "public, max-age=604800"
+  </FilesMatch>
+</IfModule>

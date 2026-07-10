@@ -10,6 +10,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="Bacteria!" />
+<meta name="build" content="__BUILD__" />
 <link rel="manifest" href="manifest.webmanifest" />
 <link rel="icon" href="icon.svg" type="image/svg+xml" />
 <link rel="apple-touch-icon" href="icon.svg" />
@@ -131,6 +132,8 @@
   button.ghost { background: transparent; color: var(--accent); box-shadow: none;
     border: 1.5px solid var(--accent); padding: 10px 22px; }
   button.ghost:active { transform: translateY(2px); box-shadow: none; }
+  #updateBtn { background: #ffd24a; color: #2a1e04; box-shadow: 0 4px 0 #b8912a; font-size: 14px; }
+  #updateBtn:active { box-shadow: 0 1px 0 #b8912a; }
   #pagefoot { position: fixed; bottom: 5px; left: 0; right: 0; text-align: center;
     font-size: 11px; color: var(--muted); opacity: .55; pointer-events: none; }
   #pagefoot a { color: inherit; text-decoration: none; pointer-events: auto; }
@@ -350,6 +353,7 @@
         <button id="helpBtn" class="ghost">How to play</button>
         <button id="sciBtn" class="ghost">The science</button>
       </div>
+      <button id="updateBtn" class="hidden">↻ Update to latest version</button>
     </div>
     <div id="help" class="screen hidden">
       <h1 id="helpTitle">How to play</h1>
@@ -493,6 +497,6 @@
   &nbsp;·&nbsp;
   <a href="https://cryomics.org" target="_blank" rel="noopener">Collins Lab</a>
 </footer>
-<script src="game.js"></script>
+<script src="game.js?v=__BUILD__"></script>
 </body>
 </html>

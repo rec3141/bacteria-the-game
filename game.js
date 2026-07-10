@@ -15,6 +15,8 @@
 (() => {
   "use strict";
 
+  const BUILD = "__BUILD__"; // stamped by deploy.sh with the git commit; used to detect a newer live build
+
   // ------------------------------------------------------------ world / view
   const VIEW_W = 800, VIEW_H = 680;
   const WORLD_W = 2600, WORLD_H = 2000;
@@ -111,6 +113,7 @@
     tLin: document.getElementById("tLin"), tPause: document.getElementById("tPause"),
     overTitle: document.getElementById("overTitle"), overMsg: document.getElementById("overMsg"),
     startBtn: document.getElementById("startBtn"), restartBtn: document.getElementById("restartBtn"),
+    updateBtn: document.getElementById("updateBtn"),
     enz: [document.getElementById("enz0"), document.getElementById("enz1"), document.getElementById("enz2")],
     abilChemo: document.getElementById("abilChemo"), abilCrispr: document.getElementById("abilCrispr"),
     enzTox: document.getElementById("enzTox"),
@@ -1737,6 +1740,30 @@
   const coarse = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
   if (coarse || "ontouchstart" in window) { document.body.classList.add("touch"); ZOOM = 1.35; }
   setupTouch();
+
+  // ------------------------------------------------------ self-update (PWA)
+  // Force the latest build: reload the page with a fresh query so the browser
+  // re-fetches index.html (uncached), which points at game.js?v=<newBuild> — a
+  // new URL that sidesteps any stale cached copy of the script.
+  function forceUpdate() {
+    try { location.replace(location.pathname + "?u=" + Date.now()); }
+    catch (e) { location.reload(); }
+  }
+  // Ask the server (bypassing cache) what build is live; if it's newer than the
+  // one running, reveal the "Update to latest version" button on the title screen.
+  async function checkForUpdate() {
+    if (typeof fetch !== "function") return;
+    try {
+      const res = await fetch(location.pathname + "?_=" + Date.now(), { cache: "no-store" });
+      const html = await res.text();
+      const m = html.match(/name="build"\s+content="([^"]*)"/);
+      const live = m && m[1];
+      if (live && live !== "__BUILD__" && live !== BUILD && el.updateBtn) el.updateBtn.classList.remove("hidden");
+    } catch (e) {}
+  }
+  if (el.updateBtn) el.updateBtn.addEventListener("click", forceUpdate);
+  if (typeof console !== "undefined") console.log("Bacteria! build " + BUILD);
+  checkForUpdate();
 
   // temperature & salinity are held neutral for now (reserved for future levels:
   // estuary, sea ice, hydrothermal vent, ...)
