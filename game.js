@@ -64,7 +64,7 @@
     phage: {
       greenCount: 6, radius: 3.6, life: [16, 24], maxCount: 4000, diffuse: 22, // maxCount is a perf backstop only (was 220) — let epidemics get nasty
       infectHalo: 5,        // adsorption reach beyond the cell body
-      burst: [3, 6],        // green progeny released when an infected cell dies
+      burst: [2, 5],        // green progeny released when an infected cell dies (lowered a bit — uncapped viruses compound hard)
       latent: [9, 15],      // seconds from green infection to lysis
       greenSeed: [5, 9], greenFloor: 9, // background viral reservoir: top up near cells when green runs low
       hostTolerance: 2,     // kill-the-winner: a phage infects only cells within this many upgrade-tiers of its host
