@@ -63,7 +63,7 @@
       safetyMax: 600,                                    // perf backstop only — never binds ecologically
       minCount: 2, immigrateEvery: 14,                   // a drifter arrives if the population crashes
       immigratePerPrey: 0.02, immigrateCap: 80, immigrateMax: 6, // grazers immigrate toward a target that rises with bacterial abundance (density-dependent pressure)
-      respawnFloor: 2,                                   // the respawn interval halves on each protist extinction, down to this floor
+      respawnFloor: 0.5,                                 // the respawn interval halves on each protist extinction, down to this floor
       cystMealFactor: 0.45, cystEatChance: 0.35,         // cysts aren't hunted; a bumped one is usually resisted, rarely eaten (for little energy)
       killMotes: 8,                                      // biomass released as food when an antibiotic KILLS a protist (natural death releases nothing)
       virusEnergy: 5,                                    // protists also graze free-floating viruses — a small meal, and a top-down brake on phage blooms
