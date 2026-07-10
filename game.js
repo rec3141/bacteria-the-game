@@ -49,7 +49,7 @@
       minPerRes: 2,                  // always keep at least this many particles dominant in EACH resource (so every enzyme has food)
     },
     enzyme: { life: 5.0, maxRadius: 24, growTime: 0.4 },
-    toxin: { life: 4.5, maxRadius: 40, growTime: 0.4, dose: 55, potency: 18, radiusPer: 0.14 }, // anti-protist antibiotic: instant `dose` hit on release + lingering `potency`/s; both ×level. ~2-3 hits kill a protist
+    toxin: { life: 4.5, maxRadius: 40, growTime: 0.4, dose: 55, potency: 18, radiusPer: 0.34 }, // anti-protist antibiotic: fixed `dose` hit + lingering `potency`/s (NOT scaled by level); leveling GROWS the radius (radiusPer) so it hits more protists at once
     nutrient: { life: 16, radius: 3.2, maxCount: 600 },
     predator: {
       count: 4, radius: 22, wanderSpeed: 50, chaseSpeed: 85, senseRange: 170, satiatedTime: 4.5,
@@ -473,11 +473,11 @@
     if (c.antibiotic <= 0 || c.energy < CFG.cell.antibioticCost) return false;
     c.energy -= CFG.cell.antibioticCost;
     const p = cellPolesLocal(c), lvl = c.antibiotic;
-    const maxR = CFG.toxin.maxRadius * (1 + (lvl-1)*CFG.toxin.radiusPer); // reach grows with level
+    const maxR = CFG.toxin.maxRadius * (1 + (lvl-1)*CFG.toxin.radiusPer); // leveling GROWS the reach (bigger AoE), not the damage
     const tx = wrapX(c.x + p[0]), ty = wrapY(c.y + p[1]);
-    toxins.push({ x: tx, y: ty, r: 4, life: CFG.toxin.life, age: 0, maxR, potency: CFG.toxin.potency*lvl });
+    toxins.push({ x: tx, y: ty, r: 4, life: CFG.toxin.life, age: 0, maxR, potency: CFG.toxin.potency });
     // instant dose to every protist caught in the release — the reliable "hit" (the cloud is lingering bonus)
-    const dose = CFG.toxin.dose*lvl, rr = maxR*maxR;
+    const dose = CFG.toxin.dose, rr = maxR*maxR;
     for (const pr of predators) if (toroDist2(tx, ty, pr.x, pr.y) <= rr) { pr.energy -= dose; pr.toxT = 0.5; }
     return true;
   }
