@@ -100,6 +100,7 @@
     align-items: center; justify-content: safe center; gap: 15px; text-align: center;
     background: rgba(3,14,18,.93); backdrop-filter: blur(4px);
     pointer-events: auto; padding: 18px; overflow-y: auto; /* scroll if content is taller than the stage */
+    overscroll-behavior: contain; /* no rubber-band scroll chaining on touch */
   }
   #over .btnrow, #over #nameRow { margin-top: 2px; }
   .screen h1 { margin: 0; font-size: 42px; letter-spacing: 1px;
@@ -277,6 +278,10 @@
   @media (max-width: 840px), (max-height: 560px) {   /* phones/tablets: use the whole screen, don't clip the chart */
     #wrap { padding: 6px; gap: 6px; justify-content: flex-start; }
     #stage { width: min(800px, 100%, 86vh); } /* also bound by height so landscape doesn't overflow */
+    /* Menus break out of the short game stage to fill the viewport, so their
+       content fits the tall phone screen instead of scrolling in a tiny box. */
+    .screen { position: fixed; z-index: 50; }
+    #help, #science { z-index: 60; } /* stay above the screen they were opened from */
   }
 </style>
 </head>
