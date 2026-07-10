@@ -40,7 +40,8 @@
     respirationBase: 0.9,
     grid: { cs: 7 },                 // destructible-particle voxel size (px)
     substrate: {
-      count: 11, moteEnergy: 7,
+      count: 60, moteEnergy: 7,      // ~2x the old food (~10.5k voxels), spread across a power-law size spectrum
+      sizeMin: 30, sizeMax: 200, sizeExp: 1.9, // Junge-like size spectrum: abundance ∝ size^-sizeExp → many small, few large
       carveRate: 4.5,                // density removed /sec per covered voxel
       lifeMin: 130, lifeMax: 300,    // each particle has its own lifespan (staggered)
       dissolveTime: 9,               // at end of life it erodes voxel-by-voxel over this many seconds
@@ -314,6 +315,12 @@
     return lx*lx + ly*ly <= rr*rr;
   }
 
+  function powerLawSize() { // sample a particle radius from a Junge-like spectrum (PDF ∝ R^-sizeExp): many small, few large
+    const S = CFG.substrate, a = S.sizeMin, b = S.sizeMax, p = S.sizeExp, u = Math.random();
+    if (Math.abs(p - 1) < 1e-6) return a * Math.pow(b/a, u);
+    const e = 1 - p, ae = Math.pow(a, e);
+    return Math.pow(ae + u*(Math.pow(b, e) - ae), 1/e);
+  }
   function pickBalancedKind(exclude) { // if a resource is below its floor, spawn a particle dominant in it; else random
     const have = [0, 0, 0];
     for (const p of substrates) if (p !== exclude && p.dom != null) have[p.dom]++;
@@ -325,7 +332,7 @@
   function makeSubstrate(kind) {
     const k = kind || pickBalancedKind();
     const spec = PARTICLES[k];
-    const R = rand(spec.rMin, spec.rMax);
+    const R = powerLawSize(); // size follows a global power-law spectrum, independent of kind (which now sets shape + resource)
     const rot = rand(0, Math.PI*2), seed = rand(0, 100);
     const cs = CFG.grid.cs, n = Math.ceil(2*R/cs) + 2, half = n*cs/2;
     // sub-blob centres for aggregates
