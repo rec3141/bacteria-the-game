@@ -38,6 +38,7 @@
       chemoRange0: 300, chemoRangePer: 140, // chemotaxis sensing range grows with chemoLevel
       chemoBias: 0.9,                       // run-length extension per level when heading up-gradient (biased random walk)
       fedLinger: 2.2, maxCells: 100000, // effectively uncapped (perf backstop only)
+      genomeUpkeep: 0.05, // extra respiration per adaptation tier — the metabolic cost of a bigger genome (streamlining pressure)
     },
     respirationBase: 0.9,
     grid: { cs: 7 },                 // destructible-particle voxel size (px)
@@ -60,6 +61,7 @@
       reproEnergy: 190, reproCooldown: 17,               // reproduction, gated only by feeding (raised to curb the boom from doubled food)
       safetyMax: 600,                                    // perf backstop only — never binds ecologically
       minCount: 2, immigrateEvery: 14,                   // a drifter arrives if the population crashes
+      immigratePerPrey: 0.02, immigrateCap: 80, immigrateMax: 6, // grazers immigrate toward a target that rises with bacterial abundance (density-dependent pressure)
       cystMealFactor: 0.45, cystEatChance: 0.35,         // cysts aren't hunted; a bumped one is usually resisted, rarely eaten (for little energy)
       killMotes: 8,                                      // biomass released as food when an antibiotic KILLS a protist (natural death releases nothing)
       virusEnergy: 5,                                    // protists also graze free-floating viruses — a small meal, and a top-down brake on phage blooms
@@ -744,7 +746,8 @@
 
     const sizeF = cellHalfLen(c)/CFG.cell.baseHalf;
     const metab = c.cyst ? CFG.cell.cystMetab : 1;
-    c.energy -= CFG.respirationBase*env.metabolismMult*sizeF*metab*dt;
+    const genomeF = 1 + upgradeTier(c)*CFG.cell.genomeUpkeep; // a bigger genome costs more upkeep (streamlining pressure)
+    c.energy -= CFG.respirationBase*env.metabolismMult*sizeF*metab*genomeF*dt;
     if (c.invuln > 0) c.invuln -= dt;
     if (c.energy <= 0) { c.energy = 0; killCell(c, false); return; }
     c.energy = Math.min(c.energy, CFG.cell.maxEnergy);
@@ -959,12 +962,17 @@
     }
     if (newborns.length || predators.some((p) => p.dead))
       predators = predators.filter((p) => !p.dead).concat(newborns);
-    // immigration floor: a fresh protist drifts in if the population has crashed
+    // immigration: grazers drift in toward a target that RISES with bacterial abundance
+    // (density-dependent top-down pressure), and never below the crash floor.
     state.predImmigrateT -= dt;
     if (state.predImmigrateT <= 0) {
-      state.predImmigrateT = CFG.predator.immigrateEvery;
-      if (predators.length < CFG.predator.minCount) {
-        let x, y; const pc = controlledCell();
+      const P = CFG.predator;
+      state.predImmigrateT = P.immigrateEvery;
+      const target = clamp(P.minCount + cells.length*P.immigratePerPrey, P.minCount, P.immigrateCap);
+      const n = Math.min(P.immigrateMax, Math.ceil(target - predators.length));
+      const pc = controlledCell();
+      for (let k = 0; k < n; k++) {
+        let x, y;
         do { x = rand(0, WORLD_W); y = rand(0, WORLD_H); } while (pc && toroDist2(x, y, pc.x, pc.y) < 500*500);
         predators.push(makePredator(x, y, null, rand(0, 20)));
       }
