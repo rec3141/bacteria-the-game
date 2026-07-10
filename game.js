@@ -35,8 +35,8 @@
       crisprEnergy: 9,            // energy gained when a CRISPR cell destroys a virus it's immune to
       cystDiffuse: 55,            // cysts drift passively (brownian) with the water
       exprBoost: 0.16,            // enzyme-radius gain per expression level (stacking gold-phage upgrade)
-      chemoRange0: 400, chemoRangePer: 130, // chemotaxis sensing range grows with chemoLevel
-      chemoTurn0: 1.15, chemoTurnPer: 0.5,  // ...and its steering sharpness too
+      chemoRange0: 300, chemoRangePer: 140, // chemotaxis sensing range grows with chemoLevel
+      chemoBias: 0.9,                       // run-length extension per level when heading up-gradient (biased random walk)
       fedLinger: 2.2, maxCells: 100000, // effectively uncapped (perf backstop only)
     },
     respirationBase: 0.9,
@@ -767,25 +767,32 @@
     if (c.cyst) { const D = env.diffusivity*CFG.cell.cystDiffuse; c.vx += rand(-D, D)*dt; c.vy += rand(-D, D)*dt; return; } // cysts drift passively
     if (c.fed > 0) c.fed -= dt;
     const fedF = c.fed > 0 ? 0.4 : 1;
-    // chemotaxis: bias toward nearest food-bearing particle; sensitivity grows with chemoLevel
-    let desired = null, chemoTurn = 0;
+    // Chemotaxis as a real biased random walk: the cell only senses whether the nearest
+    // food is getting CLOSER, and if so it tumbles less often (runs longer up-gradient).
+    // There's no steering — headings change only at (random) tumbles, so paths are straight
+    // runs, not curves — and the bias (run extension) strengthens with chemoLevel.
+    let upGrad = false;
     if (c.chemotaxis) {
       const range = CFG.cell.chemoRange0 + c.chemoLevel*CFG.cell.chemoRangePer;
-      chemoTurn = CFG.cell.chemoTurn0 + c.chemoLevel*CFG.cell.chemoTurnPer;
-      const s = nearestOrganicSub(c, range); if (s) desired = Math.atan2(dy(s.y, c.y), dx(s.x, c.x));
+      const s = nearestOrganicSub(c, range);
+      if (s) { const d = Math.hypot(dx(s.x, c.x), dy(s.y, c.y));
+        if (c.prevFoodDist != null && d < c.prevFoodDist) upGrad = true; // concentration rising along this run
+        c.prevFoodDist = d;
+      } else c.prevFoodDist = null;
     }
     if (c.tumbling) {
       c.angle += clamp(angleTo(c.angle, c.tumbleTarget), -CFG.cell.tumbleTurn*dt, CFG.cell.tumbleTurn*dt);
       c.tumbleT -= dt;
-      if (c.tumbleT <= 0) { c.tumbling = false; c.runTimer = rand(CFG.cell.runMin, CFG.cell.runMax)*(c.fed > 0 ? 0.4 : 1); }
+      if (c.tumbleT <= 0) { c.tumbling = false; c.runTimer = rand(CFG.cell.runMin, CFG.cell.runMax)*fedF; }
     } else {
-      if (desired != null) c.angle += clamp(angleTo(c.angle, desired), -chemoTurn*dt, chemoTurn*dt); // steer up-gradient
       const th = CFG.cell.thrust/visc*fedF;
       c.vx += Math.cos(c.angle)*th*dt; c.vy += Math.sin(c.angle)*th*dt;
-      c.energy -= CFG.cell.swimCost*fedF*dt; c.runTimer -= dt;
+      c.energy -= CFG.cell.swimCost*fedF*dt;
+      // up-gradient → suppress tumbling (longer run); the suppression scales with chemoLevel
+      c.runTimer -= upGrad ? dt/(1 + CFG.cell.chemoBias*c.chemoLevel) : dt;
       if (c.runTimer <= 0) {
         c.tumbling = true; c.tumbleT = CFG.cell.tumbleDur;
-        c.tumbleTarget = desired != null ? desired + rand(-0.6, 0.6) : c.angle + rand(-Math.PI, Math.PI);
+        c.tumbleTarget = c.angle + rand(-Math.PI, Math.PI); // fully random reorientation — no bias in the tumble itself
       }
     }
     c.enzCd -= dt;
