@@ -55,7 +55,7 @@
       count: 4, radius: 22, wanderSpeed: 50, chaseSpeed: 85, senseRange: 170, satiatedTime: 4.5,
       startEnergy: 100, mealEnergy: 58, metabolism: 1.44, // eats cells for energy, drains over time (raised 25% to curb the boom from doubled food)
       maturity: 10, lifespan: [55, 100],                 // senescence: dies of old age
-      reproEnergy: 150, reproCooldown: 13,               // reproduction, gated only by feeding (no abundance cap)
+      reproEnergy: 190, reproCooldown: 17,               // reproduction, gated only by feeding (raised to curb the boom from doubled food)
       safetyMax: 600,                                    // perf backstop only — never binds ecologically
       minCount: 2, immigrateEvery: 14,                   // a drifter arrives if the population crashes
       cystMealFactor: 0.45, cystEatChance: 0.35,         // cysts aren't hunted; a bumped one is usually resisted, rarely eaten (for little energy)
