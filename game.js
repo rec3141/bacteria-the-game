@@ -68,11 +68,11 @@
       virusEnergy: 5,                                    // protists also graze free-floating viruses — a small meal, and a top-down brake on phage blooms
     },
     phage: {
-      greenCount: 6, radius: 3.6, life: [16, 24], maxCount: 4000, diffuse: 22, // maxCount is a perf backstop only (was 220) — let epidemics get nasty
+      greenCount: 18, radius: 3.6, life: [16, 24], maxCount: 4000, diffuse: 22, // maxCount is a perf backstop only (was 220) — let epidemics get nasty
       infectHalo: 5,        // adsorption reach beyond the cell body
       burst: [4, 8],        // green progeny released when an infected cell dies (bumped up — protist grazing + genome upkeep now keep viruses in check)
       latent: [9, 15],      // seconds from green infection to lysis
-      greenSeed: [5, 9], greenFloor: 9, // reservoir: every greenSeed s, ensure the sampled lineage has ≥greenFloor phages tuned to ITS tier
+      greenSeed: [5, 9], greenFloor: 27, seedBatch: 3, // reservoir: every greenSeed s, top the sampled lineage up (a few at a time) to ≥greenFloor phages tuned to ITS tier
       hostTolerance: 2,     // kill-the-winner: a phage infects only cells within this many upgrade-tiers of its host
       goldLife: [90, 140],  // gold phage lingers far longer than green — you can chase it down
                             // (one is always kept on the board, respawning near the player when used)
@@ -1103,7 +1103,8 @@
       if (rc && !rc.cyst && phages.length < CFG.phage.maxCount) {
         const tier = upgradeTier(rc);
         let matching = 0; for (const p of phages) if (p.type === "green" && hostMatch(p.host, tier)) matching++;
-        if (matching < CFG.phage.greenFloor) {
+        const need = Math.min(CFG.phage.seedBatch, CFG.phage.greenFloor - matching);
+        for (let k = 0; k < need && phages.length < CFG.phage.maxCount; k++) {
           const a = rand(0, 6.28), d = Math.hypot(VIEW_W, VIEW_H)/2 + rand(80, 400);
           const host = Math.max(0, tier + ((Math.random()*3)|0) - 1);
           phages.push(makePhage("green", cam.x + Math.cos(a)*d, cam.y + Math.sin(a)*d, host));
