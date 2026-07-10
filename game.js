@@ -109,6 +109,7 @@
   const el = {
     energyFill: document.getElementById("energyFill"), energyTxt: document.getElementById("energyTxt"),
     gen: document.getElementById("gen"), score: document.getElementById("score"), colony: document.getElementById("colony"), colonyWord: document.getElementById("colonyWord"),
+    time: document.getElementById("time"),
     genome: document.getElementById("genome"), helix: document.getElementById("helix"),
     title: document.getElementById("title"), over: document.getElementById("over"), chartwrap: document.getElementById("chartwrap"), hud: document.getElementById("hud"),
     stage: document.getElementById("stage"), game: document.getElementById("game"),
@@ -1699,6 +1700,7 @@
     el.energyFill.style.width = Math.min(100, e/CFG.cell.divideThreshold*100) + "%"; // full = ready to divide (cells split at the threshold, never reaching maxEnergy)
     el.energyTxt.textContent = Math.round(e);
     el.colony.textContent = cells.length; el.gen.textContent = state.gen; el.score.textContent = Math.round(state.score);
+    if (el.time) el.time.textContent = fmtDur(Math.floor(state.elapsed));
     if (el.colonyWord) el.colonyWord.textContent = cells.length === 1 ? "bacterium" : "bacteria";
     drawHelix(c); // DNA double-helix backbone under the genome, drawn in the current lineage's colour
     if (el.tLin && c) el.tLin.style.background = levelColor(ecoMask(c), upgradeTier(c)); // lineage button = a dot in the current lineage colour
