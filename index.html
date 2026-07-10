@@ -49,22 +49,16 @@
   #energyTxt { min-width: 20px; opacity: .95; }
   .stats-inline { opacity: .72; letter-spacing: .2px; }
   .stats-inline b { color: #d6efe6; font-weight: 600; }
-  /* GENOME: capabilities as gene loci on a DNA backbone */
-  .genome { position: relative; display: flex; align-items: center; gap: 4px; padding: 4px 3px; }
-  .genome::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%);
-    height: 3px; border-radius: 2px; z-index: 0;
-    background: repeating-linear-gradient(90deg, rgba(120,220,200,.30) 0 3px, transparent 3px 7px); }
+  /* GENOME: capabilities as gene loci on a DNA double-helix (drawn in the current lineage's colour) */
+  .genome { position: relative; display: flex; align-items: center; gap: 5px; padding: 10px 8px; }
+  #helix { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
   .gene { position: relative; z-index: 1; padding: 2px 8px; border-radius: 5px; font-size: 11px; line-height: 1.35;
-    white-space: nowrap; background: rgba(6,22,27,.94); border: 1px solid rgba(255,255,255,.13);
+    white-space: nowrap; background: rgba(6,22,27,.9); border: 1px solid rgba(255,255,255,.13);
     color: rgba(210,228,222,.42); opacity: .62; transition: opacity .12s, box-shadow .12s, color .12s; }
   .gene:not(.owned) { border-style: dashed; opacity: .42; }        /* a silent / not-yet-acquired locus */
   .gene.owned { opacity: 1; color: var(--gc); border-color: var(--gc); box-shadow: inset 0 0 14px -7px var(--gc); }
   .gene.active { font-weight: bold; box-shadow: 0 0 0 1.5px var(--gc), 0 0 11px -2px var(--gc); } /* Space will release this one */
   .gene sup { font-size: 8px; opacity: .85; margin-left: 1px; font-weight: bold; }
-  .lineage-chip { display: inline-flex; align-items: center; font-size: 11px; opacity: .9; }
-  #lineageSwatch { display: inline-block; width: 11px; height: 11px; border-radius: 3px;
-    margin-right: 5px; box-shadow: 0 0 0 1px rgba(255,255,255,.3); }
-  #lineageLabel { opacity: .82; }
 
   /* Ecotype-vs-time chart */
   #chartwrap {
@@ -86,12 +80,14 @@
   .alabel.sublabel { margin-top: 8px; opacity: .5; text-transform: none; letter-spacing: 0; }
 
   /* Overlays (title / death / win) */
+  #help { z-index: 20; }  /* always above the pause / death screens it can be opened from */
   .screen {
     position: absolute; inset: 0; display: flex; flex-direction: column;
-    align-items: center; justify-content: center; gap: 14px; text-align: center;
-    background: rgba(3,14,18,.82); backdrop-filter: blur(2px);
-    pointer-events: auto; padding: 20px;
+    align-items: center; justify-content: center; gap: 18px; text-align: center;
+    background: rgba(3,14,18,.93); backdrop-filter: blur(4px);
+    pointer-events: auto; padding: 22px;
   }
+  #over .btnrow, #over #nameRow { margin-top: 2px; }
   .screen h1 { margin: 0; font-size: 42px; letter-spacing: 1px;
     color: var(--accent); text-shadow: 0 2px 20px rgba(87,224,192,.4); }
   .screen p { margin: 4px 0; max-width: 460px; line-height: 1.5; }
@@ -182,7 +178,6 @@
   .titlecard .tag { margin: 6px 0 0; font-size: 14px; letter-spacing: 4px;
     text-transform: uppercase; opacity: .65; }
   #title .lede { max-width: 480px; text-align: center; line-height: 1.6; opacity: .92; font-size: 15px; }
-  .titlehint { font-size: 12px; opacity: .5; margin: 2px 0 0; }
 
   /* Help screen */
   #help { justify-content: flex-start; padding-top: 22px; gap: 10px; background: #04141a; }
@@ -207,7 +202,8 @@
         <span class="stats-inline"><b id="colony">1</b>&#8202;<span id="colonyWord">bacterium</span> · gen&#8202;<b id="gen">1</b> · score&#8202;<b id="score">0</b></span>
       </div>
       <div class="hudrow genome-row">
-        <div class="genome">
+        <div class="genome" id="genome">
+          <canvas id="helix"></canvas>
           <span class="gene" id="enz0">lipase</span>
           <span class="gene" id="enz1">protease</span>
           <span class="gene" id="enz2">carbohydrase</span>
@@ -215,7 +211,6 @@
           <span class="gene" id="abilChemo">chemotaxis</span>
           <span class="gene" id="abilCrispr">CRISPR</span>
         </div>
-        <span class="lineage-chip"><i id="lineageSwatch"></i><span id="lineageLabel">carb only</span></span>
       </div>
     </div>
     <div id="toast"></div>
@@ -230,7 +225,6 @@
         <button id="scoresBtn" class="ghost">High scores</button>
         <button id="helpBtn" class="ghost">How to play</button>
       </div>
-      <p class="titlehint">press <kbd>?</kbd> any time for the guide</p>
     </div>
     <div id="help" class="screen hidden">
       <h1 id="helpTitle">How to play</h1>
@@ -242,7 +236,7 @@
             <li><kbd>Space</kbd> — release the loaded <b>enzyme</b> (dissolve the particle ahead) or <b>antibiotic</b> (poison nearby protists)</li>
             <li><kbd>Tab</kbd> — switch which enzyme/antibiotic is loaded &nbsp;·&nbsp; <kbd>M</kbd> — toggle music</li>
             <li><kbd>Shift</kbd> — <b>switch lineage</b>: hand control to another generation, so you can raise several populations at different tiers (diverse tiers = harder for one virus to wipe you all)</li>
-            <li><kbd>Esc</kbd> — pause &amp; high scores &nbsp;·&nbsp; <kbd>?</kbd> — this guide</li>
+            <li><kbd>Esc</kbd> — pause &amp; high scores &nbsp;·&nbsp; <b>Help</b> button — this guide</li>
           </ul>
         </section>
         <section>
@@ -281,7 +275,8 @@
       <div id="nameRow"><label for="nameInput">Name for the leaderboard</label>
         <input id="nameInput" maxlength="18" placeholder="your name" autocomplete="off" spellcheck="false"></div>
       <div class="btnrow"><button id="restartBtn">Try again</button>
-      <button id="scoresBtn2" class="ghost">High scores</button></div>
+      <button id="scoresBtn2" class="ghost">High scores</button>
+      <button id="helpBtn3" class="ghost">Help</button></div>
     </div>
     <div id="scores" class="screen hidden">
       <h1 id="scoresTitle">High Scores</h1>
@@ -298,6 +293,7 @@
       </div>
       <div class="btnrow">
         <button id="scoresBack" class="ghost">Back</button>
+        <button id="helpBtn2" class="ghost">Help</button>
         <button id="endGameBtn" class="ghost danger hidden">End game</button>
       </div>
     </div>

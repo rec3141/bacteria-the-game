@@ -102,8 +102,8 @@
   const el = {
     energyFill: document.getElementById("energyFill"), energyTxt: document.getElementById("energyTxt"),
     gen: document.getElementById("gen"), score: document.getElementById("score"), colony: document.getElementById("colony"), colonyWord: document.getElementById("colonyWord"),
-    lineageSwatch: document.getElementById("lineageSwatch"), lineageLabel: document.getElementById("lineageLabel"),
-    title: document.getElementById("title"), over: document.getElementById("over"), chartwrap: document.getElementById("chartwrap"),
+    genome: document.getElementById("genome"), helix: document.getElementById("helix"),
+    title: document.getElementById("title"), over: document.getElementById("over"), chartwrap: document.getElementById("chartwrap"), hud: document.getElementById("hud"),
     overTitle: document.getElementById("overTitle"), overMsg: document.getElementById("overMsg"),
     startBtn: document.getElementById("startBtn"), restartBtn: document.getElementById("restartBtn"),
     enz: [document.getElementById("enz0"), document.getElementById("enz1"), document.getElementById("enz2")],
@@ -117,6 +117,7 @@
     currentRun: document.getElementById("currentRun"), endGameBtn: document.getElementById("endGameBtn"),
     toast: document.getElementById("toast"),
     help: document.getElementById("help"), helpBtn: document.getElementById("helpBtn"), helpBack: document.getElementById("helpBack"),
+    helpBtn2: document.getElementById("helpBtn2"), helpBtn3: document.getElementById("helpBtn3"),
     analysisChart: document.getElementById("analysisChart"), analysisStats: document.getElementById("analysisStats"),
     nameInput: document.getElementById("nameInput"),
     scoreDetail: document.getElementById("scoreDetail"), detailChart: document.getElementById("detailChart"),
@@ -131,6 +132,7 @@
   if (el.abilCrispr) el.abilCrispr.style.setProperty("--gc", "#c39bff"); // CRISPR = violet
   if (el.enzTox) el.enzTox.style.setProperty("--gc", "#f05ad0"); // antibiotic = magenta
   const cctx = el.chart ? el.chart.getContext("2d") : null;
+  const hlxCtx = el.helix ? el.helix.getContext("2d") : null;
   const el_subchart = document.getElementById("subchart");
   const sctx = el_subchart ? el_subchart.getContext("2d") : null;
   const el_subchartlegend = document.getElementById("subchartlegend");
@@ -233,7 +235,6 @@
   // ------------------------------------------------------------------- input
   const keys = {};
   addEventListener("keydown", (e) => {
-    if (e.key === "?") { toggleHelp(); return; }
     if (e.key === "Escape") { if (helpOpen) { hideHelp(); return; } togglePause(); return; }
     if (e.key.toLowerCase() === "m") { Music.toggle(); return; } // toggle DNA music
     if (helpOpen || paused) return; // swallow gameplay input while a menu is up
@@ -1377,6 +1378,26 @@
       }
     }
   }
+  function drawHelix(pc) {
+    if (!hlxCtx || !el.genome) return;
+    const gw = el.genome.clientWidth, gh = el.genome.clientHeight;
+    if (!gw || !gh) return;                          // not laid out yet (or headless)
+    const w = Math.round(gw), h = Math.round(gh);
+    if (el.helix.width !== w) el.helix.width = w;
+    if (el.helix.height !== h) el.helix.height = h;
+    const g = hlxCtx; g.clearRect(0, 0, w, h);
+    const col = pc ? levelColor(ecoMask(pc), upgradeTier(pc)) : "#8dffdc"; // lineage = generation colour of the steered cell
+    const cy = h/2, amp = h*0.40, P = 26;
+    g.strokeStyle = col; g.lineCap = "round";
+    for (const ph of [0, Math.PI]) {                 // two anti-phase strands
+      g.globalAlpha = 0.55; g.lineWidth = 2; g.beginPath();
+      for (let x = 0; x <= w; x += 2) { const y = cy + amp*Math.sin(x/P*6.2832 + ph); x ? g.lineTo(x, y) : g.moveTo(x, y); }
+      g.stroke();
+    }
+    g.globalAlpha = 0.3; g.lineWidth = 1.3;          // base-pair rungs where the strands are farthest apart
+    for (let x = P/4; x <= w; x += P/2) { const a = x/P*6.2832; g.beginPath(); g.moveTo(x, cy+amp*Math.sin(a)); g.lineTo(x, cy+amp*Math.sin(a+Math.PI)); g.stroke(); }
+    g.globalAlpha = 1;
+  }
   function drawChart() {
     if (!state) return;
     if (cctx) renderEcoChart(cctx, CHART.W, CHART.H, state.history, CHART.samples);
@@ -1520,8 +1541,7 @@
     el.energyTxt.textContent = Math.round(e);
     el.colony.textContent = cells.length; el.gen.textContent = state.gen; el.score.textContent = Math.round(state.score);
     if (el.colonyWord) el.colonyWord.textContent = cells.length === 1 ? "bacterium" : "bacteria";
-    if (c && el.lineageSwatch) { el.lineageSwatch.style.background = levelColor(ecoMask(c), upgradeTier(c)); // the generation colour of the cell you're steering
-      if (el.lineageLabel) el.lineageLabel.textContent = ecoLabel(ecoMask(c)); }
+    drawHelix(c); // DNA double-helix backbone under the genome, drawn in the current lineage's colour
     const pc = controlledCell();
     const amp = (n) => n > 1 ? `<sup>×${n}</sup>` : ""; // expression level shown as gene amplification (×N)
     for (let i = 0; i < 3; i++) if (el.enz[i]) {
@@ -1544,9 +1564,11 @@
     const dt = last ? Math.min((now-last)/1000, 0.05) : 0; last = now;
     if (!paused) update(dt);
     draw(); syncHud(); drawChart();
-    if (el.chartwrap) { // the live charts sit below the stage — hide them behind any menu (title/over/scores/help)
+    { // hide the HUD + live charts behind any menu (title/over/scores/help), show only during active play
       const menu = [el.title, el.over, el.scores, el.help].some((s) => s && !s.classList.contains("hidden"));
-      el.chartwrap.classList.toggle("hidden", menu || !(state && state.running));
+      const hide = menu || !(state && state.running);
+      if (el.chartwrap) el.chartwrap.classList.toggle("hidden", hide);
+      if (el.hud) el.hud.classList.toggle("hidden", hide);
     }
     requestAnimationFrame(frame);
   }
@@ -1558,6 +1580,8 @@
   if (el.scoresBtn2) el.scoresBtn2.addEventListener("click", showScores);
   if (el.scoresBack) el.scoresBack.addEventListener("click", () => { if (paused) resumeGame(); else hideScores(); });
   if (el.helpBtn) el.helpBtn.addEventListener("click", showHelp);
+  if (el.helpBtn2) el.helpBtn2.addEventListener("click", showHelp);
+  if (el.helpBtn3) el.helpBtn3.addEventListener("click", showHelp);
   if (el.helpBack) el.helpBack.addEventListener("click", hideHelp);
   if (el.endGameBtn) el.endGameBtn.addEventListener("click", endGame);
   if (el.detailBack) el.detailBack.addEventListener("click", closeScoreDetail);
