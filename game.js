@@ -62,6 +62,7 @@
       minCount: 2, immigrateEvery: 14,                   // a drifter arrives if the population crashes
       cystMealFactor: 0.45, cystEatChance: 0.35,         // cysts aren't hunted; a bumped one is usually resisted, rarely eaten (for little energy)
       killMotes: 8,                                      // biomass released as food when an antibiotic KILLS a protist (natural death releases nothing)
+      virusEnergy: 5,                                    // protists also graze free-floating viruses — a small meal, and a top-down brake on phage blooms
     },
     phage: {
       greenCount: 6, radius: 3.6, life: [16, 24], maxCount: 4000, diffuse: 22, // maxCount is a perf backstop only (was 220) — let epidemics get nasty
@@ -923,6 +924,13 @@
           killCell(c, true); pr.satiated = P.satiatedTime; break;
         }
       }
+      // protists also graze free-floating viruses on contact — a small meal and a
+      // top-down brake on phage blooms (helps with the viral crisis)
+      for (const ph of phages) {
+        if (ph.type !== "green" || ph.dead) continue;
+        const rr = pr.r + ph.r;
+        if (toroDist2(pr.x, pr.y, ph.x, ph.y) < rr*rr) { ph.dead = true; pr.energy += P.virusEnergy; }
+      }
       // reproduction: a mature, well-fed protist divides (population capped)
       if (pr.age > P.maturity && pr.energy >= P.reproEnergy && pr.reproCd <= 0 &&
           predators.length + newborns.length < P.safetyMax) {
@@ -964,6 +972,7 @@
   function updatePhages(dt) {
     const D = env.diffusivity*CFG.phage.diffuse;
     for (const ph of phages) {
+      if (ph.dead) continue; // already grazed by a protist this tick
       if (ph.type === "green") {
         // green phages never decay — they diffuse until they stick to a particle and wait
         ph.stuck = phageInSolid(ph);
@@ -1492,6 +1501,9 @@
   function renderScoreList() {
     if (!el.scoresList) return;
     const arr = (globalScores || loadScores()).slice(); // shared list when we have it, else this browser's local runs
+    // paused mid-game: drop the live run into the list so you can see exactly where it ranks
+    const liveLine = (state && state.running) ? currentRunLine() : null;
+    if (liveLine) arr.push(liveLine);
     if (!arr.length) { el.scoresList.innerHTML = `<p class="empty">No runs yet — play a game and your bacteria's evolutionary history will appear here.</p>`; return; }
     // all-time leader per category → 🏆 badge on that run's value
     const leader = {};
@@ -1506,8 +1518,9 @@
     for (const [key, label, cls] of COLS) h += `<th data-k="${key}" class="sortable ${cls}">${label}${arrow(key)}</th>`;
     h += `<th class="run">Run</th></tr></thead><tbody>`;
     arr.forEach((r, i) => {
-      h += `<tr class="srow${recId(r) === justFinishedTs ? " current" : ""}" data-id="${recId(r)}"><td class="rk">${i+1}</td>`;
-      h += `<td class="nm">${r.name ? escapeHtml(r.name) : '<span class="anon">anon</span>'}</td>`;
+      const isLive = r === liveLine;
+      h += `<tr class="srow${isLive || recId(r) === justFinishedTs ? " current" : ""}" data-id="${recId(r)}"><td class="rk">${i+1}</td>`;
+      h += `<td class="nm">${isLive ? '<span class="livedot"></span>' : ''}${r.name ? escapeHtml(r.name) : `<span class="anon">${isLive ? "this run" : "anon"}</span>`}</td>`;
       h += `<td class="num">${SCORE_VAL.score(r).toLocaleString()}${badge("score", r)}</td>`;
       h += `<td class="num">${SCORE_VAL.gen(r)}${badge("gen", r)}</td>`;
       h += `<td class="num">${fmtDur(SCORE_VAL.dur(r))}${badge("dur", r)}</td>`;
@@ -1569,21 +1582,12 @@
     if (el.scoresTitle) el.scoresTitle.textContent = paused ? "Paused" : "High Scores";
     if (el.scoresBack) el.scoresBack.textContent = paused ? "Resume" : "Back";
     if (el.endGameBtn) el.endGameBtn.classList.toggle("hidden", !active);
-    if (el.currentRun) {
-      if (active) {
-        const live = currentRunLine();
-        el.currentRun.innerHTML = `<div class="label">Current run</div>` +
-          `<div class="crow" id="curRunRow"><b>${live.score.toLocaleString()}</b> cal · gen <b>${live.gen}</b> · ${fmtDur(live.dur)} · <b>${live.upgrades.length}</b> adapt.</div>`;
-        el.currentRun.classList.remove("hidden");
-        const row = el.currentRun.querySelector("#curRunRow");
-        if (row) row.addEventListener("click", () => openScoreDetail("live", live));
-      } else el.currentRun.classList.add("hidden");
-    }
+    if (el.currentRun) el.currentRun.classList.add("hidden"); // the live run now appears inline in the ranked list
     if (el.scoresKey) { // colours now encode GENERATION (ecotype + upgrade tier), so no fixed per-ecotype swatch
       el.scoresKey.innerHTML =
-        `<span><i class="gen-swatch"></i>bacteria — a new colour each generation</span>` +
+        `<span><i class="gen-swatch"></i>bacteria</span>` +
         `<span><i class="eco-line" style="border-color:${PROTIST_COLOR}"></i>protists</span>` +
-        `<span><i class="eco-line" style="border-color:${VIRUS_COLOR}"></i>viruses <em>(own scale)</em></span>`;
+        `<span><i class="eco-line" style="border-color:${VIRUS_COLOR}"></i>viruses</span>`;
     }
     renderScoreList();       // draw from cache/local immediately…
     fetchScores();           // …then refresh from the shared leaderboard when it responds
