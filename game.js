@@ -55,6 +55,9 @@
     toxin: { life: 4.5, maxRadius: 40, growTime: 0.4, dose: 55, potency: 18, radiusPer: 0.34, // anti-protist antibiotic: fixed `dose` hit + lingering `potency`/s (NOT scaled by level); leveling GROWS the radius (radiusPer) so it hits more protists at once
              crossDist: 3, crossFactor: 1 }, // cross-reactive: bacteria a genetic distance ≥ crossDist from the releaser also take damage (×crossFactor)
     nutrient: { life: 16, radius: 3.2, maxCount: 600 },
+    // trophic role-swap: when your whole population dies you flip to the other trophic level
+    // instead of a game-over — bacteria extinct → you become a protist (grazer); protists extinct → back to a bacterium.
+    cycle: { reseedBacteria: 16, reseedProtists: 4, protistThrust: 240, protistEatScore: 3 },
     predator: {
       count: 4, radius: 22, wanderSpeed: 50, chaseSpeed: 85, senseRange: 170, satiatedTime: 4.5,
       startEnergy: 100, mealEnergy: 58, metabolism: 1.44, // eats cells for energy, drains over time (raised 25% to curb the boom from doubled food)
@@ -109,7 +112,7 @@
   const el = {
     energyFill: document.getElementById("energyFill"), energyTxt: document.getElementById("energyTxt"),
     gen: document.getElementById("gen"), score: document.getElementById("score"), colony: document.getElementById("colony"), colonyWord: document.getElementById("colonyWord"),
-    time: document.getElementById("time"),
+    time: document.getElementById("time"), roleTag: document.getElementById("roleTag"),
     genome: document.getElementById("genome"), helix: document.getElementById("helix"),
     title: document.getElementById("title"), over: document.getElementById("over"), chartwrap: document.getElementById("chartwrap"), hud: document.getElementById("hud"),
     stage: document.getElementById("stage"), game: document.getElementById("game"),
@@ -469,7 +472,7 @@
 
   function makePredator(x, y, energy, age) {
     return { x: x == null ? rand(0, WORLD_W) : wrapX(x), y: y == null ? rand(0, WORLD_H) : wrapY(y),
-      vx: 0, vy: 0, r: CFG.predator.radius, satiated: 0,
+      vx: 0, vy: 0, r: CFG.predator.radius, satiated: 0, controlled: false,
       heading: rand(0, 6.28), wobble: rand(0, 6.28), pseudo: rand(0, 6.28),
       age: age || 0, energy: energy == null ? CFG.predator.startEnergy : energy,
       lifespan: rand(CFG.predator.lifespan[0], CFG.predator.lifespan[1]),
@@ -495,7 +498,7 @@
     }
     // first gold is spawned by the always-on-board respawn logic (same buried-in-particle rule)
     cam.x = first.x; cam.y = first.y;
-    state = { gen: 1, score: 0, running: true, elapsed: 0, activeEnzyme: 2, // start with carbohydrase
+    state = { gen: 1, score: 0, running: true, elapsed: 0, activeEnzyme: 2, role: "bacterium", // start with carbohydrase, as a bacterium
       greenSeedT: rand(CFG.phage.greenSeed[0], CFG.phage.greenSeed[1]),
       predImmigrateT: CFG.predator.immigrateEvery,
       predRespawn: CFG.predator.immigrateEvery, predExtinct: false, // respawn interval halves each time protists go fully extinct
@@ -505,6 +508,52 @@
   }
 
   function controlledCell() { return cells.find((c) => c.controlled && c.alive); }
+  function controlledProtist() { return predators.find((p) => p.controlled); }
+  function controlledEntity() { return state && state.role === "protist" ? controlledProtist() : controlledCell(); }
+  // ---- trophic role-swap: flip the player between bacterium and protist on extinction ----
+  function immigrateBacteria(n) { // a diversity of bacteria drift in from offscreen (varied genomes)
+    for (let i = 0; i < n && cells.length < CFG.cell.maxCells; i++) {
+      const a = rand(0, 6.28), d = Math.hypot(VIEW_W, VIEW_H)/2 + rand(60, 380);
+      const c = makeCell(cam.x + Math.cos(a)*d, cam.y + Math.sin(a)*d, CFG.cell.startEnergy, rand(0, 6.28), 1);
+      if (Math.random() < 0.55) c.enzLvl[0] = 1 + (Math.random() < 0.3 ? 1 : 0);
+      if (Math.random() < 0.55) c.enzLvl[1] = 1 + (Math.random() < 0.3 ? 1 : 0);
+      c.enzLvl[2] = 1 + (Math.random() < 0.35 ? 1 : 0);
+      if (Math.random() < 0.40) { c.chemotaxis = true; c.chemoLevel = 1 + (Math.random() < 0.3 ? 1 : 0); }
+      if (Math.random() < 0.22) c.crispr = true;
+      if (Math.random() < 0.30) c.antibiotic = 1;
+      c.invuln = 2.5;
+      cells.push(c);
+    }
+  }
+  function becomeProtist() { // your bacteria all died → you become a grazing protist; fresh prey drifts in
+    state.role = "protist";
+    cells.forEach((c) => (c.controlled = false));
+    if (!predators.length) for (let i = 0; i < CFG.cycle.reseedProtists; i++)
+      predators.push(makePredator(cam.x + rand(-140, 140), cam.y + rand(-140, 140), CFG.predator.startEnergy, rand(0, 10)));
+    const p = predators[0]; p.controlled = true; p.energy = Math.max(p.energy, CFG.predator.startEnergy); p.age = 0;
+    cam.x = p.x; cam.y = p.y;
+    immigrateBacteria(CFG.cycle.reseedBacteria);
+    flashRole("You are now a PROTIST", "graze the bacteria — you flip back when the grazers die out");
+    Audio.play("spawn", 0.6);
+  }
+  function becomeBacterium() { // the protists died out → you rejoin the bacteria
+    state.role = "bacterium";
+    predators.forEach((p) => (p.controlled = false));
+    if (!cells.length) immigrateBacteria(CFG.cycle.reseedBacteria);
+    const c = cells[0]; if (c) { c.controlled = true; c.invuln = Math.max(c.invuln, 2); cam.x = c.x; cam.y = c.y; }
+    flashRole("You are now a BACTERIUM", "forage, evolve, divide — you flip to a protist if your kind dies out");
+    Audio.play("spawn", 0.6);
+  }
+  let _roleT = null;
+  function flashRole(title, sub) {
+    const host = el.stage || (typeof document !== "undefined" && document.body); if (!host || !host.appendChild) return;
+    let m = document.getElementById("roleFlash");
+    if (!m) { m = document.createElement("div"); m.id = "roleFlash"; host.appendChild(m); }
+    m.innerHTML = `<b>${title}</b><span>${sub || ""}</span>`;
+    m.classList.add("show");
+    if (_roleT) clearTimeout(_roleT);
+    _roleT = setTimeout(() => m.classList.remove("show"), 3400);
+  }
   function burst(x, y, color, n) {
     for (let i = 0; i < n; i++) { const a = rand(0, 6.28), s = rand(30, 120);
       particles.push({ x, y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: rand(.3, .7), color }); }
@@ -565,6 +614,11 @@
   // so you can shepherd several populations at different adaptation tiers (diversity = virus resilience).
   function switchControl() {
     if (!state || !state.running) return;
+    if (state.role === "protist") { // as a grazer, hop between protists
+      const i = predators.findIndex((p) => p.controlled);
+      if (i >= 0 && predators.length > 1) { predators[i].controlled = false; predators[(i + 1) % predators.length].controlled = true; Audio.play("hit", 0.5); }
+      return;
+    }
     const cur = controlledCell(); if (!cur) return;
     const reps = new Map(); // one healthy representative per generation bucket in the living colony
     for (const c of cells) { if (!c.alive || c.cyst) continue;
@@ -677,7 +731,7 @@
   function gameOver() {
     state.running = false;
     recordGame();
-    el.overTitle.textContent = "Extinction!";
+    el.overTitle.textContent = "Run ended";
     el.overMsg.innerHTML = `Your lineage reached <b>generation ${state.gen}</b> and consumed <b>${Math.round(state.score).toLocaleString()}</b> calories.`;
     drawAnalysis();
     if (el.nameInput) el.nameInput.value = playerName; // prefill with the remembered name
@@ -703,8 +757,9 @@
     for (const c of cells) if (c.alive && c.energy >= CFG.cell.divideThreshold) divide(c);
     const hadControlled = cells.some((c) => c.controlled && c.alive);
     cells = cells.filter((c) => c.alive);
-    if (!cells.length) { gameOver(); return; }
-    if (!hadControlled && !cells.some((c) => c.controlled)) cells[0].controlled = true;
+    // trophic role-swap: bacteria extinct → you become a protist (not game over)
+    if (state.role === "bacterium" && !cells.length) { becomeProtist(); return; }
+    if (state.role === "bacterium" && cells.length && !hadControlled && !cells.some((c) => c.controlled)) cells[0].controlled = true;
     // particle lifecycle: drift slowly; when fully eaten or past its lifespan, respawn
     // (past-lifespan particles erode away voxel-by-voxel rather than vanishing)
     for (const s of substrates) {
@@ -723,10 +778,14 @@
       }
     }
     updateEnzymes(dt); updateToxins(dt); updateNutrients(dt); updatePredators(dt); updatePhages(dt);
+    // while you're a protist: keep control on a living grazer, or flip back to a bacterium when they die out
+    if (state.role === "protist" && !controlledProtist()) {
+      if (predators.length) predators[0].controlled = true; else becomeBacterium();
+    }
     for (const q of particles) { q.x += q.vx*dt; q.y += q.vy*dt; q.vx *= 0.9; q.vy *= 0.9; q.life -= dt; }
     particles = particles.filter((q) => q.life > 0);
-    // camera follows the controlled cell
-    const pc = controlledCell(); if (pc) { cam.x = pc.x; cam.y = pc.y; }
+    // camera follows whichever entity you're controlling (cell or protist)
+    const pc = controlledEntity(); if (pc) { cam.x = pc.x; cam.y = pc.y; }
     // sample per-ecotype abundances for the time-series chart
     const greenCount = phages.reduce((a, p) => a + (p.type === "green"), 0);
     const subTotals = [0, 0, 0]; // total available organic of each resource on the board (lipid/protein/carb)
@@ -968,15 +1027,24 @@
       if (pr.toxT > 0) pr.toxT -= dt;
       if (pr.satiated > 0) pr.satiated -= dt;
       const hunting = pr.satiated <= 0;
-      let target = null, td = P.senseRange**2;
-      if (hunting) for (const c of cells) { if (!c.alive || c.cyst) continue; const d = toroDist2(pr.x, pr.y, c.x, c.y); if (d < td) { td = d; target = c; } }
-      // no active prey in range → drift toward the nearest cyst bank to graze it
-      if (hunting && !target) for (const c of cells) { if (!c.alive || !c.cyst) continue; const d = toroDist2(pr.x, pr.y, c.x, c.y); if (d < td) { td = d; target = c; } }
-      if (target) pr.heading = Math.atan2(dy(target.y, pr.y), dx(target.x, pr.x));
-      else { pr.wobble += dt; pr.heading += Math.sin(pr.wobble*1.7)*dt*2; }
-      const base = target ? P.chaseSpeed : P.wanderSpeed;
-      const spd = (hunting ? base : base*0.5)/Math.sqrt(env.viscosity);
-      pr.vx = Math.cos(pr.heading)*spd; pr.vy = Math.sin(pr.heading)*spd;
+      if (pr.controlled) {                              // YOU are steering this protist (trophic role-swap)
+        const a = axis();
+        if (a.x !== 0 || a.y !== 0) {
+          pr.heading = Math.atan2(a.y, a.x);
+          const spd = CFG.cycle.protistThrust/Math.sqrt(env.viscosity);
+          pr.vx = Math.cos(pr.heading)*spd; pr.vy = Math.sin(pr.heading)*spd;
+        } else { pr.vx *= 0.8; pr.vy *= 0.8; }
+      } else {
+        let target = null, td = P.senseRange**2;
+        if (hunting) for (const c of cells) { if (!c.alive || c.cyst) continue; const d = toroDist2(pr.x, pr.y, c.x, c.y); if (d < td) { td = d; target = c; } }
+        // no active prey in range → drift toward the nearest cyst bank to graze it
+        if (hunting && !target) for (const c of cells) { if (!c.alive || !c.cyst) continue; const d = toroDist2(pr.x, pr.y, c.x, c.y); if (d < td) { td = d; target = c; } }
+        if (target) pr.heading = Math.atan2(dy(target.y, pr.y), dx(target.x, pr.x));
+        else { pr.wobble += dt; pr.heading += Math.sin(pr.wobble*1.7)*dt*2; }
+        const base = target ? P.chaseSpeed : P.wanderSpeed;
+        const spd = (hunting ? base : base*0.5)/Math.sqrt(env.viscosity);
+        pr.vx = Math.cos(pr.heading)*spd; pr.vy = Math.sin(pr.heading)*spd;
+      }
       pr.x = wrapX(pr.x + pr.vx*dt); pr.y = wrapY(pr.y + pr.vy*dt);
       collideCircle(pr, pr.r); // protists are too big to enter tunnels
       pr.pseudo += dt*4;
@@ -985,6 +1053,7 @@
         if (c.cyst && Math.random() >= P.cystEatChance*dt) continue; // tough cyst usually resists a bump
         {
           pr.energy += c.cyst ? P.mealEnergy*P.cystMealFactor : P.mealEnergy;
+          if (pr.controlled) state.score += CFG.cycle.protistEatScore; // you score calories while grazing as a protist
           killCell(c, true); pr.satiated = P.satiatedTime; break;
         }
       }
@@ -1344,6 +1413,10 @@
     for (let i = 0; i <= 9; i++) { const a = i/9*6.28, rr = r*(0.85 + 0.25*Math.sin(a*3 + pr.pseudo)); ctx[i ? "lineTo" : "moveTo"](Math.cos(a)*rr, Math.sin(a)*rr); }
     ctx.closePath(); ctx.fill();
     ctx.fillStyle = "rgba(90,20,50,0.8)"; ctx.beginPath(); ctx.arc(Math.cos(pr.pseudo)*3, Math.sin(pr.pseudo)*3, r*0.3, 0, 6.28); ctx.fill();
+    if (pr.controlled) { // the protist YOU are steering — bright ring so it stands out
+      ctx.globalAlpha = 1; ctx.strokeStyle = "#8dffdc"; ctx.lineWidth = 2.4;
+      ctx.beginPath(); ctx.arc(0, 0, r + 5, 0, 6.28); ctx.stroke();
+    }
     ctx.restore();
   }
 
@@ -1722,13 +1795,20 @@
   // ------------------------------------------------------------------ hud sync
   function syncHud() {
     if (!state) return;
+    const protist = state.role === "protist";
     if (el.toast && el.toast.classList.contains("show")) positionToast(); // keep the announcement pinned above the cell
-    const c = controlledCell(), e = c ? c.energy : 0;
-    el.energyFill.style.width = Math.min(100, e/CFG.cell.divideThreshold*100) + "%"; // full = ready to divide (cells split at the threshold, never reaching maxEnergy)
+    const ent = controlledEntity(), e = ent ? ent.energy : 0;
+    const full = protist ? CFG.predator.reproEnergy : CFG.cell.divideThreshold; // "full" = ready to divide
+    el.energyFill.style.width = Math.min(100, e/full*100) + "%";
     el.energyTxt.textContent = Math.round(e);
     el.colony.textContent = cells.length; el.gen.textContent = state.gen; el.score.textContent = Math.round(state.score);
     if (el.time) el.time.textContent = fmtDur(Math.floor(state.elapsed));
     if (el.colonyWord) el.colonyWord.textContent = cells.length === 1 ? "bacterium" : "bacteria";
+    // as a protist there's no genome to show — hide the strand and flag the role instead
+    if (el.genome) el.genome.style.display = protist ? "none" : "";
+    if (el.roleTag) el.roleTag.classList.toggle("hidden", !protist);
+    if (protist) return;
+    const c = controlledCell();
     drawHelix(c); // DNA double-helix backbone under the genome, drawn in the current lineage's colour
     if (el.tLin && c) el.tLin.style.background = levelColor(ecoMask(c), upgradeTier(c)); // lineage button = a dot in the current lineage colour
     const pc = controlledCell();

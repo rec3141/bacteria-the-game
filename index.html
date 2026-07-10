@@ -126,6 +126,17 @@
     box-shadow: 0 4px 18px rgba(0,0,0,.5);
     transition: opacity .25s ease, transform .25s ease;
   }
+  #roleTag { align-self: center; font-size: 12px; font-weight: bold; letter-spacing: .5px;
+    color: #ffd6ec; background: rgba(255,158,192,.16); border: 1px solid rgba(255,158,192,.5);
+    padding: 1px 9px; border-radius: 11px; }
+  #roleFlash { position: absolute; top: 34%; left: 50%; transform: translate(-50%,-50%) scale(.9);
+    z-index: 9; text-align: center; pointer-events: none; opacity: 0;
+    transition: opacity .3s ease, transform .3s ease; }
+  #roleFlash.show { opacity: 1; transform: translate(-50%,-50%) scale(1); }
+  #roleFlash b { display: block; font-size: 30px; letter-spacing: 1px; color: var(--accent);
+    text-shadow: 0 2px 22px rgba(87,224,192,.5); }
+  #roleFlash span { display: block; margin-top: 6px; font-size: 14px; color: var(--ink); opacity: .9;
+    text-shadow: 0 1px 6px rgba(0,0,0,.8); }
   #audioFlash { position: absolute; top: 12px; left: 50%; z-index: 8; white-space: nowrap;
     transform: translateX(-50%) translateY(-8px); opacity: 0; pointer-events: none;
     background: rgba(6,22,27,.9); border: 1px solid rgba(87,224,192,.4); color: var(--ink);
@@ -326,6 +337,7 @@
         <div class="bar"><span id="energyFill"></span></div>
         <span id="energyTxt" class="stat">0</span>
         <span class="stats-inline"><b id="colony">1</b>&#8202;<span id="colonyWord">bacterium</span> · gen&#8202;<b id="gen">1</b> · <b id="score">0</b>&#8202;cal · <b id="time">0:00</b></span>
+        <span id="roleTag" class="hidden">🛡️ PROTIST</span>
       </div>
       <div class="hudrow genome-row">
         <div class="genome" id="genome">
@@ -376,6 +388,10 @@
         <section>
           <h3>The loop</h3>
           <p>You can't swim through the big particles, but you can <b>dissolve</b> them with extracellular enzymes to reach the nutrients inside. Eat enough and you <b>elongate and divide</b>; daughters forage on their own and inherit everything you've evolved. Respiration burns energy every second. A cell that runs low on energy forms a resistant <b>cyst</b> until conditions improve.</p>
+        </section>
+        <section>
+          <h3>When your kind dies out</h3>
+          <p>Extinction isn't the end — it's a <b>role swap</b>. If all your bacteria die, you <b>become a protist</b> and graze the bacteria yourself (a fresh, diverse batch drifts in as prey). When the protists later die out, you drop back into a <b>bacterium</b>. Ride the food web up and down; the run only ends when you pick <b>End game</b>.</p>
         </section>
         <section>
           <h3>Food — three resources</h3>
