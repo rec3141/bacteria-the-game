@@ -5,7 +5,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-REMOTE=dreamhost:~/bacteria.cryomics.org/
+REMOTE="dreamhost:bacteria.cryomics.org/"  # home-relative on the remote (avoid local ~ expansion)
 
 echo "==> deploy game files → $REMOTE"
 rsync -avz \
