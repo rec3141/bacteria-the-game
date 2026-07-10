@@ -1184,20 +1184,25 @@
     ctx.globalAlpha = 0.85; ctx.fillStyle = "rgba(4,20,26,0.7)"; ctx.strokeStyle = "rgba(120,220,200,0.4)";
     ctx.lineWidth = 1; ctx.fillRect(mx, my, mw, mh); ctx.strokeRect(mx, my, mw, mh);
     const kx = mw/WORLD_W, ky = mh/WORLD_H;
+    // CENTRED on the player: everything is drawn relative to your cell (toroidal wrap via dx/dy),
+    // so you stay in the middle and the world scrolls under you — much easier to navigate the wrap.
+    const pc = controlledCell(), cx0 = mx + mw/2, cy0 = my + mh/2;
+    const MX = pc ? (ex) => cx0 + dx(ex, pc.x)*kx : (ex) => mx + ex*kx;
+    const MY = pc ? (ey) => cy0 + dy(ey, pc.y)*ky : (ey) => my + ey*ky;
+    ctx.beginPath(); ctx.rect(mx, my, mw, mh); ctx.clip(); // keep marks inside the frame
     for (const p of substrates) { ctx.fillStyle = p.tint; const r = Math.max(2, p.R*kx);
-      ctx.beginPath(); ctx.arc(mx + p.x*kx, my + p.y*ky, r, 0, 6.28); ctx.fill(); }
+      ctx.beginPath(); ctx.arc(MX(p.x), MY(p.y), r, 0, 6.28); ctx.fill(); }
     // colony dots coloured by generation (same palette as the chart); cysts hidden (too many, too cluttered)
     for (const c of cells) if (!c.controlled && !c.cyst) {
       ctx.fillStyle = levelColor(ecoMask(c), upgradeTier(c));
-      ctx.fillRect(mx + c.x*kx - 1, my + c.y*ky - 1, 2, 2);
+      ctx.fillRect(MX(c.x) - 1, MY(c.y) - 1, 2, 2);
     }
     ctx.fillStyle = "#ff7a6b";
-    for (const pr of predators) { ctx.beginPath(); ctx.arc(mx + pr.x*kx, my + pr.y*ky, 2.5, 0, 6.28); ctx.fill(); }
+    for (const pr of predators) { ctx.beginPath(); ctx.arc(MX(pr.x), MY(pr.y), 2.5, 0, 6.28); ctx.fill(); }
     // gold phage — a bright STAR so it stands out from round dots
-    for (const ph of phages) if (ph.type === "gold") drawMiniStar(mx + ph.x*kx, my + ph.y*ky, 5.5, 2.4, "#ffd24a");
-    // your cell — a white-ringed teal DIAMOND, unmistakable
-    const pc = controlledCell();
-    if (pc) drawMiniDiamond(mx + pc.x*kx, my + pc.y*ky, 4.5, "#8dffdc");
+    for (const ph of phages) if (ph.type === "gold") drawMiniStar(MX(ph.x), MY(ph.y), 5.5, 2.4, "#ffd24a");
+    // your cell — a white-ringed teal DIAMOND, dead centre
+    if (pc) drawMiniDiamond(cx0, cy0, 4.5, "#8dffdc");
     ctx.restore();
   }
   function drawMiniDiamond(x, y, r, fill) {
