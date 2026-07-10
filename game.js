@@ -542,7 +542,7 @@
     d1.enzLvl = c.enzLvl.slice(); d2.enzLvl = c.enzLvl.slice();
     if (c.infectedGreen) { d2.infectedGreen = true; d2.lysisT = c.lysisT; burst(c.x, c.y, "#7CFC5A", 8); } // virus segregates into one daughter; d1 (your lineage) stays clean
     cells.splice(cells.indexOf(c), 1, d1, d2);
-    if (g > state.gen) state.gen = g;
+    if (c.controlled) state.gen++; // count a generation only when the cell YOU are steering divides
     burst(c.x, c.y, "#ffd24a", 14);
     if (c.controlled) Audio.play("divide", 0.7);
   }
