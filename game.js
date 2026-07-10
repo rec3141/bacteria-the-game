@@ -66,7 +66,7 @@
       infectHalo: 5,        // adsorption reach beyond the cell body
       burst: [2, 5],        // green progeny released when an infected cell dies (lowered a bit — uncapped viruses compound hard)
       latent: [9, 15],      // seconds from green infection to lysis
-      greenSeed: [5, 9], greenFloor: 9, // background viral reservoir: top up near cells when green runs low
+      greenSeed: [5, 9], greenFloor: 9, // reservoir: every greenSeed s, ensure the sampled lineage has ≥greenFloor phages tuned to ITS tier
       hostTolerance: 2,     // kill-the-winner: a phage infects only cells within this many upgrade-tiers of its host
       goldLife: [90, 140],  // gold phage lingers far longer than green — you can chase it down
                             // (one is always kept on the board, respawning near the player when used)
@@ -995,12 +995,18 @@
     state.greenSeedT -= dt;
     if (state.greenSeedT <= 0) {
       state.greenSeedT = rand(CFG.phage.greenSeed[0], CFG.phage.greenSeed[1]);
-      const green = phages.reduce((a, p) => a + (p.type === "green"), 0);
-      if (cells.length && green < CFG.phage.greenFloor && phages.length < CFG.phage.maxCount) {
-        const a = rand(0, 6.28), d = Math.hypot(VIEW_W, VIEW_H)/2 + rand(80, 400);
-        const rc = cells[(Math.random()*cells.length)|0]; // reservoir tracks a random colony member's tier (±1 drift)
-        const host = Math.max(0, upgradeTier(rc) + ((Math.random()*3)|0) - 1);
-        phages.push(makePhage("green", cam.x + Math.cos(a)*d, cam.y + Math.sin(a)*d, host));
+      // pick an (abundance-weighted) lineage and make sure SOME phage can infect it. Gating per-tier, not on
+      // total phage count, is what keeps kill-the-winner working: a newly-evolved tier attracts fresh viruses
+      // instead of booming unchecked just because there's already a big cloud tuned to older tiers.
+      const rc = cells.length ? cells[(Math.random()*cells.length)|0] : null;
+      if (rc && !rc.cyst && phages.length < CFG.phage.maxCount) {
+        const tier = upgradeTier(rc);
+        let matching = 0; for (const p of phages) if (p.type === "green" && hostMatch(p.host, tier)) matching++;
+        if (matching < CFG.phage.greenFloor) {
+          const a = rand(0, 6.28), d = Math.hypot(VIEW_W, VIEW_H)/2 + rand(80, 400);
+          const host = Math.max(0, tier + ((Math.random()*3)|0) - 1);
+          phages.push(makePhage("green", cam.x + Math.cos(a)*d, cam.y + Math.sin(a)*d, host));
+        }
       }
     }
     // always keep one gold phage on the board — respawns the instant one is used,
