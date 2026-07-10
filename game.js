@@ -121,13 +121,21 @@
     scoreDetail: document.getElementById("scoreDetail"), detailChart: document.getElementById("detailChart"),
     detailStats: document.getElementById("detailStats"), detailTitle: document.getElementById("detailTitle"),
     detailBack: document.getElementById("detailBack"),
+    analysisSubChart: document.getElementById("analysisSubChart"), detailSubChart: document.getElementById("detailSubChart"),
   };
   const actx = el.analysisChart ? el.analysisChart.getContext("2d") : null;
+  const asctx = el.analysisSubChart ? el.analysisSubChart.getContext("2d") : null;
   el.enz.forEach((e, i) => { if (e) e.style.color = RESOURCES[i].color; }); // colour labels once
   if (el.abilChemo) el.abilChemo.style.color = "#ffd24a"; // chemotaxis = gold
   if (el.abilCrispr) el.abilCrispr.style.color = "#c39bff"; // CRISPR = violet
   if (el.enzTox) el.enzTox.style.color = "#f05ad0"; // antibiotic = magenta
   const cctx = el.chart ? el.chart.getContext("2d") : null;
+  const el_subchart = document.getElementById("subchart");
+  const sctx = el_subchart ? el_subchart.getContext("2d") : null;
+  const el_subchartlegend = document.getElementById("subchartlegend");
+  if (el_subchartlegend) el_subchartlegend.innerHTML = // static — the resource colours match the particle blocks
+    RESOURCES.map((r) => `<span><i style="background:${r.color}"></i>${r.key}</span>`).join("") +
+    `<span id="subchartTitle">food available vs. time</span>`;
 
   // -------------------------------------------------------------------- audio
   const Audio = (() => {
@@ -539,10 +547,8 @@
     onCellDeath(c, byPredator ? "predator" : "starve");
   }
 
-  // Shared annotated renderer: the run's ecotype chart + vertical markers where each upgrade happened.
-  // Used by the game-over screen (live state) and by the high-score detail view (a saved record).
-  function annotateRun(g, W, H, hist, upgrades, dur) {
-    renderEcoChart(g, W, H, hist);
+  // vertical markers where each adaptation happened — overlaid on both the ecotype and substrate charts
+  function drawAdaptationMarkers(g, W, H, upgrades, dur) {
     if (!upgrades || !upgrades.length) return;
     const d = Math.max(1, dur), fs = H > 150 ? 11 : 9, rows = H > 150 ? 4 : 3;
     for (const u of upgrades) { // bright vertical line for gene acquisitions, faint for level-ups
@@ -558,6 +564,10 @@
     });
     g.globalAlpha = 1;
   }
+  // Shared annotated renderers (game-over screen + high-score detail view): ecotype and substrate charts,
+  // both with adaptation markers so you can read "new enzyme → its substrate gets eaten → colony booms".
+  function annotateRun(g, W, H, hist, upgrades, dur) { renderEcoChart(g, W, H, hist); drawAdaptationMarkers(g, W, H, upgrades, dur); }
+  function annotateSub(g, W, H, hist, upgrades, dur) { renderSubChart(g, W, H, hist); drawAdaptationMarkers(g, W, H, upgrades, dur); }
   function runStatsHtml(hist, upgrades) {
     let peakCol = 0, peakP = 0, peakV = 0;
     for (const s of hist) { let t = 0; for (let i = 0; i < 8; i++) t += s.eco[i]; if (t > peakCol) peakCol = t; if (s.p > peakP) peakP = s.p; if ((s.v||0) > peakV) peakV = s.v; }
@@ -566,6 +576,7 @@
   function drawAnalysis() {
     if (!actx || !state) return;
     annotateRun(actx, el.analysisChart.width, el.analysisChart.height, state.fullHist, state.upgrades, state.elapsed);
+    if (asctx) annotateSub(asctx, el.analysisSubChart.width, el.analysisSubChart.height, state.fullHist, state.upgrades, state.elapsed);
     if (el.analysisStats) el.analysisStats.innerHTML = runStatsHtml(state.fullHist, state.upgrades);
   }
   function gameOver() {
@@ -623,11 +634,13 @@
     const pc = controlledCell(); if (pc) { cam.x = pc.x; cam.y = pc.y; }
     // sample per-ecotype abundances for the time-series chart
     const greenCount = phages.reduce((a, p) => a + (p.type === "green"), 0);
+    const subTotals = [0, 0, 0]; // total available organic of each resource on the board (lipid/protein/carb)
+    for (const p of substrates) { const o = p.orgByType; subTotals[0] += o[0]; subTotals[1] += o[1]; subTotals[2] += o[2]; }
     state.chartT -= dt;
     if (state.chartT <= 0) {
       state.chartT = CHART.interval;
       const s = ecoSample();
-      state.history.push({ eco: s.eco, buckets: s.buckets, p: predators.length, v: greenCount });
+      state.history.push({ eco: s.eco, buckets: s.buckets, sub: subTotals.slice(), p: predators.length, v: greenCount });
       if (state.history.length > CHART.samples) state.history.shift();
       updateLegend(s.eco, predators.length, greenCount);
     }
@@ -636,7 +649,7 @@
     if (state.fullT <= 0) {
       state.fullT = state.fullInterval;
       const fs = ecoSample();
-      state.fullHist.push({ eco: fs.eco, buckets: fs.buckets, p: predators.length, v: greenCount });
+      state.fullHist.push({ eco: fs.eco, buckets: fs.buckets, sub: subTotals.slice(), p: predators.length, v: greenCount });
       if (state.fullHist.length > 600) { state.fullHist = state.fullHist.filter((_, i) => i % 2 === 0); state.fullInterval *= 2; }
     }
     flagPhase += dt*12;
@@ -1219,7 +1232,7 @@
   // An ecotype is the set of acquired capabilities. Carbohydrase is universal, so
   // the differentiators are lipase(1) | protease(2) | chemotaxis(4) → 8 ecotypes.
   // Colours: dataviz skill's validated 8-hue categorical palette (dark, CVD-safe order).
-  const CHART = { interval: 0.5, samples: 200, W: 800, H: 96, surface: "#06181d" };
+  const CHART = { interval: 0.5, samples: 200, W: 800, H: 96, subH: 64, surface: "#06181d" };
   const ECO_COLOR = ["#3987e5", "#199e70", "#c98500", "#008300", "#9085e9", "#e66767", "#d55181", "#d95926"];
   const PROTIST_COLOR = "#ff9ec0", VIRUS_COLOR = "#8bf06a", CYST_COLOR = "#9aa6a0", CRISPR_COLOR = "#c39bff", TOXIN_COLOR = "#f05ad0";
   function ecoMask(c) { return (c.enzLvl[0] > 0 ? 1 : 0) | (c.enzLvl[1] > 0 ? 2 : 0) | (c.chemotaxis ? 4 : 0); }
@@ -1312,9 +1325,35 @@
       g.stroke(); g.setLineDash([]);
     }
   }
+  // Second chart: available food of each resource type stacked over time. Watch a band get eaten down right
+  // after you acquire its enzyme — that consumption is what fuels the colony boom you see on the ecotype chart.
+  function renderSubChart(g, W, H, hist, denom) {
+    g.clearRect(0, 0, W, H);
+    g.fillStyle = CHART.surface; g.fillRect(0, 0, W, H);
+    let maxY = 10;
+    for (const s of hist) { if (!s.sub) continue; const tot = s.sub[0] + s.sub[1] + s.sub[2]; if (tot > maxY) maxY = tot; }
+    const n = denom || Math.max(hist.length, 2), pad = H < 70 ? 8 : 14;
+    const xAt = (i) => i/(n-1)*W, yAt = (v) => H - (v/maxY)*(H-pad) - 2;
+    g.strokeStyle = "rgba(255,255,255,0.06)"; g.lineWidth = 1;
+    for (let k = 1; k <= 3; k++) { const y = H - k/4*(H-pad) - 2; g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }
+    g.fillStyle = "rgba(215,245,238,0.5)"; g.font = "10px 'Trebuchet MS', sans-serif"; g.textAlign = "left";
+    g.fillText(String(Math.round(maxY)), 3, 10); g.fillText("0", 3, H - 3);
+    if (hist.length > 1) {
+      const last = hist.length - 1, cum = hist.map(() => 0);
+      for (let r = 0; r < 3; r++) { // stack lipid / protein / carbohydrate in their resource colours
+        g.fillStyle = RESOURCES[r].color;
+        g.beginPath(); g.moveTo(xAt(0), yAt(cum[0]));
+        for (let i = 1; i <= last; i++) g.lineTo(xAt(i), yAt(cum[i]));
+        for (let i = last; i >= 0; i--) g.lineTo(xAt(i), yAt(cum[i] + (hist[i].sub ? hist[i].sub[r] : 0)));
+        g.closePath(); g.fill();
+        for (let i = 0; i <= last; i++) cum[i] += (hist[i].sub ? hist[i].sub[r] : 0);
+      }
+    }
+  }
   function drawChart() {
-    if (!cctx || !state) return;
-    renderEcoChart(cctx, CHART.W, CHART.H, state.history, CHART.samples);
+    if (!state) return;
+    if (cctx) renderEcoChart(cctx, CHART.W, CHART.H, state.history, CHART.samples);
+    if (sctx) renderSubChart(sctx, CHART.W, CHART.subH, state.history, CHART.samples);
   }
 
   // ---------------------------------------------------------------- high scores
@@ -1382,6 +1421,7 @@
   function openScoreDetail(rankHtml, rec) {
     if (!el.scoreDetail || !el.detailChart) return;
     annotateRun(el.detailChart.getContext("2d"), el.detailChart.width, el.detailChart.height, rec.hist || [], rec.upgrades, rec.dur);
+    if (el.detailSubChart) annotateSub(el.detailSubChart.getContext("2d"), el.detailSubChart.width, el.detailSubChart.height, rec.hist || [], rec.upgrades, rec.dur);
     if (el.detailStats) el.detailStats.innerHTML = runStatsHtml(rec.hist || [], rec.upgrades);
     if (el.detailTitle) el.detailTitle.innerHTML =
       `${rankHtml}${rec.name ? " · " + escapeHtml(rec.name) : ""} · <b>${rec.score}</b> · generation ${rec.gen} · survived ${fmtDur(rec.dur)}`;
