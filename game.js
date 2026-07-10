@@ -1702,33 +1702,30 @@
   function setupTouch() {
     const zone = el.moveZone;
     if (zone) {
-      let id = null, holdT = null, held = false, sx0 = 0, sy0 = 0, last = null;
-      const DEAD = 16, HOLD_MS = 140, TAP_MOVE = 12;
+      let id = null, moved = false, sx0 = 0, sy0 = 0;
+      const MOVE = 14; // px from the touchdown point before it counts as a drag (vs. a tap)
+      // direction is measured from where the finger first landed — a floating origin,
+      // so you can steer from anywhere on the field, not just relative to screen centre.
       const aim = (t) => {
-        const r = el.stage.getBoundingClientRect(), cx = r.left + r.width/2, cy = r.top + r.height/2;
-        const dxp = t.clientX - cx, dyp = t.clientY - cy, d = Math.hypot(dxp, dyp);
+        const dxp = t.clientX - sx0, dyp = t.clientY - sy0, d = Math.hypot(dxp, dyp);
         touchVec.active = true;
-        if (d > DEAD) { touchVec.x = dxp/d; touchVec.y = dyp/d; } else { touchVec.x = touchVec.y = 0; }
+        if (d > MOVE) { touchVec.x = dxp/d; touchVec.y = dyp/d; } else { touchVec.x = touchVec.y = 0; }
       };
       const find = (l) => { for (const t of l) if (t.identifier === id) return t; return null; };
-      const clearHold = () => { if (holdT) { clearTimeout(holdT); holdT = null; } };
       zone.addEventListener("touchstart", (e) => {
         if (id !== null) return; const t = e.changedTouches[0];
-        id = t.identifier; sx0 = t.clientX; sy0 = t.clientY; last = t; held = false;
-        holdT = setTimeout(() => { held = true; if (last) aim(last); }, HOLD_MS); // hold in place → start moving toward finger
-        e.preventDefault();
+        id = t.identifier; sx0 = t.clientX; sy0 = t.clientY; moved = false;
+        touchVec.active = true; touchVec.x = touchVec.y = 0; e.preventDefault();
       }, { passive: false });
       zone.addEventListener("touchmove", (e) => {
-        const t = find(e.changedTouches); if (!t) return; last = t;
-        if (!held && Math.hypot(t.clientX - sx0, t.clientY - sy0) > TAP_MOVE) { held = true; clearHold(); } // a drag, not a tap
-        if (held) aim(t);
-        e.preventDefault();
+        const t = find(e.changedTouches); if (!t) return;
+        if (Math.hypot(t.clientX - sx0, t.clientY - sy0) > MOVE) moved = true;
+        aim(t); e.preventDefault();
       }, { passive: false });
       const end = (e) => {
         if (!find(e.changedTouches)) return;
-        clearHold();
-        if (!held && !paused && !helpOpen && !sciOpen && state && state.running) playerEnzyme(); // quick tap = fire enzyme
-        id = null; held = false; resetTouch();
+        if (!moved && !paused && !helpOpen && !sciOpen && state && state.running) playerEnzyme(); // no drag = tap = fire enzyme
+        id = null; moved = false; resetTouch();
       };
       zone.addEventListener("touchend", end); zone.addEventListener("touchcancel", end);
     }
