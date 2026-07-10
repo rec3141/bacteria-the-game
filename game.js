@@ -126,10 +126,10 @@
   };
   const actx = el.analysisChart ? el.analysisChart.getContext("2d") : null;
   const asctx = el.analysisSubChart ? el.analysisSubChart.getContext("2d") : null;
-  el.enz.forEach((e, i) => { if (e) e.style.color = RESOURCES[i].color; }); // colour labels once
-  if (el.abilChemo) el.abilChemo.style.color = "#ffd24a"; // chemotaxis = gold
-  if (el.abilCrispr) el.abilCrispr.style.color = "#c39bff"; // CRISPR = violet
-  if (el.enzTox) el.enzTox.style.color = "#f05ad0"; // antibiotic = magenta
+  el.enz.forEach((e, i) => { if (e) e.style.setProperty("--gc", RESOURCES[i].color); }); // per-gene colour (used when owned)
+  if (el.abilChemo) el.abilChemo.style.setProperty("--gc", "#ffd24a"); // chemotaxis = gold
+  if (el.abilCrispr) el.abilCrispr.style.setProperty("--gc", "#c39bff"); // CRISPR = violet
+  if (el.enzTox) el.enzTox.style.setProperty("--gc", "#f05ad0"); // antibiotic = magenta
   const cctx = el.chart ? el.chart.getContext("2d") : null;
   const el_subchart = document.getElementById("subchart");
   const sctx = el_subchart ? el_subchart.getContext("2d") : null;
@@ -240,8 +240,8 @@
     if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," ","Tab"].includes(e.key)) e.preventDefault();
     keys[e.key.toLowerCase()] = true;
     if (e.key === " ") playerEnzyme();
-    if (e.key.toLowerCase() === "x") cycleEnzyme();
-    if (e.key === "Tab") switchControl(); // swap which lineage you're steering
+    if (!e.repeat && e.key === "Tab") cycleEnzyme();      // switch loaded enzyme / antibiotic
+    if (!e.repeat && e.key === "Shift") switchControl();  // switch which lineage you're steering
   });
   addEventListener("keyup", (e) => { keys[e.key.toLowerCase()] = false; });
   function axis() {
@@ -1523,17 +1523,18 @@
     if (c && el.lineageSwatch) { el.lineageSwatch.style.background = levelColor(ecoMask(c), upgradeTier(c)); // the generation colour of the cell you're steering
       if (el.lineageLabel) el.lineageLabel.textContent = ecoLabel(ecoMask(c)); }
     const pc = controlledCell();
+    const amp = (n) => n > 1 ? `<sup>×${n}</sup>` : ""; // expression level shown as gene amplification (×N)
     for (let i = 0; i < 3; i++) if (el.enz[i]) {
       const lvl = pc ? pc.enzLvl[i] : (i === 2 ? 1 : 0), owned = lvl > 0;
       el.enz[i].classList.toggle("owned", owned);
       el.enz[i].classList.toggle("active", owned && i === state.activeEnzyme);
-      el.enz[i].textContent = RESOURCES[i].enzyme + (owned ? " " + lvl : ""); // show each enzyme's level
+      el.enz[i].innerHTML = RESOURCES[i].enzyme + (owned ? amp(lvl) : "");
     }
     if (el.enzTox) { const lvl = pc ? pc.antibiotic : 0, owned = lvl > 0;
       el.enzTox.classList.toggle("owned", owned);
       el.enzTox.classList.toggle("active", owned && state.activeEnzyme === 3);
-      el.enzTox.textContent = "antibiotic" + (owned ? " " + lvl : ""); }
-    if (el.abilChemo) { const on = !!(pc && pc.chemotaxis); el.abilChemo.classList.toggle("owned", on); el.abilChemo.textContent = "chemotaxis" + (on ? " " + pc.chemoLevel : ""); }
+      el.enzTox.innerHTML = "antibiotic" + (owned ? amp(lvl) : ""); }
+    if (el.abilChemo) { const on = !!(pc && pc.chemotaxis); el.abilChemo.classList.toggle("owned", on); el.abilChemo.innerHTML = "chemotaxis" + (on ? amp(pc.chemoLevel) : ""); }
     if (el.abilCrispr) el.abilCrispr.classList.toggle("owned", !!(pc && pc.crispr));
   }
 

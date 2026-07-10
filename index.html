@@ -35,25 +35,36 @@
   /* HUD overlay */
   #hud {
     position: absolute; inset: 0; pointer-events: none;
-    padding: 12px; display: flex; flex-direction: column; gap: 8px;
-    font-size: 13px; text-shadow: 0 1px 2px rgba(0,0,0,.8);
+    padding: 12px; display: flex; flex-direction: column; gap: 7px;
+    font-size: 12px; text-shadow: 0 1px 2px rgba(0,0,0,.85);
   }
-  .bar { width: 200px; height: 14px; border-radius: 7px; background: rgba(0,0,0,.4);
-         border: 1px solid rgba(255,255,255,.15); overflow: hidden; }
+  .hudrow { display: flex; align-items: center; gap: 10px; }
+  .stat, .stats-inline { font-variant-numeric: tabular-nums; }
+  /* top line: slim energy bar + inline stats */
+  .topline { gap: 9px; }
+  .bar { width: 150px; height: 9px; border-radius: 5px; background: rgba(0,0,0,.45);
+         border: 1px solid rgba(255,255,255,.14); overflow: hidden; }
   .bar > span { display: block; height: 100%; width: 50%; transition: width .08s linear; }
   #energyFill { background: linear-gradient(90deg,#ffd24a,#57e0c0); }
-  .hudrow { display: flex; align-items: center; gap: 8px; }
-  .hudrow.lineage-row { font-size: 12px; margin-top: 1px; }
-  #lineageSwatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: middle;
-    margin-right: 6px; box-shadow: 0 0 0 1px rgba(255,255,255,.3); }
-  #lineageLabel { opacity: .85; }
-  .stat { font-variant-numeric: tabular-nums; }
-  .enz { padding: 1px 7px; border-radius: 7px; border: 1px solid rgba(255,255,255,.15);
-         margin-right: 4px; opacity: .28; font-size: 12px; transition: opacity .1s; }
-  .enz::before { content: "🔒 "; font-size: 9px; }
-  .enz.owned { opacity: .6; }
-  .enz.owned::before { content: ""; }
-  .enz.active { opacity: 1; font-weight: bold; box-shadow: 0 0 0 2px currentColor; }
+  #energyTxt { min-width: 20px; opacity: .95; }
+  .stats-inline { opacity: .72; letter-spacing: .2px; }
+  .stats-inline b { color: #d6efe6; font-weight: 600; }
+  /* GENOME: capabilities as gene loci on a DNA backbone */
+  .genome { position: relative; display: flex; align-items: center; gap: 4px; padding: 4px 3px; }
+  .genome::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%);
+    height: 3px; border-radius: 2px; z-index: 0;
+    background: repeating-linear-gradient(90deg, rgba(120,220,200,.30) 0 3px, transparent 3px 7px); }
+  .gene { position: relative; z-index: 1; padding: 2px 8px; border-radius: 5px; font-size: 11px; line-height: 1.35;
+    white-space: nowrap; background: rgba(6,22,27,.94); border: 1px solid rgba(255,255,255,.13);
+    color: rgba(210,228,222,.42); opacity: .62; transition: opacity .12s, box-shadow .12s, color .12s; }
+  .gene:not(.owned) { border-style: dashed; opacity: .42; }        /* a silent / not-yet-acquired locus */
+  .gene.owned { opacity: 1; color: var(--gc); border-color: var(--gc); box-shadow: inset 0 0 14px -7px var(--gc); }
+  .gene.active { font-weight: bold; box-shadow: 0 0 0 1.5px var(--gc), 0 0 11px -2px var(--gc); } /* Space will release this one */
+  .gene sup { font-size: 8px; opacity: .85; margin-left: 1px; font-weight: bold; }
+  .lineage-chip { display: inline-flex; align-items: center; font-size: 11px; opacity: .9; }
+  #lineageSwatch { display: inline-block; width: 11px; height: 11px; border-radius: 3px;
+    margin-right: 5px; box-shadow: 0 0 0 1px rgba(255,255,255,.3); }
+  #lineageLabel { opacity: .82; }
 
   /* Ecotype-vs-time chart */
   #chartwrap {
@@ -190,22 +201,22 @@
   <div id="stage">
     <canvas id="game" width="800" height="600"></canvas>
     <div id="hud">
-      <div class="hudrow"><span>Energy</span>
+      <div class="hudrow topline">
         <div class="bar"><span id="energyFill"></span></div>
-        <span id="energyTxt" class="stat"></span>
+        <span id="energyTxt" class="stat">0</span>
+        <span class="stats-inline"><b id="colony">1</b>&#8202;<span id="colonyWord">bacterium</span> · gen&#8202;<b id="gen">1</b> · score&#8202;<b id="score">0</b></span>
       </div>
-      <div class="hudrow stat"><b id="colony">1</b> <span id="colonyWord">bacterium</span> &nbsp;·&nbsp; Generation <b id="gen">1</b> &nbsp;·&nbsp; Score <b id="score">0</b></div>
-      <div class="hudrow">Deploy <kbd>X</kbd>
-        <span class="enz" id="enz0">lipase</span>
-        <span class="enz" id="enz1">protease</span>
-        <span class="enz" id="enz2">carbohydrase</span>
-        <span class="enz" id="enzTox">antibiotic</span>
+      <div class="hudrow genome-row">
+        <div class="genome">
+          <span class="gene" id="enz0">lipase</span>
+          <span class="gene" id="enz1">protease</span>
+          <span class="gene" id="enz2">carbohydrase</span>
+          <span class="gene" id="enzTox">antibiotic</span>
+          <span class="gene" id="abilChemo">chemotaxis</span>
+          <span class="gene" id="abilCrispr">CRISPR</span>
+        </div>
+        <span class="lineage-chip"><i id="lineageSwatch"></i><span id="lineageLabel">carb only</span></span>
       </div>
-      <div class="hudrow">Genes
-        <span class="enz" id="abilChemo">chemotaxis</span>
-        <span class="enz" id="abilCrispr">CRISPR</span>
-      </div>
-      <div class="hudrow lineage-row">Lineage <i id="lineageSwatch"></i><span id="lineageLabel">carb only</span></div>
     </div>
     <div id="toast"></div>
     <div id="title" class="screen">
@@ -229,8 +240,8 @@
           <ul>
             <li><kbd>W A S D</kbd> / arrows — <b>run</b> in a direction; let go to <b>tumble</b> (reorient randomly)</li>
             <li><kbd>Space</kbd> — release the loaded <b>enzyme</b> (dissolve the particle ahead) or <b>antibiotic</b> (poison nearby protists)</li>
-            <li><kbd>X</kbd> — switch which enzyme/antibiotic is loaded &nbsp;·&nbsp; <kbd>M</kbd> — toggle music</li>
-            <li><kbd>Tab</kbd> — <b>switch lineage</b>: hand control to another generation, so you can raise several populations at different tiers (diverse tiers = harder for one virus to wipe you all)</li>
+            <li><kbd>Tab</kbd> — switch which enzyme/antibiotic is loaded &nbsp;·&nbsp; <kbd>M</kbd> — toggle music</li>
+            <li><kbd>Shift</kbd> — <b>switch lineage</b>: hand control to another generation, so you can raise several populations at different tiers (diverse tiers = harder for one virus to wipe you all)</li>
             <li><kbd>Esc</kbd> — pause &amp; high scores &nbsp;·&nbsp; <kbd>?</kbd> — this guide</li>
           </ul>
         </section>
@@ -263,7 +274,7 @@
       <div id="analysisWrap">
         <div class="alabel">Bacteria &amp; your adaptations over the run</div>
         <canvas id="analysisChart" width="900" height="200"></canvas>
-        <div class="alabel sublabel">Food available (lipid · protein · carb) — watch a band get eaten after its enzyme is found</div>
+        <div class="alabel sublabel">Food available (lipid · protein · carb)</div>
         <canvas id="analysisSubChart" width="900" height="96"></canvas>
         <div id="analysisStats"></div>
       </div>
