@@ -564,7 +564,7 @@
   function gameOver() {
     state.running = false;
     recordGame();
-    el.overTitle.textContent = "The colony is gone";
+    el.overTitle.textContent = "Extinction!";
     el.overMsg.innerHTML = `Your lineage reached <b>generation ${state.gen}</b> with a final score of <b>${Math.round(state.score)}</b>.`;
     drawAnalysis();
     if (el.nameInput) el.nameInput.value = playerName; // prefill with the remembered name
@@ -616,21 +616,20 @@
     const pc = controlledCell(); if (pc) { cam.x = pc.x; cam.y = pc.y; }
     // sample per-ecotype abundances for the time-series chart
     const greenCount = phages.reduce((a, p) => a + (p.type === "green"), 0);
-    const cystCount = cells.reduce((a, c) => a + (c.cyst ? 1 : 0), 0);
     state.chartT -= dt;
     if (state.chartT <= 0) {
       state.chartT = CHART.interval;
       const s = ecoSample();
-      state.history.push({ eco: s.eco, buckets: s.buckets, p: predators.length, v: greenCount, cy: cystCount });
+      state.history.push({ eco: s.eco, buckets: s.buckets, p: predators.length, v: greenCount });
       if (state.history.length > CHART.samples) state.history.shift();
-      updateLegend(s.eco, predators.length, greenCount, cystCount);
+      updateLegend(s.eco, predators.length, greenCount);
     }
     // full-game log for the high-score record — whole arc, coarser, decimated when long
     state.fullT -= dt;
     if (state.fullT <= 0) {
       state.fullT = state.fullInterval;
       const fs = ecoSample();
-      state.fullHist.push({ eco: fs.eco, buckets: fs.buckets, p: predators.length, v: greenCount, cy: cystCount });
+      state.fullHist.push({ eco: fs.eco, buckets: fs.buckets, p: predators.length, v: greenCount });
       if (state.fullHist.length > 600) { state.fullHist = state.fullHist.filter((_, i) => i % 2 === 0); state.fullInterval *= 2; }
     }
     flagPhase += dt*12;
@@ -1218,13 +1217,12 @@
     if (mask & 1) parts.push("lipase"); if (mask & 2) parts.push("protease"); if (mask & 4) parts.push("chemotaxis");
     return "+" + parts.join(" +");
   }
-  function updateLegend(eco, preds, green, cysts) {
+  function updateLegend(eco, preds, green) {
     if (!el.legend) return;
     // colours encode GENERATION (ecotype+tier), not a fixed ecotype hue — so list ecotype COUNTS as text (no misleading swatch)
     let colony = 0; for (let m = 0; m < 8; m++) colony += eco[m];
     let html = `<span><i class="gen-swatch"></i>colony <b>${colony}</b></span>`;
     for (let m = 0; m < 8; m++) if (eco[m] > 0) html += `<span class="ecoq">${ecoLabel(m)} <b>${eco[m]}</b></span>`;
-    html += `<span><i style="background:${CYST_COLOR};opacity:.6"></i>cysts <b>${cysts || 0}</b></span>`;
     html += `<span><i class="eco-line" style="border-color:${PROTIST_COLOR}"></i>protists <b>${preds}</b></span>`;
     html += `<span><i class="eco-line" style="border-color:${VIRUS_COLOR}"></i>viruses <b>${green || 0}</b></span>`;
     html += `<span id="chartTitle">ecotype abundance vs. time</span>`;
@@ -1237,8 +1235,7 @@
     // polygon in the stack — a new lineage gets a new colour, and cells keep it until they upgrade again.
     const eco = [0,0,0,0,0,0,0,0], buckets = {};
     for (const c of cells) {
-      if (c.cyst) continue;                    // cysts are their own grey foundation band
-      const m = ecoMask(c); eco[m]++;
+      const m = ecoMask(c); eco[m]++;          // cysts included in their generation bucket (coloured, not a separate grey band)
       const key = m*64 + Math.min(63, upgradeTier(c)); // mask (0-7) high bits, tier low bits
       buckets[key] = (buckets[key] || 0) + 1;
     }
@@ -1270,7 +1267,7 @@
     g.clearRect(0, 0, W, H);
     g.fillStyle = CHART.surface; g.fillRect(0, 0, W, H);
     let maxY = 10, vMax = 10; // viruses get their OWN hidden axis (they hit the ~220 cap and would squash the cells)
-    for (const s of hist) { let tot = s.cy || 0; for (let i = 0; i < 8; i++) tot += s.eco[i]; if (tot > maxY) maxY = tot; if (s.p > maxY) maxY = s.p; if ((s.v || 0) > vMax) vMax = s.v; }
+    for (const s of hist) { let tot = 0; for (let i = 0; i < 8; i++) tot += s.eco[i]; if (tot > maxY) maxY = tot; if (s.p > maxY) maxY = s.p; if ((s.v || 0) > vMax) vMax = s.v; }
     const n = denom || Math.max(hist.length, 2), pad = H < 70 ? 8 : 14;
     const xAt = (i) => i/(n-1)*W, yAt = (v) => H - (v/maxY)*(H-pad) - 2;
     g.strokeStyle = "rgba(255,255,255,0.06)"; g.lineWidth = 1;
@@ -1279,13 +1276,9 @@
     g.fillText(String(Math.round(maxY)), 3, 10); g.fillText("0", 3, H - 3);
     if (hist.length > 1) {
       const last = hist.length - 1;
-      // cysts (dormant cells) form the grey FOUNDATION of the stack; ecotypes stack on top
-      g.fillStyle = "rgba(154,166,160,0.5)"; g.beginPath(); g.moveTo(xAt(0), yAt(0));
-      for (let i = 0; i <= last; i++) g.lineTo(xAt(i), yAt(hist[i].cy || 0));
-      g.lineTo(xAt(last), yAt(0)); g.closePath(); g.fill();
-      // one FLAT-coloured polygon per GENERATION bucket (ecotype+tier), stacked above the cyst band.
+      // one FLAT-coloured polygon per GENERATION bucket (ecotype+tier), stacked from the baseline.
       // Each new lineage = a new colour that grows in and fades out as its population rises and falls — no gradients.
-      const bks = hist.map(sampleBuckets), cum = hist.map((s) => s.cy || 0);
+      const bks = hist.map(sampleBuckets), cum = hist.map(() => 0);
       const keySet = new Set(); for (const b of bks) for (const k in b) keySet.add(+k);
       const keys = [...keySet].sort((a, b) => a - b); // stable order: mask-major, tier-minor → bands don't jump around
       for (const key of keys) {
@@ -1404,7 +1397,6 @@
     if (el.scoresKey) { // colours now encode GENERATION (ecotype + upgrade tier), so no fixed per-ecotype swatch
       el.scoresKey.innerHTML =
         `<span><i class="gen-swatch"></i>colony — a new colour each generation</span>` +
-        `<span><i style="background:${CYST_COLOR};opacity:.6"></i>cysts (dormant)</span>` +
         `<span><i class="eco-line" style="border-color:${PROTIST_COLOR}"></i>protists</span>` +
         `<span><i class="eco-line" style="border-color:${VIRUS_COLOR}"></i>viruses <em>(own scale)</em></span>`;
     }
