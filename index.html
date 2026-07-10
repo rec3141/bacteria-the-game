@@ -190,7 +190,7 @@
         <div class="bar"><span id="energyFill"></span></div>
         <span id="energyTxt" class="stat"></span>
       </div>
-      <div class="hudrow stat">Colony <b id="colony">1</b> cells &nbsp;·&nbsp; Generation <b id="gen">1</b> &nbsp;·&nbsp; Score <b id="score">0</b></div>
+      <div class="hudrow stat"><b id="colony">1</b> <span id="colonyWord">bacterium</span> &nbsp;·&nbsp; Generation <b id="gen">1</b> &nbsp;·&nbsp; Score <b id="score">0</b></div>
       <div class="hudrow">Deploy <kbd>X</kbd>
         <span class="enz" id="enz0">lipase</span>
         <span class="enz" id="enz1">protease</span>
@@ -246,7 +246,7 @@
         </section>
         <section>
           <h3>The chart</h3>
-          <p>The graph below the ocean stacks your colony by <b>generation</b> — each colour is a lineage at a given level of adaptation, so a new shade appears each time a lineage <b>adapts</b> and you can watch generations rise and fall (dormant <span class="c-cyst">cysts</span> are counted in their generation's band). Lines overlay for <span class="c-prot">protists</span> and <span class="c-vir">viruses</span>. Your run's full story — and where each adaptation happened — is shown when you die.</p>
+          <p>The graph below the ocean stacks your bacteria by <b>generation</b> — each colour is a lineage at a given level of adaptation, so a new shade appears each time a lineage <b>adapts</b> and you can watch generations rise and fall (dormant <span class="c-cyst">cysts</span> are counted in their generation's band). Lines overlay for <span class="c-prot">protists</span> and <span class="c-vir">viruses</span>. Your run's full story — and where each adaptation happened — is shown when you die.</p>
         </section>
       </div>
       <button id="helpBack" class="ghost">Back</button>
@@ -255,7 +255,7 @@
       <h1 id="overTitle">You died</h1>
       <p id="overMsg"></p>
       <div id="analysisWrap">
-        <div class="alabel">Colony &amp; your adaptations over the run</div>
+        <div class="alabel">Bacteria &amp; your adaptations over the run</div>
         <canvas id="analysisChart" width="900" height="200"></canvas>
         <div class="alabel sublabel">Food available (lipid · protein · carb) — watch a band get eaten after its enzyme is found</div>
         <canvas id="analysisSubChart" width="900" height="96"></canvas>

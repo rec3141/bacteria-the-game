@@ -101,7 +101,7 @@
 
   const el = {
     energyFill: document.getElementById("energyFill"), energyTxt: document.getElementById("energyTxt"),
-    gen: document.getElementById("gen"), score: document.getElementById("score"), colony: document.getElementById("colony"),
+    gen: document.getElementById("gen"), score: document.getElementById("score"), colony: document.getElementById("colony"), colonyWord: document.getElementById("colonyWord"),
     title: document.getElementById("title"), over: document.getElementById("over"),
     overTitle: document.getElementById("overTitle"), overMsg: document.getElementById("overMsg"),
     startBtn: document.getElementById("startBtn"), restartBtn: document.getElementById("restartBtn"),
@@ -571,7 +571,7 @@
   function runStatsHtml(hist, upgrades) {
     let peakCol = 0, peakP = 0, peakV = 0;
     for (const s of hist) { let t = 0; for (let i = 0; i < 8; i++) t += s.eco[i]; if (t > peakCol) peakCol = t; if (s.p > peakP) peakP = s.p; if ((s.v||0) > peakV) peakV = s.v; }
-    return `<b>${upgrades ? upgrades.length : 0}</b> adaptations · peak colony <b>${peakCol}</b> · peak protists <b>${peakP}</b> · peak viruses <b>${peakV}</b>`;
+    return `<b>${upgrades ? upgrades.length : 0}</b> adaptations · peak bacteria <b>${peakCol}</b> · peak protists <b>${peakP}</b> · peak viruses <b>${peakV}</b>`;
   }
   function drawAnalysis() {
     if (!actx || !state) return;
@@ -1246,7 +1246,7 @@
     if (!el.legend) return;
     // colours encode GENERATION (ecotype+tier), not a fixed ecotype hue — so list ecotype COUNTS as text (no misleading swatch)
     let colony = 0; for (let m = 0; m < 8; m++) colony += eco[m];
-    let html = `<span><i class="gen-swatch"></i>colony <b>${colony}</b></span>`;
+    let html = `<span><i class="gen-swatch"></i>${colony === 1 ? "bacterium" : "bacteria"} <b>${colony}</b></span>`;
     for (let m = 0; m < 8; m++) if (eco[m] > 0) html += `<span class="ecoq">${ecoLabel(m)} <b>${eco[m]}</b></span>`;
     html += `<span><i class="eco-line" style="border-color:${PROTIST_COLOR}"></i>protists <b>${preds}</b></span>`;
     html += `<span><i class="eco-line" style="border-color:${VIRUS_COLOR}"></i>viruses <b>${green || 0}</b></span>`;
@@ -1398,7 +1398,7 @@
   function renderScoreList() {
     if (!el.scoresList) return;
     const arr = globalScores || loadScores(); // shared list when we have it, else this browser's local runs
-    if (!arr.length) el.scoresList.innerHTML = `<p class="empty">No runs yet — play a game and your colony's evolutionary history will appear here.</p>`;
+    if (!arr.length) el.scoresList.innerHTML = `<p class="empty">No runs yet — play a game and your bacteria's evolutionary history will appear here.</p>`;
     else { el.scoresList.innerHTML = ""; arr.forEach((r, i) => el.scoresList.appendChild(scoreRow(`#${i+1}`, r, r.date === justFinishedTs))); }
   }
   function fmtDur(s) { const m = Math.floor(s/60); return m + ":" + String(s % 60).padStart(2, "0"); }
@@ -1448,7 +1448,7 @@
     }
     if (el.scoresKey) { // colours now encode GENERATION (ecotype + upgrade tier), so no fixed per-ecotype swatch
       el.scoresKey.innerHTML =
-        `<span><i class="gen-swatch"></i>colony — a new colour each generation</span>` +
+        `<span><i class="gen-swatch"></i>bacteria — a new colour each generation</span>` +
         `<span><i class="eco-line" style="border-color:${PROTIST_COLOR}"></i>protists</span>` +
         `<span><i class="eco-line" style="border-color:${VIRUS_COLOR}"></i>viruses <em>(own scale)</em></span>`;
     }
@@ -1492,6 +1492,7 @@
     el.energyFill.style.width = Math.min(100, e/CFG.cell.divideThreshold*100) + "%"; // full = ready to divide (cells split at the threshold, never reaching maxEnergy)
     el.energyTxt.textContent = Math.round(e);
     el.colony.textContent = cells.length; el.gen.textContent = state.gen; el.score.textContent = Math.round(state.score);
+    if (el.colonyWord) el.colonyWord.textContent = cells.length === 1 ? "bacterium" : "bacteria";
     const pc = controlledCell();
     for (let i = 0; i < 3; i++) if (el.enz[i]) {
       const lvl = pc ? pc.enzLvl[i] : (i === 2 ? 1 : 0), owned = lvl > 0;
