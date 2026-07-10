@@ -236,10 +236,11 @@
     if (e.key === "Escape") { if (helpOpen) { hideHelp(); return; } togglePause(); return; }
     if (e.key.toLowerCase() === "m") { Music.toggle(); return; } // toggle DNA music
     if (helpOpen || paused) return; // swallow gameplay input while a menu is up
-    if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," "].includes(e.key)) e.preventDefault();
+    if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," ","Tab"].includes(e.key)) e.preventDefault();
     keys[e.key.toLowerCase()] = true;
     if (e.key === " ") playerEnzyme();
     if (e.key.toLowerCase() === "x") cycleEnzyme();
+    if (e.key === "Tab") switchControl(); // swap which lineage you're steering
   });
   addEventListener("keyup", (e) => { keys[e.key.toLowerCase()] = false; });
   function axis() {
@@ -496,6 +497,31 @@
     const cur = owned.indexOf(state.activeEnzyme);
     state.activeEnzyme = owned[(cur + 1) % owned.length];
     Audio.play("eat", 0.3);
+  }
+  // hand control to a DIFFERENT lineage — cycle through the distinct generations (ecotype+tier) present,
+  // so you can shepherd several populations at different adaptation tiers (diversity = virus resilience).
+  function switchControl() {
+    if (!state || !state.running) return;
+    const cur = controlledCell(); if (!cur) return;
+    const reps = new Map(); // one healthy representative per generation bucket in the living colony
+    for (const c of cells) { if (!c.alive || c.cyst) continue;
+      const k = ecoMask(c)*64 + upgradeTier(c), r = reps.get(k);
+      if (!r || c.energy > r.energy) reps.set(k, c);
+    }
+    let target = null;
+    if (reps.size >= 2) {                    // cycle to the next distinct lineage
+      const ks = [...reps.keys()].sort((a, b) => a - b);
+      let i = ks.indexOf(ecoMask(cur)*64 + upgradeTier(cur)); if (i < 0) i = 0;
+      target = reps.get(ks[(i + 1) % ks.length]);
+    } else {                                 // only one lineage — jump to the farthest other cell (a separate cluster)
+      let bd = -1; for (const c of cells) { if (c === cur || !c.alive || c.cyst) continue;
+        const d = toroDist2(c.x, c.y, cur.x, cur.y); if (d > bd) { bd = d; target = c; } }
+    }
+    if (target && target !== cur) {
+      cur.controlled = false; target.controlled = true;
+      cam.x = target.x; cam.y = target.y;   // snap the camera to the new cell
+      Audio.play("eat", 0.5);
+    }
   }
 
   function divide(c) {

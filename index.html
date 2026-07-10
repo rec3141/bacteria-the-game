@@ -43,6 +43,7 @@
   .bar > span { display: block; height: 100%; width: 50%; transition: width .08s linear; }
   #energyFill { background: linear-gradient(90deg,#ffd24a,#57e0c0); }
   .hudrow { display: flex; align-items: center; gap: 8px; }
+  .hudrow.tabhint { font-size: 11px; opacity: .5; margin-top: 1px; }
   .stat { font-variant-numeric: tabular-nums; }
   .enz { padding: 1px 7px; border-radius: 7px; border: 1px solid rgba(255,255,255,.15);
          margin-right: 4px; opacity: .28; font-size: 12px; transition: opacity .1s; }
@@ -201,6 +202,7 @@
         <span class="enz" id="abilChemo">chemotaxis</span>
         <span class="enz" id="abilCrispr">CRISPR</span>
       </div>
+      <div class="hudrow tabhint"><kbd>Tab</kbd> switch lineage</div>
     </div>
     <div id="toast"></div>
     <div id="title" class="screen">
@@ -225,6 +227,7 @@
             <li><kbd>W A S D</kbd> / arrows — <b>run</b> in a direction; let go to <b>tumble</b> (reorient randomly)</li>
             <li><kbd>Space</kbd> — release the loaded <b>enzyme</b> (dissolve the particle ahead) or <b>antibiotic</b> (poison nearby protists)</li>
             <li><kbd>X</kbd> — switch which enzyme/antibiotic is loaded &nbsp;·&nbsp; <kbd>M</kbd> — toggle music</li>
+            <li><kbd>Tab</kbd> — <b>switch lineage</b>: hand control to another generation, so you can raise several populations at different tiers (diverse tiers = harder for one virus to wipe you all)</li>
             <li><kbd>Esc</kbd> — pause &amp; high scores &nbsp;·&nbsp; <kbd>?</kbd> — this guide</li>
           </ul>
         </section>
