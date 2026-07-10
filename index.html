@@ -58,7 +58,7 @@
   .gene:not(.owned) { border-style: dashed; opacity: .42; }        /* a silent / not-yet-acquired locus */
   .gene.owned { opacity: 1; color: var(--gc); border-color: var(--gc); box-shadow: inset 0 0 14px -7px var(--gc); }
   .gene.active { font-weight: bold; box-shadow: 0 0 0 1.5px var(--gc), 0 0 11px -2px var(--gc); } /* Space will release this one */
-  .gene sup { font-size: 8px; opacity: .85; margin-left: 1px; font-weight: bold; }
+  .gene .amp { font-weight: bold; opacity: .9; } /* expression amplification (×N), full size */
 
   /* Ecotype-vs-time chart */
   #chartwrap {

@@ -1580,7 +1580,7 @@
     if (el.colonyWord) el.colonyWord.textContent = cells.length === 1 ? "bacterium" : "bacteria";
     drawHelix(c); // DNA double-helix backbone under the genome, drawn in the current lineage's colour
     const pc = controlledCell();
-    const amp = (n) => n > 1 ? `<sup>×${n}</sup>` : ""; // expression level shown as gene amplification (×N)
+    const amp = (n) => n > 1 ? ` <span class="amp">×${n}</span>` : ""; // expression level shown as gene amplification (×N)
     for (let i = 0; i < 3; i++) if (el.enz[i]) {
       const lvl = pc ? pc.enzLvl[i] : (i === 2 ? 1 : 0), owned = lvl > 0;
       el.enz[i].classList.toggle("owned", owned);
