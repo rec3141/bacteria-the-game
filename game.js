@@ -43,7 +43,7 @@
     respirationBase: 0.9,
     grid: { cs: 7 },                 // destructible-particle voxel size (px)
     substrate: {
-      count: 30, moteEnergy: 7,      // board particle count (halved back to 50% — food scarcity keeps colonies, and the phage bursts they feed, manageable; a knob for future levels)
+      count: 38, moteEnergy: 7,      // board particle count (a knob for future levels; food scarcity keeps colonies + the phage bursts they feed manageable)
       sizeMin: 30, sizeMax: 200, sizeExp: 1.9, // Junge-like size spectrum: abundance ∝ size^-sizeExp → many small, few large
       carveRate: 4.5,                // density removed /sec per covered voxel
       lifeMin: 130, lifeMax: 300,    // each particle has its own lifespan (staggered)
