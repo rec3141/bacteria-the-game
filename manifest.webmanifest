@@ -1,0 +1,14 @@
+{
+  "name": "Bacteria! — the video game",
+  "short_name": "Bacteria!",
+  "description": "A playable model of marine microbial ecology: forage, evolve, divide, and endure as a single bacterium.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#04141a",
+  "theme_color": "#04141a",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

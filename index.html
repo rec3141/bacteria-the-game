@@ -2,8 +2,17 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <title>Bacteria! — the video game</title>
+<meta name="description" content="A playable model of marine microbial ecology: forage, evolve, divide, and endure as a single bacterium in a drop of the sea." />
+<meta name="theme-color" content="#04141a" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Bacteria!" />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="icon" href="icon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="icon.svg" />
 <style>
   :root {
     --bg: #071a1f;
@@ -27,11 +36,14 @@
   }
   #stage {
     position: relative;
+    width: min(800px, 100%);
+    aspect-ratio: 800 / 680;               /* scale the fixed 800×680 design down to fit any screen */
     box-shadow: 0 0 40px rgba(0,0,0,.6), inset 0 0 60px rgba(0,0,0,.4);
     border-radius: 10px;
     overflow: hidden;
   }
   canvas { display: block; background: #06232a; }
+  #game { width: 100%; height: 100%; touch-action: none; } /* CSS-scales the 800×680 backing buffer; block touch scroll */
 
   /* HUD overlay */
   #hud {
@@ -233,6 +245,39 @@
     padding: 7px 12px; margin-top: 7px; font-size: 12.5px; color: var(--muted); }
   #sciBody .game b { color: var(--ink); }
   #sciBody hr { border: none; border-top: 1px solid rgba(255,255,255,.08); margin: 18px 0; }
+
+  /* On-screen touch controls (mobile) — only shown when the device has a coarse pointer */
+  #touch { position: absolute; inset: 0; display: none; pointer-events: none; z-index: 4;
+    -webkit-tap-highlight-color: transparent; }
+  body.touch #touch { display: block; }
+  #touch.hidden { display: none !important; }
+  #stickZone { position: absolute; left: 0; bottom: 0; width: 55%; height: 66%;
+    pointer-events: auto; touch-action: none; }
+  #stickBase { position: absolute; width: 96px; height: 96px; border-radius: 50%;
+    transform: translate(-50%, -50%); pointer-events: none; opacity: 0; transition: opacity .1s;
+    background: rgba(255,255,255,.05); border: 1.5px solid rgba(255,255,255,.2); }
+  #stickBase.on { opacity: 1; }
+  #stickKnob { position: absolute; left: 50%; top: 50%; width: 46px; height: 46px; border-radius: 50%;
+    transform: translate(-50%, -50%); background: rgba(87,224,192,.4); border: 1.5px solid var(--accent);
+    box-shadow: 0 0 14px rgba(87,224,192,.4); }
+  #tbtns { position: absolute; right: 16px; bottom: 20px; display: flex; flex-direction: column-reverse;
+    align-items: center; gap: 12px; pointer-events: none; }
+  .tbtn { pointer-events: auto; touch-action: none; user-select: none; -webkit-user-select: none;
+    background: rgba(9,28,34,.74); color: var(--ink); border: 1.5px solid rgba(87,224,192,.55);
+    border-radius: 50%; width: 58px; height: 58px; padding: 0; font: inherit; font-size: 11px; font-weight: bold;
+    display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 12px rgba(0,0,0,.45); }
+  .tbtn:active { background: rgba(87,224,192,.3); transform: scale(.93); box-shadow: 0 1px 6px rgba(0,0,0,.45); }
+  .tbtn.big { width: 84px; height: 84px; font-size: 13px; border-color: var(--accent);
+    color: var(--accent); border-width: 2px; }
+  .tbtn.pause { position: absolute; top: 12px; right: 12px; width: 42px; height: 42px; font-size: 13px; }
+
+  .touchonly { display: none; }
+  body.touch .touchonly { display: list-item; }
+
+  @media (max-width: 840px), (max-height: 560px) {   /* phones/tablets: use the whole screen, don't clip the chart */
+    #wrap { padding: 6px; gap: 6px; justify-content: flex-start; }
+    #stage { width: min(800px, 100%, 86vh); } /* also bound by height so landscape doesn't overflow */
+  }
 </style>
 </head>
 <body>
@@ -258,6 +303,15 @@
       </div>
     </div>
     <div id="toast"></div>
+    <div id="touch" class="hidden">
+      <div id="stickZone"><div id="stickBase"><div id="stickKnob"></div></div></div>
+      <div id="tbtns">
+        <button id="tEnz" class="tbtn big" aria-label="Release enzyme">enzyme</button>
+        <button id="tSwap" class="tbtn" aria-label="Switch enzyme">swap</button>
+        <button id="tLin" class="tbtn" aria-label="Switch lineage">lineage</button>
+      </div>
+      <button id="tPause" class="tbtn pause" aria-label="Pause">❚❚</button>
+    </div>
     <div id="title" class="screen">
       <div class="titlecard">
         <h1>Bacteria!</h1>
@@ -282,6 +336,7 @@
             <li><kbd>Tab</kbd> — switch which enzyme/antibiotic is loaded &nbsp;·&nbsp; <kbd>M</kbd> — toggle music</li>
             <li><kbd>Shift</kbd> — <b>switch lineage</b>: hand control to another of your lineages</li>
             <li><kbd>Esc</kbd> — pause &amp; high scores &nbsp;·&nbsp; <b>Help</b> button — this guide</li>
+            <li class="touchonly"><b>On a phone:</b> drag the left <b>thumbstick</b> to swim; tap <b>enzyme</b> / <b>swap</b> / <b>lineage</b> on the right; <b>❚❚</b> (top-right) to pause.</li>
           </ul>
         </section>
         <section>

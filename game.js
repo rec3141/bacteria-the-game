@@ -104,6 +104,11 @@
     gen: document.getElementById("gen"), score: document.getElementById("score"), colony: document.getElementById("colony"), colonyWord: document.getElementById("colonyWord"),
     genome: document.getElementById("genome"), helix: document.getElementById("helix"),
     title: document.getElementById("title"), over: document.getElementById("over"), chartwrap: document.getElementById("chartwrap"), hud: document.getElementById("hud"),
+    stage: document.getElementById("stage"), game: document.getElementById("game"),
+    touch: document.getElementById("touch"), stickZone: document.getElementById("stickZone"),
+    stickBase: document.getElementById("stickBase"), stickKnob: document.getElementById("stickKnob"),
+    tEnz: document.getElementById("tEnz"), tSwap: document.getElementById("tSwap"),
+    tLin: document.getElementById("tLin"), tPause: document.getElementById("tPause"),
     overTitle: document.getElementById("overTitle"), overMsg: document.getElementById("overMsg"),
     startBtn: document.getElementById("startBtn"), restartBtn: document.getElementById("restartBtn"),
     enz: [document.getElementById("enz0"), document.getElementById("enz1"), document.getElementById("enz2")],
@@ -147,11 +152,13 @@
     const files = { eat: "assets/sounds/sound_40.mp3", enzyme: "assets/sounds/sound_145.mp3",
       divide: "assets/sounds/sound_18.mp3", death: "assets/sounds/sound_42.mp3",
       hit: "assets/sounds/sound_146.mp3", spawn: "assets/sounds/sound_37.mp3" };
-    let actx = null; const buffers = {};
+    const SFX_MASTER = 0.4;   // effects were much louder than the DNA music — tame them all at one bus
+    let actx = null, sfxBus = null; const buffers = {};
     async function init() {
       if (actx) { if (actx.state === "suspended") actx.resume(); return; }
       const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
       actx = new AC();
+      sfxBus = actx.createGain(); sfxBus.gain.value = SFX_MASTER; sfxBus.connect(actx.destination);
       await Promise.all(Object.entries(files).map(async ([n, url]) => {
         try { buffers[n] = await actx.decodeAudioData(await (await fetch(url)).arrayBuffer()); } catch (e) {}
       }));
@@ -159,7 +166,7 @@
     function play(name, vol = 1) {
       if (!actx || !buffers[name]) return;
       const s = actx.createBufferSource(); s.buffer = buffers[name];
-      const g = actx.createGain(); g.gain.value = vol; s.connect(g).connect(actx.destination); s.start();
+      const g = actx.createGain(); g.gain.value = vol; s.connect(g).connect(sfxBus); s.start();
     }
     return { init, play, ctx: () => actx };
   })();
@@ -247,7 +254,10 @@
     if (!e.repeat && e.key === "Shift") switchControl();  // switch which lineage you're steering
   });
   addEventListener("keyup", (e) => { keys[e.key.toLowerCase()] = false; });
+  // on-screen thumbstick (mobile); direction only — the mover normalises magnitude
+  const touchVec = { x: 0, y: 0, active: false };
   function axis() {
+    if (touchVec.active) return { x: touchVec.x, y: touchVec.y };
     let x = 0, y = 0;
     if (keys["a"]||keys["arrowleft"]) x -= 1; if (keys["d"]||keys["arrowright"]) x += 1;
     if (keys["w"]||keys["arrowup"]) y -= 1; if (keys["s"]||keys["arrowdown"]) y += 1;
@@ -1555,14 +1565,15 @@
   function showScience() { if (el.science) { el.science.classList.remove("hidden"); sciOpen = true; if (el.sciBody) el.sciBody.scrollTop = 0; } }
   function hideScience() { if (el.science) { el.science.classList.add("hidden"); sciOpen = false; } }
   function toggleHelp() { helpOpen ? hideHelp() : showHelp(); }
-  function pauseGame() { if (!state || !state.running || paused) return; paused = true; showScores(); }
+  function pauseGame() { if (!state || !state.running || paused) return; paused = true; releaseStick(); showScores(); }
   function resumeGame() { paused = false; hideScores(); }
   function endGame() { if (!state || !state.running) return; paused = false; hideScores(); gameOver(); }
   let _toastTimer = null;
   function positionToast() { // anchor the announcement just above the controlled cell (was fixed at the top, over the HUD)
     const pc = controlledCell(); if (!pc || !el.toast) return;
-    el.toast.style.left = Math.round(sx(pc.x)) + "px";
-    el.toast.style.top = Math.round(Math.max(6, sy(pc.y) - 52)) + "px";
+    const sc = el.game && el.game.clientWidth ? el.game.clientWidth / VIEW_W : 1; // canvas is CSS-scaled on small screens
+    el.toast.style.left = Math.round(sx(pc.x) * sc) + "px";
+    el.toast.style.top = Math.round(Math.max(6, sy(pc.y) * sc - 52)) + "px";
   }
   function showUpgradeToast(msg, color) {
     if (!el.toast) return;
@@ -1615,6 +1626,7 @@
       const hide = menu || !(state && state.running);
       if (el.chartwrap) el.chartwrap.classList.toggle("hidden", hide);
       if (el.hud) el.hud.classList.toggle("hidden", hide);
+      if (el.touch) el.touch.classList.toggle("hidden", hide); // on-screen controls live only during active play
     }
     requestAnimationFrame(frame);
   }
@@ -1635,6 +1647,53 @@
   if (el.endGameBtn) el.endGameBtn.addEventListener("click", endGame);
   if (el.detailBack) el.detailBack.addEventListener("click", closeScoreDetail);
   if (el.nameInput) el.nameInput.addEventListener("input", (e) => setPlayerName(e.target.value));
+
+  // --------------------------------------------------------- touch controls
+  // A floating thumbstick (left) drives movement; the right-hand pad fires the
+  // same actions as Space / Tab / Shift / Esc so the game is fully playable by touch.
+  let _stickId = null;
+  function releaseStick() {
+    _stickId = null; touchVec.active = false; touchVec.x = touchVec.y = 0;
+    if (el.stickBase) el.stickBase.classList.remove("on");
+    if (el.stickKnob) el.stickKnob.style.transform = "translate(-50%,-50%)";
+  }
+  function setupTouch() {
+    const zone = el.stickZone, base = el.stickBase, knob = el.stickKnob;
+    const MAXR = 46, DEAD = 7; // knob travel / dead-zone in CSS px
+    if (zone && base && knob) {
+      const place = (e) => {
+        const r = el.stage.getBoundingClientRect();
+        base.style.left = (e.clientX - r.left) + "px";
+        base.style.top = (e.clientY - r.top) + "px";
+      };
+      const track = (e) => {
+        const r = el.stage.getBoundingClientRect(), cx = r.left + parseFloat(base.style.left), cy = r.top + parseFloat(base.style.top);
+        let dxp = e.clientX - cx, dyp = e.clientY - cy;
+        const d = Math.hypot(dxp, dyp), cl = d > MAXR ? MAXR / d : 1;
+        knob.style.transform = `translate(calc(-50% + ${dxp*cl}px), calc(-50% + ${dyp*cl}px))`;
+        touchVec.active = true;
+        if (d > DEAD) { touchVec.x = dxp/d; touchVec.y = dyp/d; } else { touchVec.x = touchVec.y = 0; } // centre = tumble
+      };
+      zone.addEventListener("pointerdown", (e) => {
+        if (_stickId !== null) return;
+        _stickId = e.pointerId; try { zone.setPointerCapture(_stickId); } catch (_) {}
+        place(e); base.classList.add("on"); track(e); e.preventDefault();
+      });
+      zone.addEventListener("pointermove", (e) => { if (e.pointerId === _stickId) { track(e); e.preventDefault(); } });
+      const end = (e) => { if (e.pointerId === _stickId) releaseStick(); };
+      zone.addEventListener("pointerup", end);
+      zone.addEventListener("pointercancel", end);
+    }
+    const gated = (fn) => () => { if (!paused && !helpOpen && !sciOpen && state && state.running) fn(); };
+    const tap = (elm, fn) => elm && elm.addEventListener("pointerdown", (e) => { e.preventDefault(); fn(); });
+    tap(el.tEnz, gated(playerEnzyme));
+    tap(el.tSwap, gated(cycleEnzyme));
+    tap(el.tLin, gated(switchControl));
+    tap(el.tPause, () => togglePause());
+  }
+  const coarse = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
+  if (coarse || "ontouchstart" in window) document.body.classList.add("touch");
+  setupTouch();
 
   // temperature & salinity are held neutral for now (reserved for future levels:
   // estuary, sea ice, hydrothermal vent, ...)
