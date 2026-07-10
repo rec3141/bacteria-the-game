@@ -43,7 +43,10 @@
   .bar > span { display: block; height: 100%; width: 50%; transition: width .08s linear; }
   #energyFill { background: linear-gradient(90deg,#ffd24a,#57e0c0); }
   .hudrow { display: flex; align-items: center; gap: 8px; }
-  .hudrow.tabhint { font-size: 11px; opacity: .5; margin-top: 1px; }
+  .hudrow.lineage-row { font-size: 12px; margin-top: 1px; }
+  #lineageSwatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: middle;
+    margin-right: 6px; box-shadow: 0 0 0 1px rgba(255,255,255,.3); }
+  #lineageLabel { opacity: .85; }
   .stat { font-variant-numeric: tabular-nums; }
   .enz { padding: 1px 7px; border-radius: 7px; border: 1px solid rgba(255,255,255,.15);
          margin-right: 4px; opacity: .28; font-size: 12px; transition: opacity .1s; }
@@ -202,7 +205,7 @@
         <span class="enz" id="abilChemo">chemotaxis</span>
         <span class="enz" id="abilCrispr">CRISPR</span>
       </div>
-      <div class="hudrow tabhint"><kbd>Tab</kbd> switch lineage</div>
+      <div class="hudrow lineage-row">Lineage <i id="lineageSwatch"></i><span id="lineageLabel">carb only</span></div>
     </div>
     <div id="toast"></div>
     <div id="title" class="screen">

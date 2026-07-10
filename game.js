@@ -102,6 +102,7 @@
   const el = {
     energyFill: document.getElementById("energyFill"), energyTxt: document.getElementById("energyTxt"),
     gen: document.getElementById("gen"), score: document.getElementById("score"), colony: document.getElementById("colony"), colonyWord: document.getElementById("colonyWord"),
+    lineageSwatch: document.getElementById("lineageSwatch"), lineageLabel: document.getElementById("lineageLabel"),
     title: document.getElementById("title"), over: document.getElementById("over"), chartwrap: document.getElementById("chartwrap"),
     overTitle: document.getElementById("overTitle"), overMsg: document.getElementById("overMsg"),
     startBtn: document.getElementById("startBtn"), restartBtn: document.getElementById("restartBtn"),
@@ -1519,6 +1520,8 @@
     el.energyTxt.textContent = Math.round(e);
     el.colony.textContent = cells.length; el.gen.textContent = state.gen; el.score.textContent = Math.round(state.score);
     if (el.colonyWord) el.colonyWord.textContent = cells.length === 1 ? "bacterium" : "bacteria";
+    if (c && el.lineageSwatch) { el.lineageSwatch.style.background = levelColor(ecoMask(c), upgradeTier(c)); // the generation colour of the cell you're steering
+      if (el.lineageLabel) el.lineageLabel.textContent = ecoLabel(ecoMask(c)); }
     const pc = controlledCell();
     for (let i = 0; i < 3; i++) if (el.enz[i]) {
       const lvl = pc ? pc.enzLvl[i] : (i === 2 ? 1 : 0), owned = lvl > 0;
