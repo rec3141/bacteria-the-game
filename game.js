@@ -48,7 +48,7 @@
       carveRate: 4.5,                // density removed /sec per covered voxel
       lifeMin: 130, lifeMax: 300,    // each particle has its own lifespan (staggered)
       dissolveTime: 9,               // at end of life it erodes voxel-by-voxel over this many seconds
-      driftMin: 5, driftMax: 12,     // slow drift so particles ease in from offscreen, never pop into view
+      driftMin: 9, driftMax: 20,     // drift in from offscreen (faster = food rebounds quicker after you strip an area), still eased-in, no popping
       minPerRes: 2,                  // always keep at least this many particles dominant in EACH resource (so every enzyme has food)
     },
     enzyme: { life: 5.0, maxRadius: 24, growTime: 0.4 },
@@ -925,7 +925,7 @@
     for (const ph of phages) if (ph.type === "gold" && toroDist2(ph.x, ph.y, p.x, p.y) < p.R*p.R) ph.dead = true;
     Object.assign(p, makeSubstrate(pickBalancedKind(p))); // keep every resource above its floor as particles cycle
     // reborn offscreen, drifting into the play area so it eases into view instead of popping in
-    const a = rand(0, 6.28), dist = Math.hypot(VIEW_W, VIEW_H)/2 + p.half + 140, spd = rand(CFG.substrate.driftMin, CFG.substrate.driftMax);
+    const a = rand(0, 6.28), dist = Math.hypot(VIEW_W, VIEW_H)/2 + p.half + 80, spd = rand(CFG.substrate.driftMin, CFG.substrate.driftMax);
     p.x = wrapX(cam.x + Math.cos(a)*dist); p.y = wrapY(cam.y + Math.sin(a)*dist);
     p.vx = -Math.cos(a)*spd; p.vy = -Math.sin(a)*spd;
   }
