@@ -9,7 +9,7 @@ REMOTE="dreamhost:bacteria.cryomics.org/"  # home-relative on the remote (avoid 
 
 echo "==> deploy game files → $REMOTE"
 rsync -avz \
-  index.html science.html game.js scores.php README.md Bacteria.swf assets \
+  index.html game.js scores.php README.md Bacteria.swf assets \
   "$REMOTE"
 
 echo "==> ensure the leaderboard store exists and is writable by PHP"

@@ -9,6 +9,7 @@
     --bg: #071a1f;
     --panel: #0d2a30;
     --ink: #d7f5ee;
+    --muted: #9fc3ba;
     --accent: #57e0c0;
     --warn: #ff7a6b;
   }
@@ -117,11 +118,10 @@
   button.ghost { background: transparent; color: var(--accent); box-shadow: none;
     border: 1.5px solid var(--accent); padding: 10px 22px; }
   button.ghost:active { transform: translateY(2px); box-shadow: none; }
-  a.ghostlink { pointer-events: auto; display: inline-block; text-decoration: none; font: inherit; font-weight: bold;
-    color: var(--accent); background: transparent; border: 1.5px solid var(--accent);
-    padding: 10px 22px; border-radius: 24px; letter-spacing: .5px; transition: transform .05s; }
-  a.ghostlink:hover { background: rgba(87,224,192,.1); }
-  a.ghostlink:active { transform: translateY(2px); }
+  #pagefoot { position: fixed; bottom: 5px; left: 0; right: 0; text-align: center;
+    font-size: 11px; color: var(--muted); opacity: .55; pointer-events: none; }
+  #pagefoot a { color: inherit; text-decoration: none; pointer-events: auto; }
+  #pagefoot a:hover { color: var(--accent); text-decoration: underline; }
 
   /* High scores screen */
   #scores { justify-content: flex-start; padding-top: 24px; gap: 10px;
@@ -218,12 +218,27 @@
   #helpBody ul { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.7; opacity: .9; }
   .c-lip { color: #efd98a; } .c-pro { color: #e0645a; } .c-carb { color: #6fa8ff; }
   .c-gold { color: #ffd24a; } .c-vir { color: #8bf06a; } .c-cyst { color: #9aa6a0; } .c-prot { color: #ff9ec0; }
+  /* Science overlay */
+  #science { z-index: 20; justify-content: flex-start; padding-top: 22px; gap: 10px; background: #04141a; }
+  #sciBody { width: 700px; max-width: 94%; max-height: 400px; overflow-y: auto; text-align: left; padding: 2px 14px 2px 2px; }
+  #sciBody .intro { color: var(--muted); font-size: 13.5px; line-height: 1.55; border-left: 3px solid rgba(87,224,192,.4);
+    padding: 2px 0 2px 14px; margin: 0 0 18px; }
+  #sciBody section { margin: 0 0 15px; }
+  #sciBody h2 { margin: 0 0 4px; font-size: 16px; color: var(--ink); }
+  #sciBody h2 .n { color: var(--accent); font-size: 12px; margin-right: 7px; opacity: .8; }
+  #sciBody p { margin: 6px 0; font-size: 13px; line-height: 1.55; opacity: .92; }
+  #sciBody a.wiki { color: var(--accent); text-decoration: none; border-bottom: 1px dotted rgba(87,224,192,.5); }
+  #sciBody a.wiki:hover { border-bottom-style: solid; }
+  #sciBody .game { background: rgba(87,224,192,.06); border-left: 3px solid var(--accent); border-radius: 7px;
+    padding: 7px 12px; margin-top: 7px; font-size: 12.5px; color: var(--muted); }
+  #sciBody .game b { color: var(--ink); }
+  #sciBody hr { border: none; border-top: 1px solid rgba(255,255,255,.08); margin: 18px 0; }
 </style>
 </head>
 <body>
 <div id="wrap">
   <div id="stage">
-    <canvas id="game" width="800" height="600"></canvas>
+    <canvas id="game" width="800" height="680"></canvas>
     <div id="hud">
       <div class="hudrow topline">
         <div class="bar"><span id="energyFill"></span></div>
@@ -253,7 +268,7 @@
         <button id="startBtn">Begin life</button>
         <button id="scoresBtn" class="ghost">High scores</button>
         <button id="helpBtn" class="ghost">How to play</button>
-        <a class="ghostlink" href="science.html" target="_blank" rel="noopener">The science</a>
+        <button id="sciBtn" class="ghost">The science</button>
       </div>
     </div>
     <div id="help" class="screen hidden">
@@ -292,6 +307,57 @@
       </div>
       <button id="helpBack" class="ghost">Back</button>
     </div>
+    <div id="science" class="screen hidden">
+      <h1>The Science</h1>
+      <div id="sciBody">
+        <p class="intro">This game is a playful, simplified model of <b>marine microbial ecology</b> — the hidden world of bacteria, viruses, and single-celled predators that runs the ocean. Everything you do is based on real biology. Here's the science behind each piece; the underlined words are Wikipedia links.</p>
+        <section><h2><span class="n">01</span>The ocean is mostly microbes</h2>
+          <p>A teaspoon of seawater holds around a million <a class="wiki" href="https://en.wikipedia.org/wiki/Bacteria">bacteria</a> and ten million <a class="wiki" href="https://en.wikipedia.org/wiki/Virus">viruses</a>. These <a class="wiki" href="https://en.wikipedia.org/wiki/Bacterioplankton">bacterioplankton</a> are the ocean's recyclers: they break down dead material and return its nutrients to the food web, a cycle called the <a class="wiki" href="https://en.wikipedia.org/wiki/Microbial_loop">microbial loop</a>. They're invisible, but they drive the planet's carbon and nutrient cycles.</p>
+          <p class="game">In the game you play <b>one bacterium</b> in that world — a single cell trying to eat, grow, and survive.</p></section>
+        <section><h2><span class="n">02</span>Marine snow: food from above</h2>
+          <p>The big drifting particles you eat are <a class="wiki" href="https://en.wikipedia.org/wiki/Marine_snow">marine snow</a> — clumps of dead plankton, poop, and mucus that sink through the ocean carrying <a class="wiki" href="https://en.wikipedia.org/wiki/Particulate_organic_matter">organic matter</a> to the deep. Real particles come in every size, with tiny ones vastly outnumbering big ones — a <a class="wiki" href="https://en.wikipedia.org/wiki/Power_law">power-law</a> size distribution — exactly how the game spawns them.</p>
+          <p class="game">Particles (marine snow, fecal pellets, diatom shells, chitin) drift in, get eaten, and recycle — <b>many small, a few big</b>, like the real sea.</p></section>
+        <section><h2><span class="n">03</span>Eating with enzymes</h2>
+          <p>A bacterium is too small to swallow a particle, so it digests food <em>outside</em> its body: it releases <a class="wiki" href="https://en.wikipedia.org/wiki/Exoenzyme">extracellular enzymes</a> that chop big molecules into small ones through <a class="wiki" href="https://en.wikipedia.org/wiki/Hydrolysis">hydrolysis</a>, then absorbs the pieces. Each enzyme works on only one kind of molecule.</p>
+          <p class="game"><b>Space</b> releases your loaded enzyme, dissolving the matching blocks into nutrients. Different foods need different enzymes — which you evolve.</p></section>
+        <section><h2><span class="n">04</span>Three fuels: fat, protein, carbs</h2>
+          <p>Living matter is built from three <a class="wiki" href="https://en.wikipedia.org/wiki/Nutrient#Macronutrients">macronutrients</a>: <a class="wiki c-lip" href="https://en.wikipedia.org/wiki/Lipid">lipids</a> (fats), <a class="wiki c-pro" href="https://en.wikipedia.org/wiki/Protein">proteins</a>, and <a class="wiki c-carb" href="https://en.wikipedia.org/wiki/Carbohydrate">carbohydrates</a> (sugars). They don't carry the same energy: fat packs about <b>9 <a class="wiki" href="https://en.wikipedia.org/wiki/Food_energy">Calories</a> per gram</b>, protein and carbs about 4 — which is why fatty food is so calorie-dense.</p>
+          <p class="game">Your score is <b>Calories</b> eaten, weighted by composition: a <span class="c-lip">lipid</span> block is worth more than twice a <span class="c-carb">carb</span> one — so it pays to unlock lipase and hunt fatty particles.</p></section>
+        <section><h2><span class="n">05</span>Swimming: run and tumble</h2>
+          <p>Many bacteria swim with a corkscrew <a class="wiki" href="https://en.wikipedia.org/wiki/Flagellum">flagellum</a>. They can't steer precisely, so they use <a class="wiki" href="https://en.wikipedia.org/wiki/Chemotaxis">chemotaxis</a>: swim straight ("run") while food gets closer, reorient randomly ("tumble") when it doesn't. Over time this biased random walk carries them toward food.</p>
+          <p class="game">Hold a direction to <b>run</b>; let go to <b>tumble</b>. The <b>chemotaxis</b> adaptation lets your autonomous cells sense and steer toward food.</p></section>
+        <section><h2><span class="n">06</span>Growing and dividing</h2>
+          <p>Bacteria reproduce by <a class="wiki" href="https://en.wikipedia.org/wiki/Fission_(biology)">binary fission</a> — a cell grows, copies its DNA, and splits in two. Because each cell becomes two, populations grow <a class="wiki" href="https://en.wikipedia.org/wiki/Exponential_growth">exponentially</a>: 1, 2, 4, 8, 16… a well-fed colony explodes astonishingly fast.</p>
+          <p class="game">Eat enough and you <b>elongate and divide</b>. Daughters forage on their own — you keep steering one, and the colony can go exponential. Each division is a new <b>generation</b>.</p></section>
+        <section><h2><span class="n">07</span>Evolution on the fly</h2>
+          <p>Bacteria don't only inherit genes from parents — they pick up brand-new genes from their surroundings, called <a class="wiki" href="https://en.wikipedia.org/wiki/Horizontal_gene_transfer">horizontal gene transfer</a>. One route is <a class="wiki" href="https://en.wikipedia.org/wiki/Transduction_(genetics)">transduction</a>, where a virus carries DNA between cells. Cells can also crank up a trait by making extra copies of a gene (<a class="wiki" href="https://en.wikipedia.org/wiki/Gene_duplication">amplification</a>), boosting its <a class="wiki" href="https://en.wikipedia.org/wiki/Gene_expression">expression</a>.</p>
+          <p class="game">The rare <b>gold phage</b> gives a random heritable adaptation. Your <b>genome</b> strand shows your genes, expression appears as amplification (<b>×2, ×3…</b>), and adaptations only spread when you divide.</p></section>
+        <section><h2><span class="n">08</span>Viruses that hunt bacteria</h2>
+          <p>The most common predators of bacteria are viruses called <a class="wiki" href="https://en.wikipedia.org/wiki/Bacteriophage">bacteriophages</a>. In the <a class="wiki" href="https://en.wikipedia.org/wiki/Lytic_cycle">lytic cycle</a>, a phage injects its DNA, hijacks the cell to build copies of itself, then bursts it open — releasing a "burst" of new phages. Phages are the most abundant biological entities on Earth.</p>
+          <p class="game"><span style="color:#ff5a52">Red</span> phages infect and <b>lyse</b> your cells, releasing more phages. They stick to particles and wait for cells to feed.</p></section>
+        <section><h2><span class="n">09</span>Kill the winner</h2>
+          <p>Phages are picky — each infects only bacteria closely related to the cell it came from. So whichever type becomes <em>most common</em> is the one phages are best at finding and killing — ecologists call this <b>"kill the winner."</b> It stops any one type from taking over and keeps the community <a class="wiki" href="https://en.wikipedia.org/wiki/Biodiversity">diverse</a>, a constant arms race between hosts and their <a class="wiki" href="https://en.wikipedia.org/wiki/Marine_virus">viruses</a>.</p>
+          <p class="game">A virus is <span style="color:#ff5a52">red</span> if it can infect your current cell, <span class="c-vir">green</span> if it can't. As you evolve, which viruses are dangerous changes — and a booming lineage draws its own plague.</p></section>
+        <section><h2><span class="n">10</span>CRISPR: bacterial immunity</h2>
+          <p>Bacteria fight back with <a class="wiki" href="https://en.wikipedia.org/wiki/CRISPR">CRISPR</a> — a real <a class="wiki" href="https://en.wikipedia.org/wiki/Adaptive_immune_system">adaptive immune system</a> that stores snippets of past invaders' DNA and uses them to recognise and destroy those viruses. The same machinery is now the basis of modern <a class="wiki" href="https://en.wikipedia.org/wiki/CRISPR_gene_editing">gene editing</a>.</p>
+          <p class="game">With <b>CRISPR</b>, viruses that can't infect you become <b>food</b> — you harvest the immune ones for energy.</p></section>
+        <section><h2><span class="n">11</span>Chemical warfare</h2>
+          <p>Microbes are chemists. Many make <a class="wiki" href="https://en.wikipedia.org/wiki/Antibiotic">antibiotics</a> and other <a class="wiki" href="https://en.wikipedia.org/wiki/Secondary_metabolite">secondary metabolites</a> — toxins that harm competitors or fend off predators. Bacteria really do make compounds that poison the protists grazing on them.</p>
+          <p class="game">The <b>antibiotic</b> adaptation releases a toxin cloud that poisons nearby protists; leveling it up widens the cloud to hit more at once.</p></section>
+        <section><h2><span class="n">12</span>Getting eaten</h2>
+          <p>Bacteria are prey too. Single-celled <a class="wiki" href="https://en.wikipedia.org/wiki/Protist">protists</a> graze on them, a key link in the ocean <a class="wiki" href="https://en.wikipedia.org/wiki/Food_web">food web</a>. Predator and prey numbers rise and fall in linked cycles — more prey feeds more predators, which crash the prey, which starves the predators — the classic <a class="wiki" href="https://en.wikipedia.org/wiki/Lotka%E2%80%93Volterra_equations">predator–prey dynamics</a>.</p>
+          <p class="game">The big pink <b>protists</b> hunt your cells. On the chart, protist and bacteria numbers oscillate, each chasing the other, just as the equations predict.</p></section>
+        <section><h2><span class="n">13</span>Waiting out hard times</h2>
+          <p>When conditions get bad, many microbes enter <a class="wiki" href="https://en.wikipedia.org/wiki/Dormancy">dormancy</a> and wait. Some form tough resting <a class="wiki" href="https://en.wikipedia.org/wiki/Microbial_cyst">cysts</a> or <a class="wiki" href="https://en.wikipedia.org/wiki/Endospore">endospores</a> that survive starvation, heat, even centuries, then revive when things improve.</p>
+          <p class="game">A starving cell forms a resistant <b>cyst</b> — dormant and hard to kill — until food returns and it can wake up.</p></section>
+        <section><h2><span class="n">14</span>Many ways to make a living</h2>
+          <p>Because different genes suit different conditions, a species splits into varieties adapted to different niches — <a class="wiki" href="https://en.wikipedia.org/wiki/Ecotype">ecotypes</a>, each filling its own <a class="wiki" href="https://en.wikipedia.org/wiki/Ecological_niche">niche</a>. This diversity makes a community resilient: knock one type back and another takes its place.</p>
+          <p class="game">The coloured bands on the chart are your <b>ecotypes and generations</b> over time — you watch evolution happen, lineage by lineage, as colours rise and fall.</p></section>
+        <hr>
+        <p style="color:var(--muted);font-size:13px;">The real ocean is far messier and more wonderful than any game — but if this made a bacterium, a virus, or the microbial loop feel a little more alive, that's the point. Now go evolve something.</p>
+      </div>
+      <button id="sciBack" class="ghost">Back</button>
+    </div>
     <div id="over" class="screen hidden">
       <h1 id="overTitle">You died</h1>
       <p id="overMsg"></p>
@@ -307,7 +373,7 @@
       <div class="btnrow"><button id="restartBtn">Try again</button>
       <button id="scoresBtn2" class="ghost">High scores</button>
       <button id="helpBtn3" class="ghost">Help</button>
-      <a class="ghostlink" href="science.html" target="_blank" rel="noopener">The science</a></div>
+      <button id="sciBtn3" class="ghost">The science</button></div>
     </div>
     <div id="scores" class="screen hidden">
       <h1 id="scoresTitle">High Scores</h1>
@@ -325,7 +391,7 @@
       <div class="btnrow">
         <button id="scoresBack" class="ghost">Back</button>
         <button id="helpBtn2" class="ghost">Help</button>
-        <a class="ghostlink" href="science.html" target="_blank" rel="noopener">The science</a>
+        <button id="sciBtn2" class="ghost">The science</button>
         <button id="endGameBtn" class="ghost danger hidden">End game</button>
       </div>
     </div>
@@ -338,6 +404,11 @@
     <canvas id="subchart" width="800" height="64"></canvas>
   </div>
 </div>
+<footer id="pagefoot">
+  <a href="https://github.com/rec3141/bacteria-the-game" target="_blank" rel="noopener">source on GitHub</a>
+  &nbsp;·&nbsp;
+  <a href="https://cryomics.org" target="_blank" rel="noopener">Collins Lab</a>
+</footer>
 <script src="game.js"></script>
 </body>
 </html>

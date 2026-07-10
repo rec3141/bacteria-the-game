@@ -16,7 +16,7 @@
   "use strict";
 
   // ------------------------------------------------------------ world / view
-  const VIEW_W = 800, VIEW_H = 600;
+  const VIEW_W = 800, VIEW_H = 680;
   const WORLD_W = 2600, WORLD_H = 2000;
 
   const CFG = {
@@ -118,6 +118,8 @@
     toast: document.getElementById("toast"),
     help: document.getElementById("help"), helpBtn: document.getElementById("helpBtn"), helpBack: document.getElementById("helpBack"),
     helpBtn2: document.getElementById("helpBtn2"), helpBtn3: document.getElementById("helpBtn3"),
+    science: document.getElementById("science"), sciBody: document.getElementById("sciBody"), sciBack: document.getElementById("sciBack"),
+    sciBtn: document.getElementById("sciBtn"), sciBtn2: document.getElementById("sciBtn2"), sciBtn3: document.getElementById("sciBtn3"),
     analysisChart: document.getElementById("analysisChart"), analysisStats: document.getElementById("analysisStats"),
     nameInput: document.getElementById("nameInput"),
     scoreDetail: document.getElementById("scoreDetail"), detailChart: document.getElementById("detailChart"),
@@ -235,9 +237,9 @@
   // ------------------------------------------------------------------- input
   const keys = {};
   addEventListener("keydown", (e) => {
-    if (e.key === "Escape") { if (helpOpen) { hideHelp(); return; } togglePause(); return; }
+    if (e.key === "Escape") { if (sciOpen) { hideScience(); return; } if (helpOpen) { hideHelp(); return; } togglePause(); return; }
     if (e.key.toLowerCase() === "m") { Music.toggle(); return; } // toggle DNA music
-    if (helpOpen || paused) return; // swallow gameplay input while a menu is up
+    if (helpOpen || sciOpen || paused) return; // swallow gameplay input while a menu is up
     if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," ","Tab"].includes(e.key)) e.preventDefault();
     keys[e.key.toLowerCase()] = true;
     if (e.key === " ") playerEnzyme();
@@ -1547,9 +1549,11 @@
     el.scores.classList.remove("hidden");
   }
   function hideScores() { el.scores.classList.add("hidden"); if (el.scoreDetail) el.scoreDetail.classList.add("hidden"); }
-  let helpOpen = false;
+  let helpOpen = false, sciOpen = false;
   function showHelp() { if (el.help) { el.help.classList.remove("hidden"); helpOpen = true; } }
   function hideHelp() { if (el.help) { el.help.classList.add("hidden"); helpOpen = false; } }
+  function showScience() { if (el.science) { el.science.classList.remove("hidden"); sciOpen = true; if (el.sciBody) el.sciBody.scrollTop = 0; } }
+  function hideScience() { if (el.science) { el.science.classList.add("hidden"); sciOpen = false; } }
   function toggleHelp() { helpOpen ? hideHelp() : showHelp(); }
   function pauseGame() { if (!state || !state.running || paused) return; paused = true; showScores(); }
   function resumeGame() { paused = false; hideScores(); }
@@ -1607,7 +1611,7 @@
     if (!paused) update(dt);
     draw(); syncHud(); drawChart();
     { // hide the HUD + live charts behind any menu (title/over/scores/help), show only during active play
-      const menu = [el.title, el.over, el.scores, el.help].some((s) => s && !s.classList.contains("hidden"));
+      const menu = [el.title, el.over, el.scores, el.help, el.science].some((s) => s && !s.classList.contains("hidden"));
       const hide = menu || !(state && state.running);
       if (el.chartwrap) el.chartwrap.classList.toggle("hidden", hide);
       if (el.hud) el.hud.classList.toggle("hidden", hide);
@@ -1622,6 +1626,9 @@
   if (el.scoresBtn2) el.scoresBtn2.addEventListener("click", showScores);
   if (el.scoresBack) el.scoresBack.addEventListener("click", () => { if (paused) resumeGame(); else hideScores(); });
   if (el.helpBtn) el.helpBtn.addEventListener("click", showHelp);
+  [el.sciBtn, el.sciBtn2, el.sciBtn3].forEach((b) => b && b.addEventListener("click", showScience));
+  if (el.sciBack) el.sciBack.addEventListener("click", hideScience);
+  if (el.sciBody) el.sciBody.querySelectorAll("a").forEach((a) => { a.target = "_blank"; a.rel = "noopener"; }); // Wikipedia opens in a new tab
   if (el.helpBtn2) el.helpBtn2.addEventListener("click", showHelp);
   if (el.helpBtn3) el.helpBtn3.addEventListener("click", showHelp);
   if (el.helpBack) el.helpBack.addEventListener("click", hideHelp);
