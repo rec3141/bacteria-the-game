@@ -61,7 +61,7 @@
       maturity: 10, lifespan: [55, 100],                 // senescence: dies of old age
       reproEnergy: 190, reproCooldown: 17,               // reproduction, gated only by feeding (raised to curb the boom from doubled food)
       safetyMax: 600,                                    // perf backstop only — never binds ecologically
-      minCount: 2, immigrateEvery: 14,                   // a drifter arrives if the population crashes
+      minCount: 2, immigrateEvery: 8,                    // starting immigration/respawn interval (halves on each protist extinction)
       immigratePerPrey: 0.02, immigrateCap: 80, immigrateMax: 6, // grazers immigrate toward a target that rises with bacterial abundance (density-dependent pressure)
       respawnFloor: 0.5,                                 // the respawn interval halves on each protist extinction, down to this floor
       cystMealFactor: 0.45, cystEatChance: 0.35,         // cysts aren't hunted; a bumped one is usually resisted, rarely eaten (for little energy)
