@@ -126,6 +126,12 @@
     box-shadow: 0 4px 18px rgba(0,0,0,.5);
     transition: opacity .25s ease, transform .25s ease;
   }
+  #audioFlash { position: absolute; top: 12px; left: 50%; z-index: 8; white-space: nowrap;
+    transform: translateX(-50%) translateY(-8px); opacity: 0; pointer-events: none;
+    background: rgba(6,22,27,.9); border: 1px solid rgba(87,224,192,.4); color: var(--ink);
+    padding: 5px 14px; border-radius: 16px; font-size: 12px; font-weight: bold;
+    transition: opacity .2s ease, transform .2s ease; }
+  #audioFlash.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   #toast::before { content: "🧬 "; }
   #toast.show { opacity: 1; transform: translate(-50%, -100%) translateY(0) scale(1); }
   .btnrow { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; justify-content: center; }
@@ -361,7 +367,7 @@
           <ul>
             <li><kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd> / <kbd>W A S D</kbd> — <b>run</b> in a direction; let go to <b>tumble</b> (reorient randomly)</li>
             <li><kbd>Space</kbd> — release the loaded <b>enzyme</b> (dissolve the particle ahead) or <b>antibiotic</b> (poison nearby protists)</li>
-            <li><kbd>Tab</kbd> — switch which enzyme/antibiotic is loaded &nbsp;·&nbsp; <kbd>M</kbd> — toggle music</li>
+            <li><kbd>Tab</kbd> — switch which enzyme/antibiotic is loaded &nbsp;·&nbsp; <kbd>M</kbd> — cycle sound (music / effects / off)</li>
             <li><kbd>Shift</kbd> — <b>switch lineage</b>: hand control to another of your lineages</li>
             <li><kbd>Esc</kbd> — pause &amp; high scores &nbsp;·&nbsp; <b>Help</b> button — this guide</li>
             <li class="touchonly"><b>On a phone:</b> touch anywhere and <b>drag</b> the direction you want to swim; a quick <b>tap</b> (no drag) fires the enzyme. Top-right: <b>❚❚</b> pause and a coloured dot to <b>switch lineage</b>. Tap a gene on the bottom <b>genome bar</b> to load an enzyme; tap or swipe the chart to fold it away.</li>

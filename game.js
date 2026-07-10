@@ -157,7 +157,7 @@
       divide: "assets/sounds/sound_18.mp3", death: "assets/sounds/sound_42.mp3",
       hit: "assets/sounds/sound_146.mp3", spawn: "assets/sounds/sound_37.mp3" };
     const SFX_MASTER = 0.05;  // ~10% of the music bus (0.3) — effects sit well under the ambient track
-    let actx = null, sfxBus = null; const buffers = {};
+    let actx = null, sfxBus = null, muted = false; const buffers = {};
     async function init() {
       if (actx) { if (actx.state === "suspended") actx.resume(); return; }
       const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
@@ -168,11 +168,11 @@
       }));
     }
     function play(name, vol = 1) {
-      if (!actx || !buffers[name]) return;
+      if (muted || !actx || !buffers[name]) return;
       const s = actx.createBufferSource(); s.buffer = buffers[name];
       const g = actx.createGain(); g.gain.value = vol; s.connect(g).connect(sfxBus); s.start();
     }
-    return { init, play, ctx: () => actx };
+    return { init, play, ctx: () => actx, setMuted: (m) => { muted = m; } };
   })();
 
   // Ambient generative music read off a real bacterial DNA sequence (a stretch of the
@@ -231,8 +231,28 @@
       else { on = true; master.gain.setTargetAtTime(0.3, ctx.currentTime, 0.3); nextT = ctx.currentTime + 0.1; startDrone(); schedule(); }
       return on;
     }
-    return { start, toggle, playing: () => on };
+    function set(want) { if (ctx && !!want !== on) toggle(); } // drive music to a specific on/off state
+    return { start, toggle, set, playing: () => on };
   })();
+
+  // M cycles the audio: all on → music off → effects off → both off
+  const AUDIO_MODES = [
+    { music: true,  sfx: true,  label: "🔊 sound on" },
+    { music: false, sfx: true,  label: "🎵 music off" },
+    { music: true,  sfx: false, label: "🔈 effects off" },
+    { music: false, sfx: false, label: "🔇 muted" },
+  ];
+  let audioMode = 0, _flashT = null;
+  function applyAudioMode() { const m = AUDIO_MODES[audioMode]; Music.set(m.music); Audio.setMuted(!m.sfx); }
+  function cycleAudio() { audioMode = (audioMode + 1) % AUDIO_MODES.length; applyAudioMode(); flashAudioState(AUDIO_MODES[audioMode].label); }
+  function flashAudioState(label) {
+    const host = el.stage || (typeof document !== "undefined" && document.body); if (!host || !host.appendChild) return;
+    let m = document.getElementById("audioFlash");
+    if (!m) { m = document.createElement("div"); m.id = "audioFlash"; host.appendChild(m); }
+    m.textContent = label; m.classList.add("show");
+    if (_flashT) clearTimeout(_flashT);
+    _flashT = setTimeout(() => m.classList.remove("show"), 1100);
+  }
 
   // -------------------------------------------------------------- environment
   const env = {
@@ -249,7 +269,7 @@
   const keys = {};
   addEventListener("keydown", (e) => {
     if (e.key === "Escape") { if (sciOpen) { hideScience(); return; } if (helpOpen) { hideHelp(); return; } togglePause(); return; }
-    if (e.key.toLowerCase() === "m") { Music.toggle(); return; } // toggle DNA music
+    if (e.key.toLowerCase() === "m") { cycleAudio(); return; } // cycle: all on → music off → effects off → muted
     if (helpOpen || sciOpen || paused) return; // swallow gameplay input while a menu is up
     if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," ","Tab"].includes(e.key)) e.preventDefault();
     keys[e.key.toLowerCase()] = true;
@@ -1699,7 +1719,7 @@
     requestAnimationFrame(frame);
   }
 
-  function start() { Audio.init(); Music.start(Audio.ctx()); justFinishedTs = null; el.title.classList.add("hidden"); el.over.classList.add("hidden"); newGame(); }
+  function start() { Audio.init(); Music.start(Audio.ctx()); applyAudioMode(); justFinishedTs = null; el.title.classList.add("hidden"); el.over.classList.add("hidden"); newGame(); }
   el.startBtn.addEventListener("click", start);
   el.restartBtn.addEventListener("click", start);
   if (el.scoresBtn) el.scoresBtn.addEventListener("click", showScores);
