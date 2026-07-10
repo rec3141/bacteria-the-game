@@ -102,7 +102,7 @@
   const el = {
     energyFill: document.getElementById("energyFill"), energyTxt: document.getElementById("energyTxt"),
     gen: document.getElementById("gen"), score: document.getElementById("score"), colony: document.getElementById("colony"), colonyWord: document.getElementById("colonyWord"),
-    title: document.getElementById("title"), over: document.getElementById("over"),
+    title: document.getElementById("title"), over: document.getElementById("over"), chartwrap: document.getElementById("chartwrap"),
     overTitle: document.getElementById("overTitle"), overMsg: document.getElementById("overMsg"),
     startBtn: document.getElementById("startBtn"), restartBtn: document.getElementById("restartBtn"),
     enz: [document.getElementById("enz0"), document.getElementById("enz1"), document.getElementById("enz2")],
@@ -1514,6 +1514,10 @@
     const dt = last ? Math.min((now-last)/1000, 0.05) : 0; last = now;
     if (!paused) update(dt);
     draw(); syncHud(); drawChart();
+    if (el.chartwrap) { // the live charts sit below the stage — hide them behind any menu (title/over/scores/help)
+      const menu = [el.title, el.over, el.scores, el.help].some((s) => s && !s.classList.contains("hidden"));
+      el.chartwrap.classList.toggle("hidden", menu || !(state && state.running));
+    }
     requestAnimationFrame(frame);
   }
 
