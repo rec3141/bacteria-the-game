@@ -253,6 +253,9 @@
   /* Tap any owned gene on the genome bar to load that enzyme/antibiotic (works with a mouse too) */
   .gene { pointer-events: auto; }
   .gene.owned { cursor: pointer; }
+  /* No text-selection / tap-to-search / long-press callout on the live HUD + controls */
+  #hud, #touch { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent; }
 
   /* On-screen touch controls (mobile) — only shown when the device has a coarse pointer */
   #touch { position: absolute; inset: 0; display: none; pointer-events: none; z-index: 4;
