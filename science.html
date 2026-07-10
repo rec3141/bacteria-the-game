@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Science of Bacteria!</title>
+<style>
+  :root { --bg:#071a1f; --panel:#0d2a30; --ink:#d7f5ee; --muted:#9fc3ba; --accent:#57e0c0;
+    --lip:#efd98a; --pro:#e0645a; --carb:#6fa8ff; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink);
+    font-family: "Trebuchet MS", "Segoe UI", system-ui, sans-serif; line-height: 1.65; }
+  a { color: var(--accent); }
+  a.wiki { color: var(--accent); text-decoration: none; border-bottom: 1px dotted rgba(87,224,192,.5); }
+  a.wiki:hover { border-bottom-style: solid; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 28px 22px 80px; }
+  header { text-align: center; padding: 24px 0 8px; }
+  header h1 { color: var(--accent); font-size: 40px; margin: 0 0 6px; letter-spacing: 1px;
+    text-shadow: 0 2px 24px rgba(87,224,192,.35); }
+  header p { color: var(--muted); margin: 0; font-size: 15px; }
+  .back { display: inline-block; margin: 14px 0 6px; padding: 8px 18px; border-radius: 22px;
+    border: 1.5px solid var(--accent); color: var(--accent); text-decoration: none; font-weight: bold; }
+  .back:hover { background: rgba(87,224,192,.1); }
+  .intro { color: var(--muted); font-size: 16px; border-left: 3px solid rgba(87,224,192,.4);
+    padding: 4px 0 4px 16px; margin: 26px 0; }
+  section { margin: 30px 0; }
+  h2 { color: var(--ink); font-size: 21px; margin: 0 0 8px; }
+  h2 .n { color: var(--accent); font-size: 14px; margin-right: 8px; opacity: .8; }
+  p { margin: 10px 0; }
+  .game { background: var(--panel); border: 1px solid rgba(255,255,255,.07); border-left: 3px solid var(--accent);
+    border-radius: 8px; padding: 9px 14px; margin: 12px 0 0; font-size: 14.5px; color: var(--muted); }
+  .game b { color: var(--ink); }
+  .lip { color: var(--lip); } .pro { color: var(--pro); } .carb { color: var(--carb); }
+  hr { border: none; border-top: 1px solid rgba(255,255,255,.08); margin: 34px 0; }
+  footer { color: var(--muted); font-size: 13px; text-align: center; margin-top: 40px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>The Science of Bacteria!</h1>
+    <p>What's really going on in that drop of seawater</p>
+    <a class="back" href="./">← Back to the game</a>
+  </header>
+
+  <p class="intro">This game is a playful, simplified model of <b>marine microbial ecology</b> — the hidden world of
+  bacteria, viruses, and single-celled predators that runs the ocean. Everything you do in it is based on real
+  biology. Here's the science behind each piece, with links to read more. (Blue underlined words are
+  <a class="wiki" href="https://en.wikipedia.org/wiki/Main_Page">Wikipedia</a> links.)</p>
+
+  <section>
+    <h2><span class="n">01</span>The ocean is mostly microbes</h2>
+    <p>A single teaspoon of seawater holds around a million <a class="wiki" href="https://en.wikipedia.org/wiki/Bacteria">bacteria</a>
+    and ten million <a class="wiki" href="https://en.wikipedia.org/wiki/Virus">viruses</a>. These
+    <a class="wiki" href="https://en.wikipedia.org/wiki/Bacterioplankton">bacterioplankton</a> are the ocean's recyclers:
+    they break down dead material and return its nutrients to the food web, a cycle scientists call the
+    <a class="wiki" href="https://en.wikipedia.org/wiki/Microbial_loop">microbial loop</a>. They're invisible, but they
+    drive the planet's carbon and nutrient cycles.</p>
+    <p class="game">In the game you play <b>one bacterium</b> in that world — a single cell trying to eat, grow, and survive.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">02</span>Marine snow: food falling from above</h2>
+    <p>The big drifting particles you eat are <a class="wiki" href="https://en.wikipedia.org/wiki/Marine_snow">marine snow</a> —
+    clumps of dead plankton, poop, and mucus that sink through the ocean carrying
+    <a class="wiki" href="https://en.wikipedia.org/wiki/Particulate_organic_matter">organic matter</a> to the deep. Real
+    particles come in every size, with tiny ones vastly outnumbering big ones — a
+    <a class="wiki" href="https://en.wikipedia.org/wiki/Power_law">power-law</a> size distribution — which is exactly how
+    the game spawns them.</p>
+    <p class="game">Your particles (marine snow, fecal pellets, diatom shells, chitin) drift in, get eaten, and are
+    recycled — with <b>many small ones and a few big ones</b>, just like the real sea.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">03</span>Eating with enzymes</h2>
+    <p>A bacterium is too small to swallow a particle, so it digests food <em>outside</em> its body. It releases
+    <a class="wiki" href="https://en.wikipedia.org/wiki/Exoenzyme">extracellular enzymes</a> that chop big molecules into
+    small ones through a reaction called <a class="wiki" href="https://en.wikipedia.org/wiki/Hydrolysis">hydrolysis</a>,
+    then absorbs the pieces. Each enzyme only works on one kind of molecule.</p>
+    <p class="game">Pressing <b>Space</b> releases your loaded enzyme, dissolving the matching blocks into nutrients you
+    soak up. Different foods need different enzymes — which you have to evolve.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">04</span>Three fuels: fat, protein, carbs</h2>
+    <p>Living matter is built from three main <a class="wiki" href="https://en.wikipedia.org/wiki/Nutrient#Macronutrients">macronutrients</a>:
+    <a class="wiki lip" href="https://en.wikipedia.org/wiki/Lipid">lipids</a> (fats),
+    <a class="wiki pro" href="https://en.wikipedia.org/wiki/Protein">proteins</a>, and
+    <a class="wiki carb" href="https://en.wikipedia.org/wiki/Carbohydrate">carbohydrates</a> (sugars). They don't carry
+    the same energy: fat packs about <b>9 <a class="wiki" href="https://en.wikipedia.org/wiki/Food_energy">Calories</a>
+    per gram</b>, while protein and carbs each carry about 4 — which is why fatty foods are so calorie-dense.</p>
+    <p class="game">Your score is <b>Calories</b> eaten, weighted by composition: a <span class="lip">lipid</span> block is
+    worth more than twice a <span class="carb">carbohydrate</span> block, so it pays to unlock lipase and hunt the fatty particles.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">05</span>Swimming: run and tumble</h2>
+    <p>Many bacteria swim using a corkscrew-like <a class="wiki" href="https://en.wikipedia.org/wiki/Flagellum">flagellum</a>.
+    They can't steer precisely, so they use a trick called
+    <a class="wiki" href="https://en.wikipedia.org/wiki/Chemotaxis">chemotaxis</a>: swim straight ("run") while food is
+    getting closer, and randomly reorient ("tumble") when it isn't. Over time this biased random walk carries them
+    toward food.</p>
+    <p class="game">Hold a direction to <b>run</b>; let go to <b>tumble</b>. The <b>chemotaxis</b> adaptation lets your
+    autonomous cells sense and steer toward food on their own.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">06</span>Growing and dividing</h2>
+    <p>Bacteria reproduce by <a class="wiki" href="https://en.wikipedia.org/wiki/Fission_(biology)">binary fission</a> —
+    a cell grows, copies its DNA, and splits into two identical daughters. Because each cell becomes two, populations
+    can grow <a class="wiki" href="https://en.wikipedia.org/wiki/Exponential_growth">exponentially</a>: 1, 2, 4, 8, 16… A
+    well-fed colony explodes in numbers astonishingly fast.</p>
+    <p class="game">Eat enough and you <b>elongate and divide</b>. Your daughters forage on their own — you keep steering
+    one, and the colony can go exponential. Each division is a new <b>generation</b>.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">07</span>Evolution on the fly</h2>
+    <p>Bacteria don't only inherit genes from their parents — they can pick up brand-new genes from their surroundings,
+    a process called <a class="wiki" href="https://en.wikipedia.org/wiki/Horizontal_gene_transfer">horizontal gene transfer</a>.
+    One route is <a class="wiki" href="https://en.wikipedia.org/wiki/Transduction_(genetics)">transduction</a>, where a virus
+    accidentally carries DNA from one cell to another. Cells can also crank up a trait by making extra copies of a gene
+    (<a class="wiki" href="https://en.wikipedia.org/wiki/Gene_duplication">gene amplification</a>), boosting its
+    <a class="wiki" href="https://en.wikipedia.org/wiki/Gene_expression">expression</a>.</p>
+    <p class="game">The rare <b>gold phage</b> gives your cell a random heritable adaptation. Your capabilities show as a
+    <b>genome</b> strand, and expression appears as amplification (<b>×2, ×3…</b>) — and adaptations only spread when you divide.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">08</span>Viruses that hunt bacteria</h2>
+    <p>The most common predators of bacteria are viruses called <a class="wiki" href="https://en.wikipedia.org/wiki/Bacteriophage">bacteriophages</a>
+    ("phages"). In the <a class="wiki" href="https://en.wikipedia.org/wiki/Lytic_cycle">lytic cycle</a>, a phage injects its
+    DNA, hijacks the cell to build copies of itself, then bursts the cell open — releasing a "burst" of new phages to
+    infect neighbours. Phages are the most abundant biological entities on Earth.</p>
+    <p class="game">Green phages infect and <b>lyse</b> your cells, releasing more phages. An infected cell agitates,
+    then bursts. They stick to particles and wait for cells to come feed.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">09</span>Kill the winner</h2>
+    <p>Phages are picky: each one infects only bacteria closely related to the cell it came from. So whichever type of
+    bacterium becomes <em>most common</em> is the one phages are best at finding and killing — an idea ecologists call
+    <b>"kill the winner."</b> It stops any single type from taking over and keeps the community
+    <a class="wiki" href="https://en.wikipedia.org/wiki/Biodiversity">diverse</a>, a constant evolutionary arms race
+    between hosts and their <a class="wiki" href="https://en.wikipedia.org/wiki/Marine_virus">viruses</a>.</p>
+    <p class="game">A virus is <span style="color:#ff5a52">red</span> if it can infect your current cell,
+    <span style="color:#8bf06a">green</span> if it can't. As you evolve, which viruses are dangerous keeps changing — and
+    a booming lineage draws its own plague.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">10</span>CRISPR: a bacterial immune system</h2>
+    <p>Bacteria fight back against phages with <a class="wiki" href="https://en.wikipedia.org/wiki/CRISPR">CRISPR</a> — a
+    real <a class="wiki" href="https://en.wikipedia.org/wiki/Adaptive_immune_system">adaptive immune system</a> that stores
+    snippets of past invaders' DNA and uses them to recognise and destroy those viruses on sight. The same molecular
+    machinery is now the basis of modern <a class="wiki" href="https://en.wikipedia.org/wiki/CRISPR_gene_editing">gene editing</a>.</p>
+    <p class="game">With the <b>CRISPR</b> adaptation, viruses that can't infect you become <b>food</b> — you harvest the
+    immune ones for energy.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">11</span>Chemical warfare</h2>
+    <p>Microbes are chemists. Many produce <a class="wiki" href="https://en.wikipedia.org/wiki/Antibiotic">antibiotics</a>
+    and other <a class="wiki" href="https://en.wikipedia.org/wiki/Secondary_metabolite">secondary metabolites</a> — toxins
+    that harm competitors or fend off predators. Bacteria really do make compounds that poison the protists trying to
+    graze on them.</p>
+    <p class="game">The <b>antibiotic</b> adaptation lets you release a toxin cloud that poisons nearby protists; leveling
+    it up widens the cloud so it hits more of them at once.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">12</span>Getting eaten</h2>
+    <p>Bacteria are prey too. Single-celled <a class="wiki" href="https://en.wikipedia.org/wiki/Protist">protists</a> graze
+    on them, an important link in the ocean <a class="wiki" href="https://en.wikipedia.org/wiki/Food_web">food web</a>.
+    Predator and prey numbers rise and fall in linked cycles — more food means more predators, which crash the prey,
+    which starves the predators — the classic <a class="wiki" href="https://en.wikipedia.org/wiki/Lotka%E2%80%93Volterra_equations">predator–prey dynamics</a>
+    first described by Lotka and Volterra.</p>
+    <p class="game">The big pink <b>protists</b> hunt your cells. Watch the chart: protist and bacteria numbers oscillate,
+    each chasing the other, exactly like the real equations predict.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">13</span>Waiting out hard times</h2>
+    <p>When conditions get bad, many microbes enter <a class="wiki" href="https://en.wikipedia.org/wiki/Dormancy">dormancy</a> —
+    they shut down and wait. Some form tough resting <a class="wiki" href="https://en.wikipedia.org/wiki/Microbial_cyst">cysts</a>
+    or <a class="wiki" href="https://en.wikipedia.org/wiki/Endospore">endospores</a> that survive starvation, heat, and even
+    centuries of time, then revive when things improve.</p>
+    <p class="game">A starving cell forms a resistant <b>cyst</b> — dormant and hard to kill — until food returns and it
+    can wake back up.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">14</span>Many ways to make a living</h2>
+    <p>Because different genes suit different conditions, a species splits into varieties adapted to different niches —
+    <a class="wiki" href="https://en.wikipedia.org/wiki/Ecotype">ecotypes</a>, each filling its own
+    <a class="wiki" href="https://en.wikipedia.org/wiki/Ecological_niche">ecological niche</a>. This diversity is what makes
+    a microbial community resilient: when one type is knocked back, another is ready to take its place.</p>
+    <p class="game">The colored bands on the chart are your <b>ecotypes and generations</b> over time — you can literally
+    watch evolution happen, lineage by lineage, as new colors rise and fall.</p>
+  </section>
+
+  <hr>
+  <p style="color:var(--muted); font-size:15px;">The real ocean is far messier and more wonderful than any game — but if
+  playing this made a bacterium, a virus, or the microbial loop feel a little more alive, that's the point. Now go
+  evolve something.</p>
+  <p style="text-align:center;"><a class="back" href="./">← Back to the game</a></p>
+
+  <footer>Bacteria! — a marine-microbial-ecology game. Science summaries are simplified; follow the links to learn more.</footer>
+</div>
+</body>
+</html>

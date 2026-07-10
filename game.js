@@ -1463,7 +1463,7 @@
     const COLS = [["name", "Name", "nm"], ["score", "Calories", "num"], ["gen", "Gen", "num"], ["dur", "Time", "num"], ["ad", "Adapt.", "num"], ["date", "Date", "num dt"]];
     let h = `<table id="scoresTable"><thead><tr><th class="rk">#</th>`;
     for (const [key, label, cls] of COLS) h += `<th data-k="${key}" class="sortable ${cls}">${label}${arrow(key)}</th>`;
-    h += `</tr></thead><tbody>`;
+    h += `<th class="run">Run</th></tr></thead><tbody>`;
     arr.forEach((r, i) => {
       h += `<tr class="srow${recId(r) === justFinishedTs ? " current" : ""}" data-id="${recId(r)}"><td class="rk">${i+1}</td>`;
       h += `<td class="nm">${r.name ? escapeHtml(r.name) : '<span class="anon">anon</span>'}</td>`;
@@ -1471,9 +1471,14 @@
       h += `<td class="num">${SCORE_VAL.gen(r)}${badge("gen", r)}</td>`;
       h += `<td class="num">${fmtDur(SCORE_VAL.dur(r))}${badge("dur", r)}</td>`;
       h += `<td class="num">${SCORE_VAL.ad(r)}${badge("ad", r)}</td>`;
-      h += `<td class="num dt">${r.date && r.date > 0 ? fmtDate(r.date) : ""}</td></tr>`;
+      h += `<td class="num dt">${r.date && r.date > 0 ? fmtDate(r.date) : ""}</td>`;
+      h += `<td class="chart"><canvas width="132" height="30" data-cid="${recId(r)}"></canvas></td></tr>`;
     });
     el.scoresList.innerHTML = h + `</tbody></table>`;
+    el.scoresList.querySelectorAll("canvas[data-cid]").forEach((cv) => { // the run's simplified generational trajectory
+      const rec = arr.find((r) => String(recId(r)) === cv.getAttribute("data-cid"));
+      if (rec) renderEcoChart(cv.getContext("2d"), cv.width, cv.height, rec.hist || []);
+    });
     el.scoresList.querySelectorAll("th.sortable").forEach((th) => th.addEventListener("click", () => {
       const kk = th.getAttribute("data-k");
       if (scoreSort.key === kk) scoreSort.dir = -scoreSort.dir; else scoreSort = { key: kk, dir: kk === "name" ? 1 : -1 };
