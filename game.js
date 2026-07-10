@@ -904,6 +904,7 @@
       const infectDist = CFG.cell.radius + ph.r + CFG.phage.infectHalo;
       for (const c of cells) {
         if (!c.alive || c.cyst) continue;            // cysts are impervious to viruses
+        if (ph.type === "gold" && !c.controlled) continue; // only YOU can grab the gold phage — daughters can't steal your adaptation
         const hl = cellHalfLen(c) + ph.r + CFG.phage.infectHalo + 2;
         if (toroDist2(ph.x, ph.y, c.x, c.y) > hl*hl) continue;
         if (cellDistTo(c, ph.x, ph.y) > infectDist) continue;
