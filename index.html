@@ -128,8 +128,28 @@
   #scoresKey em { opacity: .6; font-style: normal; }
   .gen-swatch { background: linear-gradient(90deg,#6fa8ff,#b06bd8,#e0645a,#efd98a,#7fd8c4); }
   .ecoq { opacity: .8; }
-  #scoresList { width: 660px; max-width: 94%; max-height: 380px; overflow-y: auto;
-    display: flex; flex-direction: column; gap: 6px; padding-right: 4px; }
+  #scoresList { width: 660px; max-width: 94%; max-height: 400px; overflow-y: auto; }
+  #scoresTable { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  #scoresTable th, #scoresTable td { padding: 5px 9px; white-space: nowrap; }
+  #scoresTable th { position: sticky; top: 0; z-index: 1; background: #0a2027;
+    color: rgba(215,245,238,.72); font-size: 10.5px; text-transform: uppercase; letter-spacing: .6px;
+    border-bottom: 1px solid rgba(255,255,255,.14); }
+  #scoresTable th.sortable { cursor: pointer; user-select: none; }
+  #scoresTable th.sortable:hover { color: var(--accent); }
+  #scoresTable td { border-bottom: 1px solid rgba(255,255,255,.05); font-variant-numeric: tabular-nums; }
+  #scoresTable .num { text-align: right; }
+  #scoresTable .rk { text-align: right; opacity: .45; }
+  #scoresTable .nm { text-align: left; max-width: 128px; overflow: hidden; text-overflow: ellipsis; font-weight: bold; color: #eafff8; }
+  #scoresTable .dt { opacity: .55; font-size: 11px; }
+  #scoresTable .anon { opacity: .4; font-weight: normal; color: inherit; }
+  #scoresTable tr.srow { cursor: pointer; }
+  #scoresTable tr.srow:hover td { background: rgba(87,224,192,.09); }
+  #scoresTable tr.current td { background: rgba(87,224,192,.13); }
+  #scoresTable .lead { font-size: 11px; }
+  .crow { cursor: pointer; padding: 7px 11px; background: rgba(87,224,192,.08);
+    border: 1px solid rgba(87,224,192,.3); border-radius: 8px; text-align: left; font-size: 13px; }
+  .crow:hover { background: rgba(87,224,192,.14); }
+  .crow b { color: var(--accent); }
   .score-row { display: flex; align-items: center; gap: 12px; text-align: left;
     background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.08);
     border-radius: 8px; padding: 6px 10px; }
@@ -200,7 +220,7 @@
       <div class="hudrow topline">
         <div class="bar"><span id="energyFill"></span></div>
         <span id="energyTxt" class="stat">0</span>
-        <span class="stats-inline"><b id="colony">1</b>&#8202;<span id="colonyWord">bacterium</span> · gen&#8202;<b id="gen">1</b> · score&#8202;<b id="score">0</b></span>
+        <span class="stats-inline"><b id="colony">1</b>&#8202;<span id="colonyWord">bacterium</span> · gen&#8202;<b id="gen">1</b> · <b id="score">0</b>&#8202;cal</span>
       </div>
       <div class="hudrow genome-row">
         <div class="genome" id="genome">

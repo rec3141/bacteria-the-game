@@ -71,16 +71,16 @@
       goldLife: [90, 140],  // gold phage lingers far longer than green — you can chase it down
                             // (one is always kept on the board, respawning near the player when used)
     },
-    scorePerEnergy: 0.4, scorePerDivide: 200,
   };
 
   // Resource classes: each exoenzyme dissolves only its matching resource. Voxels
   // are colour-coded by resource so a particle reads as its biochemical makeup.
   const RESOURCES = [
-    { key: "lipid",   enzyme: "lipase",       color: "#efd98a" }, // 0 — fats/oils, wheat-yellow
-    { key: "protein", enzyme: "protease",     color: "#e0645a" }, // 1 — proteinaceous, coral-red
-    { key: "carb",    enzyme: "carbohydrase", color: "#6fa8ff" }, // 2 — sugars/polysaccharide, blue
+    { key: "lipid",   enzyme: "lipase",       color: "#efd98a", cal: 9 }, // 0 — fats/oils, wheat-yellow (9 kcal/g)
+    { key: "protein", enzyme: "protease",     color: "#e0645a", cal: 4 }, // 1 — proteinaceous, coral-red (4 kcal/g)
+    { key: "carb",    enzyme: "carbohydrase", color: "#6fa8ff", cal: 4 }, // 2 — sugars/polysaccharide, blue (4 kcal/g)
   ];
+  const BIOMASS_CAL = 4; // protist biomass motes (res = null) count as protein-grade calories
 
   // Marine particle types — large solid aggregates (radii in px; the cell is ~10px long).
   // `mix` = [lipid, protein, carb] composition weights, matching each particle's real makeup.
@@ -541,7 +541,6 @@
     if (c.infectedGreen) { d2.infectedGreen = true; d2.lysisT = c.lysisT; burst(c.x, c.y, "#7CFC5A", 8); } // virus segregates into one daughter; d1 (your lineage) stays clean
     cells.splice(cells.indexOf(c), 1, d1, d2);
     if (g > state.gen) state.gen = g;
-    state.score += CFG.scorePerDivide;
     burst(c.x, c.y, "#ffd24a", 14);
     if (c.controlled) Audio.play("divide", 0.7);
   }
@@ -611,7 +610,7 @@
     state.running = false;
     recordGame();
     el.overTitle.textContent = "Extinction!";
-    el.overMsg.innerHTML = `Your lineage reached <b>generation ${state.gen}</b> with a final score of <b>${Math.round(state.score)}</b>.`;
+    el.overMsg.innerHTML = `Your lineage reached <b>generation ${state.gen}</b> and consumed <b>${Math.round(state.score).toLocaleString()}</b> calories.`;
     drawAnalysis();
     if (el.nameInput) el.nameInput.value = playerName; // prefill with the remembered name
     Audio.play("death", 0.9);
@@ -728,7 +727,7 @@
       if (nnn.dead) continue;
       if (cellDistTo(c, nnn.x, nnn.y) < reach) {
         nnn.dead = true; c.energy += CFG.substrate.moteEnergy; c.fed = CFG.cell.fedLinger;
-        state.score += CFG.substrate.moteEnergy*CFG.scorePerEnergy;
+        state.score += nnn.res != null ? RESOURCES[nnn.res].cal : BIOMASS_CAL; // calories by composition (fat 9, protein/carb 4)
         if (c.controlled) Audio.play("eat", 0.4);
       }
     }
@@ -1451,26 +1450,55 @@
   function refreshScoreListIfOpen() { if (el.scores && !el.scores.classList.contains("hidden") && el.scoreDetail && el.scoreDetail.classList.contains("hidden")) renderScoreList(); }
   function renderScoreList() {
     if (!el.scoresList) return;
-    const arr = globalScores || loadScores(); // shared list when we have it, else this browser's local runs
-    if (!arr.length) el.scoresList.innerHTML = `<p class="empty">No runs yet — play a game and your bacteria's evolutionary history will appear here.</p>`;
-    else { el.scoresList.innerHTML = ""; arr.forEach((r, i) => el.scoresList.appendChild(scoreRow(`#${i+1}`, r, r.date === justFinishedTs))); }
+    const arr = (globalScores || loadScores()).slice(); // shared list when we have it, else this browser's local runs
+    if (!arr.length) { el.scoresList.innerHTML = `<p class="empty">No runs yet — play a game and your bacteria's evolutionary history will appear here.</p>`; return; }
+    // all-time leader per category → 🏆 badge on that run's value
+    const leader = {};
+    for (const k of ["score", "gen", "dur", "ad"]) { let best = -Infinity, id = null; for (const r of arr) { const v = SCORE_VAL[k](r); if (v > best) { best = v; id = recId(r); } } leader[k] = id; }
+    // sort by the active column (numbers desc / names asc by default; tie-break on calories)
+    const val = SCORE_VAL[scoreSort.key] || SCORE_VAL.score, dir = scoreSort.dir;
+    arr.sort((a, b) => { const va = val(a), vb = val(b); if (va < vb) return -dir; if (va > vb) return dir; return SCORE_VAL.score(b) - SCORE_VAL.score(a); });
+    const arrow = (c) => scoreSort.key === c ? (scoreSort.dir < 0 ? " ▾" : " ▴") : "";
+    const badge = (c, r) => leader[c] === recId(r) ? ` <span class="lead" title="best ${c}">🏆</span>` : "";
+    const COLS = [["name", "Name", "nm"], ["score", "Calories", "num"], ["gen", "Gen", "num"], ["dur", "Time", "num"], ["ad", "Adapt.", "num"], ["date", "Date", "num dt"]];
+    let h = `<table id="scoresTable"><thead><tr><th class="rk">#</th>`;
+    for (const [key, label, cls] of COLS) h += `<th data-k="${key}" class="sortable ${cls}">${label}${arrow(key)}</th>`;
+    h += `</tr></thead><tbody>`;
+    arr.forEach((r, i) => {
+      h += `<tr class="srow${recId(r) === justFinishedTs ? " current" : ""}" data-id="${recId(r)}"><td class="rk">${i+1}</td>`;
+      h += `<td class="nm">${r.name ? escapeHtml(r.name) : '<span class="anon">anon</span>'}</td>`;
+      h += `<td class="num">${SCORE_VAL.score(r).toLocaleString()}${badge("score", r)}</td>`;
+      h += `<td class="num">${SCORE_VAL.gen(r)}${badge("gen", r)}</td>`;
+      h += `<td class="num">${fmtDur(SCORE_VAL.dur(r))}${badge("dur", r)}</td>`;
+      h += `<td class="num">${SCORE_VAL.ad(r)}${badge("ad", r)}</td>`;
+      h += `<td class="num dt">${r.date && r.date > 0 ? fmtDate(r.date) : ""}</td></tr>`;
+    });
+    el.scoresList.innerHTML = h + `</tbody></table>`;
+    el.scoresList.querySelectorAll("th.sortable").forEach((th) => th.addEventListener("click", () => {
+      const kk = th.getAttribute("data-k");
+      if (scoreSort.key === kk) scoreSort.dir = -scoreSort.dir; else scoreSort = { key: kk, dir: kk === "name" ? 1 : -1 };
+      renderScoreList();
+    }));
+    el.scoresList.querySelectorAll("tr.srow").forEach((tr) => tr.addEventListener("click", () => {
+      const rec = arr.find((r) => String(recId(r)) === tr.getAttribute("data-id"));
+      if (rec) openScoreDetail("#" + (arr.indexOf(rec) + 1), rec);
+    }));
   }
   function fmtDur(s) { const m = Math.floor(s/60); return m + ":" + String(s % 60).padStart(2, "0"); }
   function fmtDate(ms) { const d = new Date(ms);
     return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }); }
-  function scoreRow(rankHtml, rec, current) {
-    const row = document.createElement("div"); row.className = "score-row clickable" + (current ? " current" : "");
-    const meta = document.createElement("div"); meta.className = "score-meta";
-    let m = `<span class="rank">${rankHtml}</span>`;
-    if (rec.name) m += `<span class="pname">${escapeHtml(rec.name)}</span>`;
-    m += `<b class="sc">${rec.score}</b><span>generation ${rec.gen}</span><span>survived ${fmtDur(rec.dur)}</span>`;
-    if (rec.date) m += `<span class="date">${fmtDate(rec.date)}</span>`;
-    meta.innerHTML = m;
-    const cv = document.createElement("canvas"); cv.width = 340; cv.height = 58; cv.className = "score-chart";
-    renderEcoChart(cv.getContext("2d"), 340, 58, rec.hist || []);
-    row.appendChild(meta); row.appendChild(cv);
-    row.addEventListener("click", () => openScoreDetail(rankHtml, rec)); // click → full annotated run
-    return row;
+  let scoreSort = { key: "score", dir: -1 }; // leaderboard sort — default calories, descending
+  const recId = (r) => (r.id != null ? r.id : r.date);
+  const SCORE_VAL = { // per-column value accessors (also the sortable/badge categories)
+    name:  (r) => (r.name || "").toLowerCase(),
+    score: (r) => Math.round(r.score || 0),
+    gen:   (r) => r.gen || 0,
+    dur:   (r) => r.dur || 0,
+    ad:    (r) => (r.upgrades ? r.upgrades.length : 0),
+    date:  (r) => r.date || 0,
+  };
+  function currentRunLine() {
+    return { id: -1, date: -1, name: playerName, score: Math.round(state.score), gen: state.gen, dur: Math.round(state.elapsed), hist: state.fullHist, upgrades: state.upgrades };
   }
   function openScoreDetail(rankHtml, rec) {
     if (!el.scoreDetail || !el.detailChart) return;
@@ -1495,9 +1523,12 @@
     if (el.endGameBtn) el.endGameBtn.classList.toggle("hidden", !active);
     if (el.currentRun) {
       if (active) {
-        el.currentRun.innerHTML = `<div class="label">Current run</div>`;
-        el.currentRun.appendChild(scoreRow("live", { score: Math.round(state.score), gen: state.gen, dur: Math.round(state.elapsed), hist: state.fullHist, upgrades: state.upgrades, name: playerName }, true));
+        const live = currentRunLine();
+        el.currentRun.innerHTML = `<div class="label">Current run</div>` +
+          `<div class="crow" id="curRunRow"><b>${live.score.toLocaleString()}</b> cal · gen <b>${live.gen}</b> · ${fmtDur(live.dur)} · <b>${live.upgrades.length}</b> adapt.</div>`;
         el.currentRun.classList.remove("hidden");
+        const row = el.currentRun.querySelector("#curRunRow");
+        if (row) row.addEventListener("click", () => openScoreDetail("live", live));
       } else el.currentRun.classList.add("hidden");
     }
     if (el.scoresKey) { // colours now encode GENERATION (ecotype + upgrade tier), so no fixed per-ecotype swatch
