@@ -554,7 +554,7 @@
   function runStatsHtml(hist, upgrades) {
     let peakCol = 0, peakP = 0, peakV = 0;
     for (const s of hist) { let t = 0; for (let i = 0; i < 8; i++) t += s.eco[i]; if (t > peakCol) peakCol = t; if (s.p > peakP) peakP = s.p; if ((s.v||0) > peakV) peakV = s.v; }
-    return `<b>${upgrades ? upgrades.length : 0}</b> upgrades · peak colony <b>${peakCol}</b> · peak protists <b>${peakP}</b> · peak viruses <b>${peakV}</b>`;
+    return `<b>${upgrades ? upgrades.length : 0}</b> adaptations · peak colony <b>${peakCol}</b> · peak protists <b>${peakP}</b> · peak viruses <b>${peakV}</b>`;
   }
   function drawAnalysis() {
     if (!actx || !state) return;

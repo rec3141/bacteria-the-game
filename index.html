@@ -230,16 +230,16 @@
           <p>Particles are patchy mixes of <span class="c-lip">lipid</span>, <span class="c-pro">protein</span> and <span class="c-carb">carbohydrate</span>. Each needs its own enzyme, and you start able to digest only <span class="c-carb">carbohydrate</span> (<b>carbohydrase</b>). Locked enzymes show a 🔒 in the HUD.</p>
         </section>
         <section>
-          <h3>Gold phages — upgrades <span class="c-gold">🧬</span></h3>
-          <p>Chase down the rare <span class="c-gold">gold phage</span> (a star on the minimap, often buried in a particle) to gain a random heritable upgrade: a new enzyme (<span class="c-lip">lipase</span>/<span class="c-pro">protease</span>), higher enzyme <b>expression</b> (bigger reach), <b>chemotaxis</b> (auto-seek food), an <span style="color:#f05ad0">antibiotic</span> (an anti-protist toxin — level it up to make it more lethal), or <b>CRISPR</b>. Upgrades only truly count once you <b>divide</b> and pass them on.</p>
+          <h3>Gold phages — adaptations <span class="c-gold">🧬</span></h3>
+          <p>Chase down the rare <span class="c-gold">gold phage</span> (a star on the minimap, often buried in a particle) to gain a random heritable adaptation: a new enzyme (<span class="c-lip">lipase</span>/<span class="c-pro">protease</span>), higher enzyme <b>expression</b> (bigger reach), <b>chemotaxis</b> (auto-seek food), an <span style="color:#f05ad0">antibiotic</span> (an anti-protist toxin — level it up to make it more lethal), or <b>CRISPR</b>. Adaptations only truly count once you <b>divide</b> and pass them on.</p>
         </section>
         <section>
           <h3>Viruses — phages</h3>
-          <p>They drift, stick to particles, and infect you — but a virus only infects cells at a similar <b>adaptation level</b> to the host it came from, so it's colour-coded to you: <span style="color:#ff5a52">red</span> ones can infect your current cell, <span class="c-vir">green</span> ones can't. The catch: <b>every upgrade you take shifts your level</b>, so you can <b>outrun</b> a red swarm by upgrading — they turn green — until new phages evolve to catch up. Infected? <b>Divide before it lyses you</b> and the virus goes to one daughter while your lineage stays clean. With <b>CRISPR</b>, the <span class="c-vir">green</span> (immune) viruses become <b>food</b>.</p>
+          <p>They drift, stick to particles, and infect you — but a virus only infects cells at a similar <b>adaptation level</b> to the host it came from, so it's colour-coded to you: <span style="color:#ff5a52">red</span> ones can infect your current cell, <span class="c-vir">green</span> ones can't. The catch: <b>every adaptation you take shifts your level</b>, so you can <b>outrun</b> a red swarm by adapting — they turn green — until new phages evolve to catch up. Infected? <b>Divide before it lyses you</b> and the virus goes to one daughter while your lineage stays clean. With <b>CRISPR</b>, the <span class="c-vir">green</span> (immune) viruses become <b>food</b>.</p>
         </section>
         <section>
           <h3>The chart</h3>
-          <p>The graph below the ocean tracks your colony's <b>ecotypes</b> over time (each colour = a set of acquired genes; the colour <b>steps</b> to a new shade each time that lineage levels up, so you can read the generations), stacked on a grey <span class="c-cyst">cyst</span> foundation, plus lines for <span class="c-prot">protists</span> and <span class="c-vir">viruses</span>. Your run's full story — and where each upgrade happened — is shown when you die.</p>
+          <p>The graph below the ocean stacks your colony by <b>generation</b> — each colour is a lineage at a given level of adaptation, so a new shade appears each time a lineage <b>adapts</b> and you can watch generations rise and fall (dormant <span class="c-cyst">cysts</span> are counted in their generation's band). Lines overlay for <span class="c-prot">protists</span> and <span class="c-vir">viruses</span>. Your run's full story — and where each adaptation happened — is shown when you die.</p>
         </section>
       </div>
       <button id="helpBack" class="ghost">Back</button>
@@ -248,7 +248,7 @@
       <h1 id="overTitle">You died</h1>
       <p id="overMsg"></p>
       <div id="analysisWrap">
-        <div class="alabel">Colony &amp; your upgrades over the run</div>
+        <div class="alabel">Colony &amp; your adaptations over the run</div>
         <canvas id="analysisChart" width="900" height="200"></canvas>
         <div id="analysisStats"></div>
       </div>
