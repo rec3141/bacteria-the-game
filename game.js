@@ -25,7 +25,7 @@
     cell: {
       radius: 5, baseHalf: 9, maxHalf: 22, lenBaseEnergy: 55, elongK: 0.11,
       thrust: 780, maxSpeed: 240, uptake: 14,
-      startEnergy: 110, maxEnergy: 230, divideThreshold: 155,
+      startEnergy: 110, maxEnergy: 230, divideThreshold: 200, // costlier duplication — must bank more energy before splitting (slows the boom)
       swimCost: 1.2, enzymeCost: 4, antibioticCost: 6, invulnTime: 2.2,
       runMin: 1.8, runMax: 3.4, tumbleDur: 0.4, tumbleTurn: 7.0, playerTumbleTurn: 2.2,
       enzymeCooldown: [2.5, 4.5],
