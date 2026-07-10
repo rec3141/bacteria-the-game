@@ -807,15 +807,16 @@
         if (res >= 0) releaseEnzyme(c, res);
       }
     }
-    // autonomous chemical defence: a cell that evolved the antibiotic zaps protists that close in,
-    // so a lineage with the toxin can hold off grazers on its own instead of being overrun.
-    if (c.antibiotic > 0 && c.energy > CFG.cell.antibioticCost*2.5) {
+    // autonomous chemical defence: a cell that evolved the antibiotic zaps protists that close in.
+    // Kept deliberately sparing — it's a last-ditch defence, not a constant kill field, so protists
+    // aren't wiped out around every colony (long cooldown + fires only when a grazer is right on top).
+    if (c.antibiotic > 0 && c.energy > CFG.cell.antibioticCost*3.5) {
       c.toxCd = (c.toxCd || 0) - dt;
       if (c.toxCd <= 0) {
-        const maxR = CFG.toxin.maxRadius * (1 + (c.antibiotic-1)*CFG.toxin.radiusPer), rr = (maxR + 22)**2;
+        const maxR = CFG.toxin.maxRadius * (1 + (c.antibiotic-1)*CFG.toxin.radiusPer), rr = (maxR*0.6)**2;
         let threatened = false;
         for (const pr of predators) if (toroDist2(c.x, c.y, pr.x, pr.y) <= rr) { threatened = true; break; }
-        if (threatened) { releaseAntibiotic(c); c.toxCd = rand(1.6, 2.6); } else c.toxCd = 0.5; // else re-check shortly
+        if (threatened) { releaseAntibiotic(c); c.toxCd = rand(4.5, 8); } else c.toxCd = 0.6; // else re-check shortly
       }
     }
   }
