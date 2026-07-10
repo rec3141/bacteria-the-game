@@ -63,6 +63,7 @@
       safetyMax: 600,                                    // perf backstop only — never binds ecologically
       minCount: 2, immigrateEvery: 14,                   // a drifter arrives if the population crashes
       immigratePerPrey: 0.02, immigrateCap: 80, immigrateMax: 6, // grazers immigrate toward a target that rises with bacterial abundance (density-dependent pressure)
+      respawnFloor: 2,                                   // the respawn interval halves on each protist extinction, down to this floor
       cystMealFactor: 0.45, cystEatChance: 0.35,         // cysts aren't hunted; a bumped one is usually resisted, rarely eaten (for little energy)
       killMotes: 8,                                      // biomass released as food when an antibiotic KILLS a protist (natural death releases nothing)
       virusEnergy: 5,                                    // protists also graze free-floating viruses — a small meal, and a top-down brake on phage blooms
@@ -497,6 +498,7 @@
     state = { gen: 1, score: 0, running: true, elapsed: 0, activeEnzyme: 2, // start with carbohydrase
       greenSeedT: rand(CFG.phage.greenSeed[0], CFG.phage.greenSeed[1]),
       predImmigrateT: CFG.predator.immigrateEvery,
+      predRespawn: CFG.predator.immigrateEvery, predExtinct: false, // respawn interval halves each time protists go fully extinct
       chartT: 0, history: [], fullT: 0, fullHist: [], fullInterval: 1, upgrades: [] };
     Audio.play("spawn", 0.5);
   }
@@ -1002,12 +1004,17 @@
     }
     if (newborns.length || predators.some((p) => p.dead))
       predators = predators.filter((p) => !p.dead).concat(newborns);
+    // each time protists go fully extinct, halve their respawn interval (persists through the run),
+    // so a world that keeps wiping its grazers reseeds them faster and faster
+    if (predators.length === 0) {
+      if (!state.predExtinct) { state.predExtinct = true; state.predRespawn = Math.max(CFG.predator.respawnFloor, state.predRespawn/2); }
+    } else state.predExtinct = false;
     // immigration: grazers drift in toward a target that RISES with bacterial abundance
     // (density-dependent top-down pressure), and never below the crash floor.
     state.predImmigrateT -= dt;
     if (state.predImmigrateT <= 0) {
       const P = CFG.predator;
-      state.predImmigrateT = P.immigrateEvery;
+      state.predImmigrateT = state.predRespawn;
       const target = clamp(P.minCount + cells.length*P.immigratePerPrey, P.minCount, P.immigrateCap);
       const n = Math.min(P.immigrateMax, Math.ceil(target - predators.length));
       const pc = controlledCell();
