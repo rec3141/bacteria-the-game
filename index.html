@@ -70,7 +70,10 @@
     color: rgba(210,228,222,.42); opacity: .62; transition: opacity .12s, box-shadow .12s, color .12s; }
   .gene:not(.owned) { border-style: dashed; opacity: .42; }        /* a silent / not-yet-acquired locus */
   .gene.owned { opacity: 1; color: var(--gc); border-color: var(--gc); box-shadow: inset 0 0 14px -7px var(--gc); }
-  .gene.active { font-weight: bold; box-shadow: 0 0 0 1.5px var(--gc), 0 0 11px -2px var(--gc); } /* Space will release this one */
+  /* the loaded gene (Space/tap releases this one): colour-filled background, not just a ring, for at-a-glance visibility */
+  .gene.active { font-weight: bold; color: #eefbf6;
+    background: color-mix(in srgb, var(--gc) 34%, rgba(6,22,27,.9));
+    box-shadow: 0 0 0 1.5px var(--gc), 0 0 12px -2px var(--gc); }
   .gene .amp { font-weight: bold; opacity: .9; } /* expression amplification (×N), full size */
 
   /* Ecotype-vs-time chart */
@@ -298,13 +301,31 @@
     #analysisWrap { padding: 6px 8px; }
     #helpBody, #sciBody, #scoresList { max-height: 62vh; }
   }
-  /* On a phone the DNA/genome bar drops to the bottom, in easy thumb reach, and its
-     genes double as enzyme-select buttons; the decorative helix is dropped for clarity. */
-  body.touch #hud .genome-row { position: absolute; left: 6px; right: 6px; bottom: 6px; margin: 0; justify-content: center; }
-  body.touch .genome { justify-content: center; flex-wrap: wrap; gap: 6px; padding: 7px 8px;
+  /* On a phone the live charts move ABOVE the short play area (flex reorder) and shrink
+     a little so they don't crowd the stage out of the viewport. */
+  body.touch #chartwrap { order: -1; }
+  body.touch #chart { height: 74px; }
+  body.touch #subchart { height: 48px; }
+  /* Energy bar + stats shift clear of the top-left minimap and top-right pause. */
+  body.touch .topline { margin: 0 50px 0 17%; flex-wrap: wrap; row-gap: 2px; }
+  body.touch .bar { width: 108px; }
+  /* The genome/enzyme switches run down the RIGHT side (bottom half), in thumb reach;
+     each gene doubles as an enzyme-select button. The decorative helix is dropped. */
+  body.touch #hud .genome-row { position: absolute; left: auto; right: 6px; top: 44%; bottom: 22px;
+    margin: 0; align-items: stretch; justify-content: flex-end; }
+  body.touch .genome { flex-direction: column; flex-wrap: nowrap; align-items: stretch; justify-content: center;
+    gap: 5px; padding: 6px 7px;
     background: rgba(6,22,27,.68); border: 1px solid rgba(255,255,255,.1); border-radius: 12px; }
   body.touch #helix { display: none; }
-  body.touch .gene { font-size: 12px; padding: 5px 11px; }
+  body.touch .gene { font-size: 11px; padding: 5px 9px; text-align: center; white-space: nowrap; }
+  /* The bottom genome bar is gone, so drop the movement stick + actions lower to use the space. */
+  body.touch #stickZone { left: 12px; bottom: 22px; width: 110px; height: 110px; }
+  /* Primary actions: a compact vertical pair centred in the gap between the stick and the
+     enzyme column (never overlapping either). */
+  body.touch #tbtns { left: 50%; right: auto; bottom: 22px; transform: translateX(-50%);
+    flex-direction: column-reverse; align-items: center; gap: 10px; }
+  body.touch #tbtns .tbtn { width: 54px; height: 54px; }
+  body.touch #tbtns .tbtn.big { width: 66px; height: 66px; }
 </style>
 </head>
 <body>
@@ -362,7 +383,7 @@
             <li><kbd>Tab</kbd> — switch which enzyme/antibiotic is loaded &nbsp;·&nbsp; <kbd>M</kbd> — toggle music</li>
             <li><kbd>Shift</kbd> — <b>switch lineage</b>: hand control to another of your lineages</li>
             <li><kbd>Esc</kbd> — pause &amp; high scores &nbsp;·&nbsp; <b>Help</b> button — this guide</li>
-            <li class="touchonly"><b>On a phone:</b> drag the left <b>thumbstick</b> to swim; tap <b>release</b> / <b>lineage</b> on the right and <b>❚❚</b> to pause; tap a gene on the bottom <b>genome bar</b> to load that enzyme; swipe the chart to fold it away.</li>
+            <li class="touchonly"><b>On a phone:</b> flick the left <b>thumbstick</b> toward a direction and the cell <b>runs that way for ~3s</b> on its own — no need to hold (tap the centre to stop); <b>release</b> / <b>lineage</b> sit along the bottom and <b>❚❚</b> pauses; tap a gene in the right-hand <b>genome column</b> to load that enzyme; swipe the chart (up top) to fold it away.</li>
           </ul>
         </section>
         <section>
