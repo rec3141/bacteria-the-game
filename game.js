@@ -47,6 +47,17 @@
       dissolveTime: 9,               // at end of life it erodes voxel-by-voxel over this many seconds
       driftMin: 5, driftMax: 12,     // slow drift so particles ease in from offscreen, never pop into view
       minPerRes: 2,                  // always keep at least this many particles dominant in EACH resource (so every enzyme has food)
+      // Depth shading ("grain"): a voxel is lit by its distance to the particle's SURFACE,
+      // not by noise — so the mass reads as solid, and a face you just carved open brightens
+      // by itself. Deterministic (a pure function of the grid), so it never shimmers.
+      grainStrength: 1,              // 0 = the old flat fill; 1 = full effect (blend factor)
+      grainRim: 1.16,                // brightness multiplier on surface voxels (depth 1)
+      grainFalloff: 0.2,             // brightness lost per voxel step deeper into the mass:
+                                     // reaches the floor ~7 voxels in, so only particles bigger
+                                     // than ~50px radius grow an unreadable core — small ones stay
+                                     // legible, and the mystery scales with the size of the prize
+      grainFloor: 0.1,               // buried core keeps a whisper of its hue, so it still reads as
+                                     // matter you can't see into rather than a hole in the particle
     },
     enzyme: { life: 5.0, maxRadius: 24, growTime: 0.4 },
     toxin: { life: 4.5, maxRadius: 40, growTime: 0.4, dose: 55, potency: 18, radiusPer: 0.34 }, // anti-protist antibiotic: fixed `dose` hit + lingering `potency`/s (NOT scaled by level); leveling GROWS the radius (radiusPer) so it hits more protists at once
@@ -72,6 +83,10 @@
                             // (one is always kept on the board, respawning near the player when used)
     },
   };
+  // Snapshot the shipped values before anything can touch them — the tuning panel
+  // (` key) reads these for its slider ranges, its reset, and to tell whether a run
+  // was played on modified numbers.
+  const CFG_DEFAULTS = JSON.parse(JSON.stringify(CFG));
 
   // Resource classes: each exoenzyme dissolves only its matching resource. Voxels
   // are colour-coded by resource so a particle reads as its biochemical makeup.
@@ -109,6 +124,12 @@
     stickBase: document.getElementById("stickBase"), stickKnob: document.getElementById("stickKnob"),
     tEnz: document.getElementById("tEnz"),
     tLin: document.getElementById("tLin"), tPause: document.getElementById("tPause"),
+    admin: document.getElementById("admin"), adminBody: document.getElementById("adminBody"),
+    adminDoc: document.getElementById("adminDoc"),
+    adminSearch: document.getElementById("adminSearch"), adminCount: document.getElementById("adminCount"),
+    adminName: document.getElementById("adminName"), adminSave: document.getElementById("adminSave"),
+    adminLoad: document.getElementById("adminLoad"), adminReset: document.getElementById("adminReset"),
+    adminFile: document.getElementById("adminFile"), adminStatus: document.getElementById("adminStatus"),
     overTitle: document.getElementById("overTitle"), overMsg: document.getElementById("overMsg"),
     startBtn: document.getElementById("startBtn"), restartBtn: document.getElementById("restartBtn"),
     enz: [document.getElementById("enz0"), document.getElementById("enz1"), document.getElementById("enz2")],
@@ -244,7 +265,14 @@
   // ------------------------------------------------------------------- input
   const keys = {};
   addEventListener("keydown", (e) => {
-    if (e.key === "Escape") { if (sciOpen) { hideScience(); return; } if (helpOpen) { hideHelp(); return; } togglePause(); return; }
+    // Typing in a field (leaderboard name, tuning inputs) must not also drive the
+    // cell — otherwise "m" mutes the music and Space fires an enzyme mid-word.
+    const t = e.target;
+    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+    // match e.code too: on non-US layouts the key left of "1" doesn't emit a backtick
+    if (e.key === "`" || e.code === "Backquote") { e.preventDefault(); toggleAdmin(); return; } // live-tuning panel
+    if (adminOpen && e.key === "/" && el.adminSearch) { e.preventDefault(); el.adminSearch.focus(); el.adminSearch.select(); return; }
+    if (e.key === "Escape") { if (adminOpen) { toggleAdmin(false); return; } if (sciOpen) { hideScience(); return; } if (helpOpen) { hideHelp(); return; } togglePause(); return; }
     if (e.key.toLowerCase() === "m") { Music.toggle(); return; } // toggle DNA music
     if (helpOpen || sciOpen || paused) return; // swallow gameplay input while a menu is up
     if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," ","Tab"].includes(e.key)) e.preventDefault();
@@ -632,7 +660,8 @@
     state.running = false;
     recordGame();
     el.overTitle.textContent = "Extinction!";
-    el.overMsg.innerHTML = `Your lineage reached <b>generation ${state.gen}</b> and consumed <b>${Math.round(state.score).toLocaleString()}</b> calories.`;
+    el.overMsg.innerHTML = `Your lineage reached <b>generation ${state.gen}</b> and consumed <b>${Math.round(state.score).toLocaleString()}</b> calories.`
+      + (cfgTuned() ? `<br><span style="font-size:12px;opacity:.7;color:#ffd24a">tuned run — kept local, not sent to the shared leaderboard</span>` : "");
     drawAnalysis();
     if (el.nameInput) el.nameInput.value = playerName; // prefill with the remembered name
     Audio.play("death", 0.9);
@@ -1117,14 +1146,68 @@
     const g = p.cache.getContext("2d");
     g.clearRect(0, 0, size, size);
     const cs = p.cs;
+    const G = CFG.substrate, grain = G.grainStrength > 0;
+    const depth = grain ? surfaceDepth(p) : null;
+    const lut = grain ? grainLut() : null;
     for (let gj = 0; gj < p.n; gj++) for (let gi = 0; gi < p.n; gi++) {
       const idx = gj*p.n + gi, v = p.grid[idx]; if (v <= 0) continue;
-      g.fillStyle = RESOURCES[p.gtype[idx]].color; // colour = resource class
+      const res = p.gtype[idx];
+      // colour = resource class, shaded by how deeply buried the voxel is
+      g.fillStyle = grain ? lut[res][Math.min(depth[idx], GRAIN_MAXD)] : RESOURCES[res].color;
       g.globalAlpha = 0.6 + 0.4*v;
       g.fillRect(gi*cs, gj*cs, cs+0.5, cs+0.5);
     }
     g.globalAlpha = 1;
     p.dirty = false;
+  }
+  // How many voxel steps from this voxel to the nearest empty cell (off-grid counts as
+  // empty). Two-pass city-block distance transform — O(n²), and it only runs when the
+  // particle is re-cached (i.e. when something carved it), which is exactly when the
+  // surface moved. Reuses one buffer per particle so carving doesn't churn the heap.
+  const GRAIN_MAXD = 14; // deeper than this is all core; clamps the LUT
+  function surfaceDepth(p) {
+    const n = p.n, N = n*n;
+    let d = p.depthBuf;
+    if (!d || d.length !== N) d = p.depthBuf = new Int16Array(N);
+    const INF = 30000;
+    for (let k = 0; k < N; k++) d[k] = p.grid[k] > 0 ? INF : 0;
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {   // forward: up + left
+      const k = j*n + i; if (d[k] === 0) continue;
+      const up = j > 0 ? d[k-n] : 0, left = i > 0 ? d[k-1] : 0;
+      const m = (up < left ? up : left) + 1;
+      if (m < d[k]) d[k] = m;
+    }
+    for (let j = n-1; j >= 0; j--) for (let i = n-1; i >= 0; i--) { // backward: down + right
+      const k = j*n + i; if (d[k] === 0) continue;
+      const dn = j < n-1 ? d[k+n] : 0, rt = i < n-1 ? d[k+1] : 0;
+      const m = (dn < rt ? dn : rt) + 1;
+      if (m < d[k]) d[k] = m;
+    }
+    return d;
+  }
+  // depth → colour, precomputed: 3 resources × 15 depths. Rebuilt only when a grain knob
+  // moves, so tuning it live costs nothing per voxel.
+  const RES_RGB = RESOURCES.map((r) => {
+    const v = parseInt(r.color.slice(1), 16);
+    return [v >> 16 & 255, v >> 8 & 255, v & 255];
+  });
+  let _grainLut = null, _grainKey = "";
+  function grainLut() {
+    const G = CFG.substrate;
+    const key = `${G.grainStrength}|${G.grainRim}|${G.grainFalloff}|${G.grainFloor}`;
+    if (_grainLut && _grainKey === key) return _grainLut;
+    const byte = (x) => (x < 0 ? 0 : x > 255 ? 255 : Math.round(x));
+    _grainKey = key;
+    _grainLut = RES_RGB.map((rgb) => {
+      const row = [];
+      for (let d = 0; d <= GRAIN_MAXD; d++) {
+        const lit = clamp(G.grainRim - G.grainFalloff*(Math.max(1, d) - 1), G.grainFloor, 6);
+        const f = 1 + (lit - 1)*G.grainStrength;   // strength 0 → factor 1 → the old flat fill
+        row.push(`rgb(${byte(rgb[0]*f)},${byte(rgb[1]*f)},${byte(rgb[2]*f)})`);
+      }
+      return row;
+    });
+    return _grainLut;
   }
   function drawSubstrate(p) {
     const cx = sx(p.x), cy = sy(p.y);
@@ -1460,7 +1543,8 @@
   function recordGame() {
     if (!state) return;
     const id = Date.now();
-    const rec = { id, score: Math.round(state.score), gen: state.gen, date: id, dur: Math.round(state.elapsed), hist: state.fullHist, upgrades: state.upgrades, name: playerName };
+    const rec = { id, score: Math.round(state.score), gen: state.gen, date: id, dur: Math.round(state.elapsed), hist: state.fullHist, upgrades: state.upgrades, name: playerName,
+                  tuned: cfgTuned() || undefined }; // undefined → omitted by JSON.stringify, so untuned runs are unchanged on the wire
     justFinishedTs = id; lastRec = rec;
     try {
       const arr = loadScores(); arr.push(rec); arr.sort((a, b) => b.score - a.score);
@@ -1470,6 +1554,10 @@
   }
   function submitScore(rec) { // POST a run to the shared leaderboard; ignored gracefully if offline / no backend
     if (typeof fetch !== "function" || !rec) return;
+    // A run played on tuned constants (` panel) isn't comparable to anyone else's,
+    // so it stays in this browser's local list. Guarded here rather than at the call
+    // sites so the later name-edit re-submit can't sneak it onto the shared board.
+    if (rec.tuned) return;
     try {
       fetch(API_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(rec) })
         .then((r) => (r.ok ? r.json() : null))
@@ -1676,6 +1764,325 @@
   if (el.endGameBtn) el.endGameBtn.addEventListener("click", endGame);
   if (el.detailBack) el.detailBack.addEventListener("click", closeScoreDetail);
   if (el.nameInput) el.nameInput.addEventListener("input", (e) => setPlayerName(e.target.value));
+
+  // --------------------------------------------------------- admin / tuning panel
+  // ` opens a live-tuning panel: one slider per numeric leaf of CFG. Sliders are
+  // LOG-scaled — each spans a decade either side of the shipped default — because
+  // the constants range over five orders of magnitude (cystMetab 0.035 … maxCells
+  // 1e5), and a linear slider would make every small one untunable. The sim is NOT
+  // paused, so edits are visible immediately; values that are only read when
+  // something spawns (particle counts, grid.cs, protist lifespan) therefore apply
+  // to newly spawned entities rather than retroactively to those already alive.
+  const TUNE_DECADES = 1;      // slider spans default/10 … default*10
+  const TUNE_STEPS = 1000;     // slider resolution
+  let adminOpen = false, adminBuilt = false;
+  const adminRows = [];        // { leaf, set, row, hay } per generated row
+  const adminGroups = [];      // { head, rows } so a group's heading hides when the filter empties it
+
+  // Hover text for every knob. Keyed by dotted path; a range like phage.burst is
+  // documented once and both ends (.0/.1) inherit it. Anything missing here still
+  // gets a row — it just falls back to showing only its default.
+  const TUNE_DOCS = {
+    "cell.radius": "Cell body radius (px) — also its collision size.",
+    "cell.baseHalf": "Half-length of a freshly divided cell (px).",
+    "cell.maxHalf": "Half-length at full elongation, just before it splits (px).",
+    "cell.lenBaseEnergy": "Energy above which a cell starts elongating.",
+    "cell.elongK": "Extra half-length gained per unit of energy above lenBaseEnergy.",
+    "cell.thrust": "Swim acceleration while running.",
+    "cell.maxSpeed": "Top swim speed (px/s).",
+    "cell.uptake": "Nutrient absorbed per second while touching free motes.",
+    "cell.startEnergy": "Energy a new cell begins life with.",
+    "cell.maxEnergy": "Energy ceiling — a cell can't store more than this.",
+    "cell.divideThreshold": "Energy at which a cell divides in two.",
+    "cell.swimCost": "Energy per second burned while swimming.",
+    "cell.enzymeCost": "Energy spent per enzyme release.",
+    "cell.antibioticCost": "Energy spent per antibiotic release.",
+    "cell.invulnTime": "Seconds of immunity to grazing/infection right after dividing.",
+    "cell.runMin": "Shortest run an autonomous cell takes before tumbling (s).",
+    "cell.runMax": "Longest run an autonomous cell takes before tumbling (s).",
+    "cell.tumbleDur": "Seconds a cell spends tumbling (reorienting).",
+    "cell.tumbleTurn": "How sharply an autonomous cell turns while tumbling (rad/s).",
+    "cell.playerTumbleTurn": "How fast YOUR cell drifts off-heading when you let go of the controls.",
+    "cell.enzymeCooldown": "Seconds between an autonomous cell's enzyme releases (picked at random in this range).",
+    "cell.cystBelow": "Energy below which an autonomous cell gives up and encysts (goes dormant).",
+    "cell.cystWake": "Energy a cyst must accumulate before it revives.",
+    "cell.cystMetab": "Energy per second burned while dormant — near zero, which is why cysts outlast famine.",
+    "cell.cystReviveEnergy": "Energy handed to a cyst when you take control of it.",
+    "cell.crisprEnergy": "Energy gained when a CRISPR cell destroys a virus it's immune to.",
+    "cell.cystDiffuse": "How fast cysts drift passively with the water (brownian).",
+    "cell.exprBoost": "Enzyme-radius gain per expression level (the stacking gold-phage upgrade).",
+    "cell.chemoRange0": "Chemotaxis sensing range at the first level (px).",
+    "cell.chemoRangePer": "Extra sensing range gained per further chemotaxis level.",
+    "cell.chemoTurn0": "Chemotaxis steering sharpness at the first level.",
+    "cell.chemoTurnPer": "Extra steering sharpness gained per further chemotaxis level.",
+    "cell.fedLinger": "Seconds a cell stays in its 'well fed' state (shorter runs) after eating.",
+    "cell.maxCells": "Hard cap on living cells — a performance backstop, not an ecological limit.",
+    "respirationBase": "Baseline energy per second every cell burns just staying alive. The single biggest lever on how punishing the game is.",
+    "grid.cs": "Voxel size of destructible particles (px) — smaller = finer digging but more work per frame. Only affects NEWLY spawned particles.",
+    "substrate.count": "How many food particles are kept drifting in the water. Applies as particles respawn.",
+    "substrate.moteEnergy": "Energy in each nutrient mote freed by dissolving a voxel.",
+    "substrate.sizeMin": "Smallest particle radius (px).",
+    "substrate.sizeMax": "Largest particle radius (px).",
+    "substrate.sizeExp": "Power-law exponent of the size spectrum: higher = far more small particles than large ones.",
+    "substrate.carveRate": "Density an enzyme removes per second, per voxel it covers — how fast you dig.",
+    "substrate.lifeMin": "Shortest particle lifespan (s).",
+    "substrate.lifeMax": "Longest particle lifespan (s).",
+    "substrate.dissolveTime": "Seconds a dying particle takes to erode away voxel by voxel.",
+    "substrate.driftMin": "Slowest particle drift (px/s).",
+    "substrate.driftMax": "Fastest particle drift (px/s).",
+    "substrate.minPerRes": "Minimum particles dominated by EACH resource, so every enzyme always has something to eat.",
+    "substrate.grainStrength": "Depth shading: how strongly a voxel is lit by its distance to the particle's surface. Set to 0 for the old flat blocks (type 0 in the box — the slider is log-scaled and can't reach it).",
+    "substrate.grainRim": "Brightness of surface voxels. Above 1 makes the particle's skin catch the light; freshly carved faces brighten as they become the new surface.",
+    "substrate.grainFalloff": "How much brightness is lost per voxel step deeper into the mass. Higher = a harder, more dramatic gradient from skin to core.",
+    "substrate.grainFloor": "Darkest the buried core is allowed to get, so a big particle's middle doesn't go to black.",
+    "enzyme.life": "Seconds an enzyme cloud persists.",
+    "enzyme.maxRadius": "Enzyme cloud radius at full growth (px) — your effective digging reach.",
+    "enzyme.growTime": "Seconds the enzyme cloud takes to reach full size.",
+    "toxin.life": "Seconds the antibiotic cloud lingers.",
+    "toxin.maxRadius": "Antibiotic cloud radius at full growth (px).",
+    "toxin.growTime": "Seconds the antibiotic cloud takes to reach full size.",
+    "toxin.dose": "Instant damage dealt to a protist the moment the cloud touches it.",
+    "toxin.potency": "Further damage per second to protists sitting inside the cloud.",
+    "toxin.radiusPer": "Cloud radius gained per antibiotic level — leveling widens the cloud rather than strengthening it.",
+    "nutrient.life": "Seconds a freed nutrient mote floats before decaying.",
+    "nutrient.radius": "Pickup radius of a nutrient mote (px).",
+    "nutrient.maxCount": "Cap on free-floating nutrient motes.",
+    "predator.count": "Target number of protist grazers. Applies as protists spawn, not retroactively.",
+    "predator.radius": "Protist size (px).",
+    "predator.wanderSpeed": "Protist speed while searching for prey.",
+    "predator.chaseSpeed": "Protist speed while actively chasing a cell.",
+    "predator.senseRange": "How far a protist can detect your cells (px).",
+    "predator.satiatedTime": "Seconds a protist rests, not hunting, after a meal.",
+    "predator.startEnergy": "Energy a new protist starts with.",
+    "predator.mealEnergy": "Energy a protist gains per bacterium eaten.",
+    "predator.metabolism": "Energy per second a protist burns — raise it to starve the grazers out.",
+    "predator.maturity": "Seconds before a protist is old enough to reproduce.",
+    "predator.lifespan": "Age range at which a protist dies of old age (s).",
+    "predator.reproEnergy": "Energy a protist must reach to divide.",
+    "predator.reproCooldown": "Minimum seconds between a protist's divisions.",
+    "predator.safetyMax": "Hard cap on protists — a performance backstop, never ecologically binding.",
+    "predator.minCount": "Population floor: below this, a new protist drifts in from offscreen.",
+    "predator.immigrateEvery": "Seconds between immigration checks when the protist population has crashed.",
+    "predator.cystMealFactor": "Fraction of a normal meal's energy a protist gets from eating a cyst.",
+    "predator.cystEatChance": "Chance a bumped cyst is actually eaten rather than resisting.",
+    "predator.killMotes": "Food motes released when an ANTIBIOTIC kills a protist (dying of old age releases nothing).",
+    "phage.greenCount": "Free phages kept drifting in the water.",
+    "phage.radius": "Phage size (px).",
+    "phage.life": "Seconds a free-floating phage survives before decaying.",
+    "phage.maxCount": "Cap on phages — a performance backstop, deliberately high so epidemics can get nasty.",
+    "phage.diffuse": "How fast phages diffuse through the water.",
+    "phage.infectHalo": "Extra reach beyond the cell body at which a phage can adsorb (px).",
+    "phage.burst": "How many new phages burst out when an infected cell lyses.",
+    "phage.latent": "Seconds from infection to lysis — the latent period.",
+    "phage.greenSeed": "Seconds between reservoir top-ups, which keep phages tuned to a sampled lineage.",
+    "phage.greenFloor": "Minimum phages kept matched to the sampled lineage's tier at each top-up.",
+    "phage.hostTolerance": "Kill-the-winner window: how many adaptation tiers from its host a phage can still infect. Lower = upgrading shakes off your pursuers faster.",
+    "phage.goldLife": "Seconds the rare GOLD phage (the HGT upgrade) lingers before vanishing.",
+  };
+  // arrays are documented once at the parent path; ".0"/".1" fall back to it
+  function tuneDoc(path) {
+    const dotted = path.join(".");
+    if (TUNE_DOCS[dotted]) return TUNE_DOCS[dotted];
+    const parent = TUNE_DOCS[path.slice(0, -1).join(".")];
+    if (!parent) return "";
+    const end = path[path.length - 1] === "0" ? "Low end" : "High end";
+    return `${parent}\n(${end} of the range.)`;
+  }
+
+  // every numeric leaf of CFG, including array entries (["phage","burst",0] etc.)
+  function cfgLeaves(obj = CFG, path = []) {
+    const out = [];
+    for (const k of Object.keys(obj)) {
+      const v = obj[k];
+      if (typeof v === "number") out.push({ path: [...path, k] });
+      else if (v && typeof v === "object") out.push(...cfgLeaves(v, [...path, k]));
+    }
+    return out;
+  }
+  const cfgGet = (o, p) => p.reduce((x, k) => (x == null ? undefined : x[k]), o);
+  function cfgSet(p, v) { let o = CFG; for (let i = 0; i < p.length - 1; i++) o = o[p[i]]; o[p[p.length - 1]] = v; }
+  const cfgDefault = (p) => cfgGet(CFG_DEFAULTS, p);
+  const cfgTuned = () => cfgLeaves().some((L) => cfgGet(CFG, L.path) !== cfgDefault(L.path));
+
+  // log mapping: pos 0…TUNE_STEPS ↔ value in [def/10, def*10], with the default at
+  // the midpoint. A default of 0 has no decade to span, so those fall back to linear.
+  function tuneScale(def) {
+    if (def > 0) {
+      const lo = Math.log(def) - TUNE_DECADES * Math.LN10, hi = Math.log(def) + TUNE_DECADES * Math.LN10;
+      return { val: (t) => Math.exp(lo + (hi - lo) * t / TUNE_STEPS),
+               pos: (v) => (v > 0 ? clamp(Math.round((Math.log(v) - lo) / (hi - lo) * TUNE_STEPS), 0, TUNE_STEPS) : 0) };
+    }
+    const lo = def - 1, hi = def + 1;
+    return { val: (t) => lo + (hi - lo) * t / TUNE_STEPS,
+             pos: (v) => clamp(Math.round((v - lo) / (hi - lo) * TUNE_STEPS), 0, TUNE_STEPS) };
+  }
+  function fmtTune(v) {
+    const a = Math.abs(v);
+    return a >= 100 ? v.toFixed(0) : a >= 10 ? v.toFixed(1) : a >= 1 ? v.toFixed(2) : v.toFixed(4);
+  }
+  function adminStatus(msg, warn) {
+    if (!el.adminStatus) return;
+    el.adminStatus.textContent = msg;
+    el.adminStatus.classList.toggle("warn", !!warn);
+  }
+  const DOC_IDLE = `<span class="idle">Hover a knob to see what it does.</span>`;
+  function showDoc(dotted, doc, def) {
+    if (!el.adminDoc) return;
+    el.adminDoc.innerHTML = `<b>${escapeHtml(dotted)}</b> <span class="adef">· default ${fmtTune(def)}</span><br>${escapeHtml(doc).replace(/\n/g, "<br>")}`;
+  }
+  function clearDoc() { if (el.adminDoc) el.adminDoc.innerHTML = DOC_IDLE; }
+  function tunedNotice() {
+    if (cfgTuned()) adminStatus("modified — this run is a tuning experiment, so it won't be sent to the shared leaderboard", true);
+    else adminStatus("all values at their defaults");
+  }
+  function buildAdmin() {
+    if (adminBuilt || !el.adminBody) return;
+    adminBuilt = true;
+    const groups = new Map();
+    for (const leaf of cfgLeaves()) {
+      const g = leaf.path.length > 1 ? leaf.path[0] : "general"; // respirationBase is top-level
+      if (!groups.has(g)) groups.set(g, []);
+      groups.get(g).push(leaf);
+    }
+    for (const [g, leaves] of groups) {
+      const head = document.createElement("div");
+      head.className = "agroup"; head.textContent = g;
+      el.adminBody.appendChild(head);
+      const groupRows = [];
+      adminGroups.push({ head, rows: groupRows });
+      for (const leaf of leaves) {
+        const def = cfgDefault(leaf.path), sc = tuneScale(def);
+        const row = document.createElement("div"); row.className = "arow";
+        const name = document.createElement("label"); name.className = "aname";
+        name.textContent = leaf.path.slice(g === "general" ? 0 : 1).join(".");
+        const doc = tuneDoc(leaf.path);
+        // on the ROW, so hovering the slider or the number box explains it too
+        row.title = (doc ? doc + "\n\n" : "") + `default ${fmtTune(def)} — double-click the name to reset`;
+        row.addEventListener("mouseenter", () => showDoc(leaf.path.join("."), doc, def));
+        const slider = document.createElement("input");
+        slider.type = "range"; slider.min = 0; slider.max = TUNE_STEPS; slider.step = 1;
+        const num = document.createElement("input");
+        num.type = "number"; num.className = "anum"; num.step = "any";
+        // `src` says which widget the value came from, so we don't fight the one being dragged
+        const repaints = leaf.path[0] === "substrate" && leaf.path[1].startsWith("grain");
+        const set = (v, src) => {
+          if (!isFinite(v)) return;
+          cfgSet(leaf.path, v);
+          if (src !== "slider") slider.value = sc.pos(v);
+          if (src !== "num") num.value = fmtTune(v);
+          row.classList.toggle("changed", v !== def);
+          // a particle only re-caches when something carves it, so a shading tweak would
+          // otherwise not show until your next bite — force the repaint to see it live
+          if (repaints) for (const p of substrates) p.dirty = true;
+          tunedNotice();
+        };
+        slider.addEventListener("input", () => set(sc.val(+slider.value), "slider"));
+        num.addEventListener("change", () => set(parseFloat(num.value), "num")); // typed value may exceed the slider's decade — that's fine, it just pins the slider
+        name.addEventListener("dblclick", () => set(def));
+        row.append(name, slider, num);
+        el.adminBody.appendChild(row);
+        // searched text = group + dotted path + label + description, so "protist" finds
+        // the predator group AND toxin.dose, which only mentions protists in its prose
+        const entry = { leaf, set, row, hay: `${g} ${leaf.path.join(".")} ${name.textContent} ${doc}`.toLowerCase() };
+        adminRows.push(entry);
+        groupRows.push(entry);
+      }
+    }
+    el.adminEmpty = document.createElement("div");
+    el.adminEmpty.className = "aempty hidden";
+    el.adminEmpty.textContent = "no knobs match that filter";
+    el.adminBody.appendChild(el.adminEmpty);
+    el.adminBody.addEventListener("mouseleave", clearDoc);
+    clearDoc();
+    filterAdmin();
+    tunedNotice();
+  }
+  // filter on every whitespace-separated token (all must match), so "phage life" narrows
+  function filterAdmin() {
+    const q = (el.adminSearch && el.adminSearch.value || "").toLowerCase().trim();
+    const tokens = q.split(/\s+/).filter(Boolean);
+    let shown = 0;
+    for (const g of adminGroups) {
+      let any = false;
+      for (const r of g.rows) {
+        const hit = tokens.every((t) => r.hay.includes(t));
+        r.row.classList.toggle("hidden", !hit);
+        if (hit) { any = true; shown++; }
+      }
+      g.head.classList.toggle("hidden", !any);
+    }
+    if (el.adminEmpty) el.adminEmpty.classList.toggle("hidden", shown > 0);
+    if (el.adminCount) el.adminCount.textContent = tokens.length ? `${shown} of ${adminRows.length} knobs` : `${adminRows.length} knobs`;
+  }
+  function syncAdmin() { for (const r of adminRows) r.set(cfgGet(CFG, r.leaf.path)); }
+  function toggleAdmin(show) {
+    buildAdmin();
+    adminOpen = show === undefined ? !adminOpen : !!show;
+    if (el.admin) el.admin.classList.toggle("hidden", !adminOpen);
+    if (adminOpen) syncAdmin();
+  }
+  function adminPreset() {
+    const changed = {};
+    for (const L of cfgLeaves()) {
+      const v = cfgGet(CFG, L.path), d = cfgDefault(L.path);
+      if (v !== d) changed[L.path.join(".")] = { default: d, value: v };
+    }
+    const raw = (el.adminName && el.adminName.value || "").trim();
+    const name = (raw.replace(/[^\w .-]+/g, "-").replace(/\s+/g, "-").slice(0, 60)) || "preset";
+    // `cfg` is the whole tree (paste it back / Load it); `changed` is the readable
+    // summary of what this experiment actually altered.
+    return { name, saved: new Date().toISOString(), changedCount: Object.keys(changed).length, changed, cfg: CFG };
+  }
+  function adminSave() {
+    const data = adminPreset(), json = JSON.stringify(data, null, 2);
+    console.log("[tuning] " + data.name, data); // also dumped to the console for a quick copy
+    try {
+      const url = URL.createObjectURL(new Blob([json], { type: "application/json" }));
+      const a = document.createElement("a");
+      a.href = url; a.download = data.name + ".json";
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+      adminStatus(`saved ${data.name}.json — ${data.changedCount} value${data.changedCount === 1 ? "" : "s"} changed from default`);
+    } catch (e) { adminStatus("could not save the file — the JSON is in the console", true); }
+  }
+  function adminApply(obj) {
+    const src = obj && obj.cfg ? obj.cfg : obj; // accept a saved preset or a bare CFG tree
+    if (!src || typeof src !== "object") { adminStatus("that file isn't a tuning preset", true); return; }
+    let n = 0;
+    for (const r of adminRows) {
+      const v = cfgGet(src, r.leaf.path);
+      if (typeof v === "number" && isFinite(v)) { r.set(v); n++; }
+    }
+    adminStatus(`loaded ${n} value${n === 1 ? "" : "s"}${obj && obj.name ? ` from "${obj.name}"` : ""}`);
+    if (obj && obj.name && el.adminName) el.adminName.value = obj.name;
+  }
+  if (el.adminSearch) el.adminSearch.addEventListener("input", filterAdmin);
+  // Focus is NOT stolen when the panel opens — the sim keeps running, so WASD must
+  // keep steering. "/" jumps to the filter when you actually want it.
+  if (el.admin) el.admin.addEventListener("keydown", (e) => {
+    // the window handler ignores keys typed in inputs, so ` / Esc are handled here
+    if (e.key === "`" || e.code === "Backquote") { e.preventDefault(); toggleAdmin(false); return; }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      if (el.adminSearch && e.target === el.adminSearch && el.adminSearch.value) { el.adminSearch.value = ""; filterAdmin(); }
+      else { toggleAdmin(false); }
+    }
+  });
+  if (el.adminSave) el.adminSave.addEventListener("click", adminSave);
+  if (el.adminReset) el.adminReset.addEventListener("click", () => {
+    for (const r of adminRows) r.set(cfgDefault(r.leaf.path));
+    adminStatus("all values reset to defaults");
+  });
+  if (el.adminLoad && el.adminFile) {
+    el.adminLoad.addEventListener("click", () => el.adminFile.click());
+    el.adminFile.addEventListener("change", () => {
+      const f = el.adminFile.files && el.adminFile.files[0];
+      if (!f) return;
+      f.text().then((txt) => adminApply(JSON.parse(txt)))
+              .catch(() => adminStatus("could not read that file as JSON", true));
+      el.adminFile.value = ""; // let the same file be re-loaded
+    });
+  }
 
   // --------------------------------------------------------- touch controls
   // A visible fixed thumbstick (bottom-left) drives movement; the right-hand

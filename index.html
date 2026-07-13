@@ -285,6 +285,53 @@
   .touchonly { display: none; }
   body.touch .touchonly { display: list-item; }
 
+  /* Admin / tuning panel (` to toggle) — a dev tool, so it's deliberately plain
+     and sits over the page without pausing the sim, so edits are seen live. */
+  #admin { position: fixed; top: 0; right: 0; bottom: 0; width: 340px; z-index: 100;
+    display: flex; flex-direction: column; background: rgba(4,17,21,.94);
+    border-left: 1px solid rgba(87,224,192,.35); box-shadow: -8px 0 30px rgba(0,0,0,.5);
+    font-size: 12px; backdrop-filter: blur(3px); }
+  #admin.hidden { display: none !important; }
+  #adminHead { padding: 9px 12px; border-bottom: 1px solid rgba(255,255,255,.1);
+    display: flex; flex-direction: column; gap: 2px; }
+  #adminHead b { color: var(--accent); letter-spacing: 1.5px; font-size: 12px; }
+  #adminHead .ahint { font-size: 10.5px; opacity: .5; }
+  #adminSearch { margin-top: 5px; width: 100%; background: rgba(255,255,255,.06);
+    border: 1px solid rgba(255,255,255,.18); color: #eafff8; border-radius: 6px;
+    padding: 5px 8px; font: inherit; font-size: 12px; outline: none; }
+  #adminSearch:focus { border-color: var(--accent); }
+  #adminCount { font-size: 10px; opacity: .45; font-variant-numeric: tabular-nums; }
+  .aempty { margin: 18px 4px; font-size: 11.5px; opacity: .5; font-style: italic; }
+  #adminBody { flex: 1; overflow-y: auto; padding: 6px 12px 10px; overscroll-behavior: contain; }
+  .agroup { margin: 12px 0 5px; font-size: 10.5px; text-transform: uppercase; letter-spacing: 1.2px;
+    color: var(--accent); opacity: .8; border-bottom: 1px solid rgba(87,224,192,.18); padding-bottom: 2px; }
+  .arow { display: grid; grid-template-columns: 116px 1fr 58px; align-items: center; gap: 6px; padding: 2px 0; }
+  .aname { font-size: 11px; opacity: .78; cursor: pointer; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; user-select: none; }
+  .arow.changed .aname { color: #ffd24a; opacity: 1; font-weight: bold; }
+  .arow input[type=range] { width: 100%; accent-color: var(--accent); height: 14px; }
+  .anum { width: 100%; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.16);
+    color: #eafff8; border-radius: 5px; padding: 2px 4px; font: inherit; font-size: 11px;
+    font-variant-numeric: tabular-nums; outline: none; }
+  .anum:focus { border-color: var(--accent); }
+  .arow.changed .anum { border-color: #ffd24a; color: #ffe9a8; }
+  /* Hover strip: the native title tooltip is slow and covers neighbouring rows,
+     so the hovered knob's description also lands here, instantly and in place. */
+  #adminDoc { flex: 0 0 auto; min-height: 52px; padding: 7px 12px; font-size: 11px; line-height: 1.4;
+    border-top: 1px solid rgba(255,255,255,.1); background: rgba(87,224,192,.05); color: var(--muted); }
+  #adminDoc b { color: var(--accent); font-weight: bold; }
+  #adminDoc .adef { opacity: .55; }
+  #adminDoc .idle { opacity: .45; font-style: italic; }
+  #adminFoot { padding: 9px 12px; border-top: 1px solid rgba(255,255,255,.1);
+    display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  #adminName { flex: 1 1 100%; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.18);
+    color: #eafff8; border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 12px; outline: none; }
+  #adminName:focus { border-color: var(--accent); }
+  #adminFoot button { padding: 5px 11px; border-radius: 7px; font-size: 11.5px; box-shadow: none; }
+  #adminFoot button.ghost { padding: 4px 10px; border-width: 1px; }
+  #adminStatus { flex: 1 1 100%; font-size: 10.5px; opacity: .62; min-height: 13px; line-height: 1.35; }
+  #adminStatus.warn { color: #ffd24a; opacity: .95; }
+
   @media (max-width: 840px), (max-height: 560px) {   /* phones/tablets: use the whole screen, don't clip the chart */
     #wrap { padding: 6px; gap: 6px; justify-content: flex-start; }
     #stage { width: min(800px, 100%, 86vh); } /* also bound by height so landscape doesn't overflow */
@@ -486,6 +533,25 @@
     <canvas id="chart" width="800" height="96"></canvas>
     <div id="subchartlegend"></div>
     <canvas id="subchart" width="800" height="64"></canvas>
+  </div>
+</div>
+<!-- Tuning panel: rows are generated from CFG in game.js, so only the frame is here. -->
+<div id="admin" class="hidden">
+  <div id="adminHead">
+    <b>TUNING</b>
+    <span class="ahint">` to close · / to search · sliders are log-scaled (×÷10 around default) · double-click a name to reset it</span>
+    <input id="adminSearch" placeholder="filter knobs — name or description…" autocomplete="off" spellcheck="false">
+    <span id="adminCount"></span>
+  </div>
+  <div id="adminBody"></div>
+  <div id="adminDoc"></div>
+  <div id="adminFoot">
+    <input id="adminName" placeholder="preset name (e.g. high-predation)" autocomplete="off" spellcheck="false" maxlength="60">
+    <button id="adminSave">Save JSON</button>
+    <button id="adminLoad" class="ghost">Load</button>
+    <button id="adminReset" class="ghost">Reset all</button>
+    <input id="adminFile" type="file" accept="application/json,.json" class="hidden">
+    <div id="adminStatus"></div>
   </div>
 </div>
 <footer id="pagefoot">
