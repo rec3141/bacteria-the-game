@@ -10,10 +10,11 @@ Play it at **https://bacteria.cryomics.org**
 
 ## Controls
 
-- **W A S D / arrows** — run; release to tumble (reorient)
-- **Space** — release the loaded enzyme (dissolve the particle ahead) or antibiotic (poison protists)
-- **Tab** — switch which enzyme / antibiotic is loaded · **M** — toggle music
-- **Esc** — pause & high scores
+- **W A S D / arrows** — run; release to tumble (reorient at random)
+- **Space** — fire the loaded gene: an enzyme dissolves the particle ahead, the antibiotic poisons nearby protists. As a protist, Space is a sprint.
+- **Tab** — load a different gene · **Shift** — take control of another lineage
+- **M** — cycle sound (music / effects / off) · **Esc** — pause, run stats & high scores
+- **`** — live tuning panel (every constant in the sim)
 
 ## Mechanics (in brief)
 
