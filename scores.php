@@ -2,6 +2,7 @@
 // Shared leaderboard for "Bacteria!" — tiny, dependency-free, file-backed.
 //   GET  scores.php        → JSON array of the top runs (highest score first)
 //   POST scores.php  {run} → upsert one run by its id, return the updated top list
+//   POST scores.php  {op:"name", id, name} → update only that run's display name
 // Storage is a single JSON file next to this script, guarded with flock().
 // Deliberately minimal server-side surface: no DB, no auth (a friends leaderboard),
 // strict input caps + sanitization, and it never executes anything from the payload.
@@ -25,6 +26,10 @@ function read_scores($FILE) {
   return is_array($arr) ? $arr : [];
 }
 
+function clean_name($value) {
+  return mb_substr(preg_replace('/[\x00-\x1F<>]/u', '', (string)$value), 0, 18);
+}
+
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 if ($method === 'GET') {
@@ -40,11 +45,16 @@ if ($method === 'POST') {
   $rec = json_decode($raw, true);
   if (!is_array($rec)) { http_response_code(400); echo json_encode(['error' => 'bad json']); exit; }
 
+  $nameOnly = (($rec['op'] ?? '') === 'name');
+  if ($nameOnly && !isset($rec['id'])) {
+    http_response_code(400); echo json_encode(['error' => 'missing id']); exit;
+  }
+
   $now = (int)(microtime(true) * 1000);
   // sanitize & clamp every field — never trust the client
   $clean = [
     'id'       => isset($rec['id']) ? (int)$rec['id'] : $now,
-    'name'     => mb_substr(preg_replace('/[\x00-\x1F<>]/u', '', (string)($rec['name'] ?? '')), 0, 18),
+    'name'     => clean_name($rec['name'] ?? ''),
     'score'    => max(0, min(100000000, (int)($rec['score'] ?? 0))),
     'gen'      => max(0, min(1000000, (int)($rec['gen'] ?? 0))),
     'dur'      => max(0, min(86400, (int)($rec['dur'] ?? 0))),
@@ -72,11 +82,25 @@ if ($method === 'POST') {
   $data = stream_get_contents($fp);
   $arr = json_decode($data, true);
   if (!is_array($arr)) $arr = [];
-  // upsert by id (so re-submitting after a name change updates the same run, not a dupe)
-  $arr = array_values(array_filter($arr, function ($r) use ($clean) { return ($r['id'] ?? null) !== $clean['id']; }));
-  $arr[] = $clean;
-  usort($arr, function ($a, $b) { return ($b['score'] ?? 0) <=> ($a['score'] ?? 0); });
-  $arr = array_slice($arr, 0, $MAX);
+  if ($nameOnly) {
+    // A name edit must not resend or replace the run's history. Mutate only the matching field
+    // while holding the same lock as full submissions, so queued writes remain strictly ordered.
+    $id = (int)$rec['id']; $found = false;
+    foreach ($arr as &$row) {
+      if ((int)($row['id'] ?? 0) === $id) { $row['name'] = clean_name($rec['name'] ?? ''); $found = true; break; }
+    }
+    unset($row);
+    if (!$found) {
+      flock($fp, LOCK_UN); fclose($fp);
+      http_response_code(404); echo json_encode(['error' => 'run not found']); exit;
+    }
+  } else {
+    // upsert by id (continuing into another day updates the same run, not a duplicate)
+    $arr = array_values(array_filter($arr, function ($r) use ($clean) { return ($r['id'] ?? null) !== $clean['id']; }));
+    $arr[] = $clean;
+    usort($arr, function ($a, $b) { return ($b['score'] ?? 0) <=> ($a['score'] ?? 0); });
+    $arr = array_slice($arr, 0, $MAX);
+  }
   rewind($fp); ftruncate($fp, 0); fwrite($fp, json_encode($arr));
   fflush($fp); flock($fp, LOCK_UN); fclose($fp);
 
