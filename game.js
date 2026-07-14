@@ -742,9 +742,14 @@
     const p = predators[0]; p.controlled = true; p.energy = Math.max(p.energy, CFG.predator.startEnergy); p.age = 0;
     cam.x = p.x; cam.y = p.y;
     immigrateBacteria(CFG.cycle.reseedBacteria);
-    flashRole("You are now a PROTIST", "graze the bacteria — you flip back when the grazers die out");
+    // No promise of a way back: the grazers have their own immigration (minCount, respawnFloor) and
+    // effectively never all die, so becomeBacterium() almost never fires. Tell the player what they
+    // CAN do instead of something that won't happen.
+    flashRole("You are now a PROTIST", "graze the bacteria — Space for a turbo burst");
     Audio.play("spawn", 0.6);
   }
+  // Only fires if every grazer dies at once — which their immigration makes very unlikely. Kept as a
+  // safety net so a wiped-out protist population can never leave you controlling nothing.
   function becomeBacterium() { // the protists died out → you rejoin the bacteria
     state.role = "bacterium";
     predators.forEach((p) => (p.controlled = false));
@@ -1059,7 +1064,8 @@
       }
     }
     updateEnzymes(dt); updateToxins(dt); updateNutrients(dt); updatePredators(dt); updatePhages(dt);
-    // while you're a protist: keep control on a living grazer, or flip back to a bacterium when they die out
+    // while you're a protist: keep control on a living grazer. Falling back to a bacterium needs EVERY
+    // grazer dead at once, which their immigration all but rules out — so in practice, grazer is for keeps.
     if (state.role === "protist" && !controlledProtist()) {
       if (predators.length) predators[0].controlled = true; else becomeBacterium();
     }
@@ -2511,7 +2517,7 @@
     "diel.tempLag": "How far the day's warmest moment trails the sun (fraction of a day).",
     "diel.foodFloor": "Night-time food production, as a fraction of the midday bloom.",
     "diel.grazeNight": "Extra grazing pressure at night, when the grazers rise to feed.",
-    "cycle.reseedBacteria": "Bacteria that immigrate when you flip back from grazer to bacterium.",
+    "cycle.reseedBacteria": "Bacteria seeded in one go when a role-swap happens — the prey that drifts in the moment you become a grazer (and the founders if you ever revert).",
     "cycle.reseedProtists": "Protists seeded when the grazers are wiped out.",
     "cycle.protistThrust": "Swim speed of the protist you steer after a role swap.",
     "cycle.protistEatScore": "Calories scored per bacterium eaten while you're the protist.",
