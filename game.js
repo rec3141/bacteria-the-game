@@ -38,7 +38,11 @@
                            // 200 -> 49 cells (37 divisions), 175 -> 120 (108), 155 -> 178 (166).
       swimCost: 1.2, enzymeCost: 4, antibioticCost: 6, invulnTime: 2.2,
       runMin: 1.8, runMax: 3.4, tumbleDur: 0.4, tumbleTurn: 7.0, playerTumbleTurn: 2.2,
-      enzymeCooldown: [2.5, 4.5],
+      enzymeCooldown: [1.0, 2.0],  // how often an autonomous cell CHECKS for a particle worth digesting.
+                                   // Was 2.5-4.5s, which left a cell sitting on top of food doing nothing for
+                                   // seconds at a time (the timer re-rolls even when nothing is in range).
+                                   // Unaided colony peak over 150s, no player help: 2.5-4.5 -> 14, 1.2-2.2 -> 32,
+                                   // 0.6-1.2 -> 42. Below ~1.5s the differences are lost in run-to-run noise.
       cystBelow: 14, cystWake: 45, cystMetab: 0.035, // low-energy autonomous cells encyst: dormant, near-zero
                                                     // metabolism, phage-immune & predation-resistant, tail dropped
       cystReviveEnergy: 40,       // energy a cyst is given when resuscitated as the player character
