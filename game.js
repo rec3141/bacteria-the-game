@@ -1397,7 +1397,7 @@
       const arr = loadScores(), rec = arr.find((r) => r.date === justFinishedTs);
       if (rec) { rec.name = playerName; localStorage.setItem(HS_KEY, JSON.stringify(arr)); }
     } catch (e) {}
-    if (lastRec) { lastRec.name = playerName; submitScore(lastRec); } // update the shared leaderboard entry (upsert by id)
+    if (lastRec) { lastRec.name = playerName; scheduleNameUpdate(lastRec); }
   }
 
   // ------------------------------------------------------------------- update
@@ -2572,6 +2572,9 @@
   let playerName = ""; try { playerName = localStorage.getItem(NAME_KEY) || ""; } catch (e) {}
   let globalScores = null;      // last-fetched shared leaderboard (null = not loaded / offline → use local)
   let lastRec = null;           // the run just finished (so a later name edit re-submits the same id)
+  let scoreWriteQueue = Promise.resolve(); // serialize writes so an older request can never land last
+  const NAME_UPDATE_DELAY = 500;
+  let nameUpdateTimer = null, pendingNameUpdate = null;
   function loadScores() { try { return JSON.parse(localStorage.getItem(HS_KEY)) || []; } catch (e) { return []; } }
   function escapeHtml(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
   let justFinishedTs = null; // marks the run just completed, to highlight it in the list
@@ -2592,18 +2595,34 @@
     } catch (e) { /* storage unavailable — high scores just won't persist */ }
     submitScore(rec); // push to the shared leaderboard (fire-and-forget, safe if the backend isn't there)
   }
+  function queueScoreWrite(payload) {
+    if (typeof fetch !== "function" || !payload) return;
+    const body = JSON.stringify(payload); // snapshot now; later local edits cannot mutate a queued request
+    scoreWriteQueue = scoreWriteQueue.catch(() => null)
+      .then(() => fetch(API_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body }))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((list) => { if (Array.isArray(list)) { globalScores = list; refreshScoreListIfOpen(); } })
+      .catch(() => null);
+    return scoreWriteQueue;
+  }
   function submitScore(rec) { // POST a run to the shared leaderboard; ignored gracefully if offline / no backend
-    if (typeof fetch !== "function" || !rec) return;
+    if (!rec) return;
     // A run played on tuned constants (` panel) isn't comparable to anyone else's,
     // so it stays in this browser's local list. Guarded here rather than at the call
     // sites so the later name-edit re-submit can't sneak it onto the shared board.
     if (rec.tuned) return;
-    try {
-      fetch(API_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(rec) })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((list) => { if (Array.isArray(list)) { globalScores = list; refreshScoreListIfOpen(); } })
-        .catch(() => {});
-    } catch (e) {}
+    try { return queueScoreWrite(rec); } catch (e) {}
+  }
+  function scheduleNameUpdate(rec) {
+    if (!rec || rec.tuned) return;
+    pendingNameUpdate = { op: "name", id: rec.id, name: rec.name || "" };
+    clearTimeout(nameUpdateTimer);
+    nameUpdateTimer = setTimeout(flushNameUpdate, NAME_UPDATE_DELAY);
+  }
+  function flushNameUpdate() {
+    clearTimeout(nameUpdateTimer); nameUpdateTimer = null;
+    const update = pendingNameUpdate; pendingNameUpdate = null;
+    if (update) try { return queueScoreWrite(update); } catch (e) {}
   }
   function fetchScores() { // GET the shared leaderboard; on success it replaces the local list in the UI
     if (typeof fetch !== "function") return;
@@ -3309,7 +3328,10 @@
   if (el.helpBack) el.helpBack.addEventListener("click", hideHelp);
   if (el.endGameBtn) el.endGameBtn.addEventListener("click", endGame);
   if (el.detailBack) el.detailBack.addEventListener("click", closeScoreDetail);
-  if (el.nameInput) el.nameInput.addEventListener("input", (e) => setPlayerName(e.target.value));
+  if (el.nameInput) {
+    el.nameInput.addEventListener("input", (e) => setPlayerName(e.target.value));
+    el.nameInput.addEventListener("change", flushNameUpdate);
+  }
 
   // --------------------------------------------------------- admin / tuning panel
   // ` opens a live-tuning panel: one slider per numeric leaf of CFG. Sliders are
