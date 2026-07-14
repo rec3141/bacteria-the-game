@@ -224,6 +224,7 @@
     circosPop: document.getElementById("circosPop"), circosCanvas: document.getElementById("circosCanvas"),
     circosCap: document.getElementById("circosCap"), detailCircos: document.getElementById("detailCircos"),
     demoCap: document.getElementById("demoCap"),   // attract-mode caption, over the ocean
+    scoreTabs: document.getElementById("scoreTabs"),   // desktop / mobile leaderboard switch
     science: document.getElementById("science"), sciBody: document.getElementById("sciBody"), sciBack: document.getElementById("sciBack"),
     sciBtn: document.getElementById("sciBtn"), sciBtn2: document.getElementById("sciBtn2"), sciBtn3: document.getElementById("sciBtn3"),
     analysisChart: document.getElementById("analysisChart"), analysisStats: document.getElementById("analysisStats"),
@@ -745,6 +746,9 @@
       mortLive: [0, 0, 0, 0], mortFull: [0, 0, 0, 0], // cause-of-death tallies (grazing/viral/starvation/antibiotic) per sample interval
       tod: tod0, light: dielLight(tod0), foodTarget: seedFood, graze: 1, foodT: 0, // diel state (updateDiel refreshes each frame)
       chartT: 0, history: [], fullT: 0, fullHist: [], fullInterval: 1, upgrades: [],
+      // Stamped ONCE, at the start of the run, not per day: continuing into day 2 re-submits the
+      // same run id, and a run must not be able to change which board it belongs to halfway through.
+      device: isTouch ? "touch" : "desktop",
       demo: !!isDemo };
     updateDiel();
     if (!isDemo) Audio.play("spawn", 0.5);
@@ -2240,7 +2244,7 @@
     // through — the backend upserts by id, and the local list replaces by id below.
     const id = state.runId || Date.now();
     const rec = { id, score: Math.round(state.score), gen: state.gen, date: id, dur: Math.round(state.elapsed), hist: state.fullHist, upgrades: state.upgrades, name: playerName,
-                  day: state.day || 1,
+                  day: state.day || 1, device: state.device || "desktop",
                   tuned: cfgTuned() || undefined }; // undefined → omitted by JSON.stringify, so untuned runs are unchanged on the wire
     justFinishedTs = id; lastRec = rec;
     try {
@@ -2275,11 +2279,20 @@
   function refreshScoreListIfOpen() { if (el.scores && !el.scores.classList.contains("hidden") && el.scoreDetail && el.scoreDetail.classList.contains("hidden")) renderScoreList(); }
   function renderScoreList() {
     if (!el.scoresList) return;
-    const arr = (globalScores || loadScores()).slice(); // shared list when we have it, else this browser's local runs
+    let arr = (globalScores || loadScores()).slice(); // shared list when we have it, else this browser's local runs
+    // TOUCH AND DESKTOP ARE DIFFERENT SPORTS — the phone runs at a different swim speed, zoom and
+    // gold-phage capture radius — so they get separate boards rather than one hopeless mixed one.
+    const counts = { desktop: 0, touch: 0 };
+    for (const r of arr) counts[deviceOf(r)]++;
+    arr = arr.filter((r) => deviceOf(r) === scoreDevice);
+    renderDeviceTabs(counts);
     // paused mid-game: drop the live run into the list so you can see exactly where it ranks
-    const liveLine = (state && state.running && !state.demo) ? currentRunLine() : null; // the attract loop is not a run
+    const liveLine = (state && state.running && !state.demo && state.device === scoreDevice) ? currentRunLine() : null; // the attract loop is not a run
     if (liveLine) arr.push(liveLine);
-    if (!arr.length) { el.scoresList.innerHTML = `<p class="empty">No runs yet. Play a game and your lineage's evolutionary history will appear here.</p>`; return; }
+    if (!arr.length) {
+      el.scoresList.innerHTML = `<p class="empty">No ${scoreDevice === "touch" ? "mobile" : "desktop"} runs yet. Play a game and your lineage's evolutionary history will appear here.</p>`;
+      return;
+    }
     // all-time leader per category → 🏆 badge on that run's value
     const leader = {};
     for (const k of ["score", "gen", "dur", "ad"]) { let best = -Infinity, id = null; for (const r of arr) { const v = SCORE_VAL[k](r); if (v > best) { best = v; id = recId(r); } } leader[k] = id; }
@@ -2407,6 +2420,22 @@
   function fmtDate(ms) { const d = new Date(ms);
     return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }); }
   let scoreSort = { key: "score", dir: -1 }; // leaderboard sort — default calories, descending
+  // Runs recorded before the split carry no device at all. They were desktop — the phone build was
+  // barely playable — so that's how they're read, rather than being dropped or shown on both boards.
+  const deviceOf = (r) => (r.device === "touch" ? "touch" : "desktop");
+  let scoreDevice = "desktop";                     // set to the device you're actually on, at boot
+  function renderDeviceTabs(counts) {
+    if (!el.scoreTabs) return;
+    const tab = (k, label) =>
+      `<button class="devtab${scoreDevice === k ? " on" : ""}" data-dev="${k}">${label}` +
+      `<em>${counts[k] || 0}</em></button>`;
+    el.scoreTabs.innerHTML = tab("desktop", "🖥 Desktop") + tab("touch", "📱 Mobile");
+    el.scoreTabs.querySelectorAll(".devtab").forEach((b) => b.addEventListener("click", () => {
+      scoreDevice = b.getAttribute("data-dev");
+      if (el.scoreDetail) el.scoreDetail.classList.add("hidden");   // the open run belongs to the other board
+      renderScoreList();
+    }));
+  }
   const recId = (r) => (r.id != null ? r.id : r.date);
   const SCORE_VAL = { // per-column value accessors (also the sortable/badge categories)
     name:  (r) => (r.name || "").toLowerCase(),
@@ -2417,7 +2446,8 @@
     date:  (r) => r.date || 0,
   };
   function currentRunLine() {
-    return { id: -1, date: -1, name: playerName, score: Math.round(state.score), gen: state.gen, dur: Math.round(state.elapsed), hist: state.fullHist, upgrades: state.upgrades };
+    return { id: -1, date: -1, name: playerName, score: Math.round(state.score), gen: state.gen, dur: Math.round(state.elapsed), hist: state.fullHist, upgrades: state.upgrades,
+             device: state.device || "desktop" };
   }
   let _detailRec = null, _detailRank = "";
   function openScoreDetail(rankHtml, rec) {
@@ -2439,7 +2469,7 @@
     showScores(); // rebuilds & re-shows the list (and the current-run row if paused mid-game)
   }
   function showScores() {
-    const active = !!(state && state.running); // paused mid-game
+    const active = !!(state && state.running && !state.demo); // paused mid-game — the attract loop isn't a game to end
     if (el.scoreDetail) el.scoreDetail.classList.add("hidden"); // always open on the list, not a stale detail
     [el.scoresList, el.scoresKey].forEach((e) => e && e.classList.remove("hidden"));
     if (el.scoresTitle) el.scoresTitle.textContent = paused ? "Paused" : "High Scores";
@@ -3206,6 +3236,7 @@
   const coarse = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
   if (coarse || "ontouchstart" in window) {
     document.body.classList.add("touch"); isTouch = true;
+    scoreDevice = "touch";   // open the leaderboard on the board you're actually competing on
     ZOOM = TOUCH_ZOOM * viewScale(); // resizeCanvas re-derives this whenever the canvas changes size
     // The genes are controls, not HUD, so on a phone they belong in the control deck with the
     // stick and buttons — not floating over the ocean inside #hud (which is pointer-events:none).

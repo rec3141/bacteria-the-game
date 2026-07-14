@@ -51,6 +51,14 @@ if ($method === 'POST') {
     'date'     => isset($rec['date']) ? (int)$rec['date'] : $now,
     'hist'     => is_array($rec['hist'] ?? null) ? array_slice($rec['hist'], 0, 800) : [],
     'upgrades' => is_array($rec['upgrades'] ?? null) ? array_slice($rec['upgrades'], 0, 200) : [],
+    // Which board this run belongs on. Touch and desktop are not the same game (different swim
+    // speed, zoom and gold-phage capture radius), so they are ranked separately. Whitelisted to two
+    // values — this decides a leaderboard, so it must not be a free-text field the client picks.
+    // Legacy rows have no device at all; the client reads those as desktop, which is what they were.
+    'device'   => (($rec['device'] ?? '') === 'touch') ? 'touch' : 'desktop',
+    // 'day' was being dropped on the floor: the client has always sent it, but it was never in this
+    // whitelist, so the shared board silently lost how many days a run survived.
+    'day'      => max(1, min(3650, (int)($rec['day'] ?? 1))),
   ];
 
   $fp = @fopen($FILE, 'c+');
