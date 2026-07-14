@@ -3655,18 +3655,42 @@
   if (el.demoPlay) el.demoPlay.addEventListener("click", start);
   if (el.demoBack) el.demoBack.addEventListener("click", endTutorial);
 
-  const coarse = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
-  if (coarse || "ontouchstart" in window) {
-    document.body.classList.add("touch"); isTouch = true;
-    scoreDevice = "touch";   // open the leaderboard on the board you're actually competing on
-    ZOOM = touchZoom() * viewScale(); // resizeCanvas re-derives this whenever the canvas changes size
-    // The genes are controls, not HUD, so on a phone they belong in the control deck with the
-    // stick and buttons — not floating over the ocean inside #hud (which is pointer-events:none).
-    // They go at the TOP of the deck's right column, above the action buttons, leaving the whole
-    // left side to the thumbstick.
-    const grow = document.querySelector("#hud .genome-row");
+  // Touch-event support is not an input mode: hybrid laptops expose ontouchstart while their
+  // primary mouse/trackpad is still fine and hover-capable. Only a touch-first primary pointer
+  // gets the phone deck and its gameplay tuning. Re-evaluate when the OS changes its primary
+  // pointer (for example, a convertible entering or leaving tablet mode).
+  const touchModeQuery = typeof matchMedia === "function"
+    ? matchMedia("(pointer: coarse) and (hover: none)") : null;
+  const genomeRow = document.querySelector("#hud .genome-row");
+  const genomeHome = genomeRow ? document.createComment("genome-row home") : null;
+  if (genomeRow && genomeHome && genomeRow.parentNode) genomeRow.parentNode.insertBefore(genomeHome, genomeRow);
+  function applyTouchMode(on) {
+    on = !!on;
+    if (isTouch === on) return;
+    isTouch = on;
+    document.body.classList.toggle("touch", on);
+    scoreDevice = on ? "touch" : "desktop";
+    ZOOM = on ? touchZoom() * viewScale() : 1;
+
+    // The genes are controls on a phone, so they live above the touch buttons. Put them back
+    // beside the desktop HUD when a convertible returns to a fine primary pointer.
     const right = document.getElementById("deckRight");
-    if (grow && right) right.insertBefore(grow, right.firstChild);
+    if (on && genomeRow && right) right.insertBefore(genomeRow, right.firstChild);
+    else if (!on && genomeRow && genomeHome && genomeHome.parentNode)
+      genomeHome.parentNode.insertBefore(genomeRow, genomeHome.nextSibling);
+
+    if (!on) {
+      releaseStick();
+      if (el.chartwrap) el.chartwrap.classList.remove("collapsed");
+    }
+    if (el.scores && !el.scores.classList.contains("hidden")) renderScoreList();
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(resizeCanvas);
+  }
+  applyTouchMode(touchModeQuery && touchModeQuery.matches);
+  if (touchModeQuery) {
+    const onTouchModeChange = (event) => applyTouchMode(event.matches);
+    if (touchModeQuery.addEventListener) touchModeQuery.addEventListener("change", onTouchModeChange);
+    else if (touchModeQuery.addListener) touchModeQuery.addListener(onTouchModeChange);
   }
   setupTouch();
 
