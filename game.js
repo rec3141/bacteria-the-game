@@ -26,7 +26,12 @@
   // Read live from CFG.touch.zoom (not a const any more) so the tuning slider actually moves the view.
   const touchZoom = () => CFG.touch.zoom;
   const viewScale = () => VIEW_W / DESIGN_W;          // 1 on a full-size canvas, ~0.46 on a phone
-  const WORLD_W = 2600, WORLD_H = 2000;
+  // The world is a torus of this size. It's `let`, not `const`, because the TUTORIAL shrinks it to
+  // the size of the viewport: a petri dish you can see all of at once. The camera then never has to
+  // move, nothing being explained can wander off-screen, and the director owns the whole cast.
+  const WORLD_DEF_W = 2600, WORLD_DEF_H = 2000;
+  let WORLD_W = WORLD_DEF_W, WORLD_H = WORLD_DEF_H;
+  function setWorld(w, h) { WORLD_W = Math.max(560, Math.round(w)); WORLD_H = Math.max(460, Math.round(h)); }
 
   const CFG = {
     cell: {
@@ -41,6 +46,7 @@
                            // 110-170 energy, so it never divided — it just encysted, and a colony left to
                            // itself stalled and died. Measured in a no-predator/no-virus sanctuary over 150s:
                            // 200 -> 49 cells (37 divisions), 175 -> 120 (108), 155 -> 178 (166).
+      // (demo/tutorial knobs live in CFG.demo)
       // DRIFT: every time YOU adapt, one other cell also changes — see driftAnotherCell.
       driftOnUpgrade: 1,        // 0 = off (the population then just tracks your genome)
       driftGainChance: 0.5,     // 0.5 = a coin flip between gaining a gene and losing one
@@ -75,6 +81,10 @@
     // ~1.7x onto a small pane, so the same world-speed reads as far quicker in the hand.
     // Thrust and top speed scale together, so acceleration feel is unchanged — just slower.
     touchSpeedScale: 0.625,
+    // THE TUTORIAL DISH. A circular world the size of the viewport: nothing being explained can leave
+    // the screen, the camera never moves, and the director controls every organism in it. When the
+    // lesson ends the rim dissolves and the dish opens into the whole ocean.
+    demo: { food: 4, foodScale: 0.42, dishPad: 30, rimFade: 1.8 },
     // TOUCH-ONLY tuning. The phone is not a smaller desktop, it's a different game: a cramped view,
     // a thumb instead of a keyboard, and players who will give it ninety seconds. These knobs exist
     // to make it FUN there, not to make it match. Desktop is untouched by all of them.
@@ -451,7 +461,8 @@
     env.tempC = D.tempBase + D.tempAmp*Math.sin((tod - D.tempLag)*TAU); // warmest early afternoon
     env.salinity = 35;
     env.update();
-    state.foodTarget = foodTargetFor(light);   // photosynthesis: food blooms with the light
+    // in the dish the director sets the cast; out in the ocean the sun does
+    state.foodTarget = (state.demo && state.demoFood) ? state.demoFood : foodTargetFor(light);
     state.graze = 0.6 + D.grazeNight*(1 - light); // grazers press harder at night
   }
   // composition succession over the day: fresh diatoms (lipid) bloom in the light → grazing makes
@@ -724,7 +735,9 @@
   function makeSubstrate(kind) {
     const k = kind || pickBalancedKind();
     const spec = PARTICLES[k];
-    const R = powerLawSize(); // size follows a global power-law spectrum, independent of kind (which now sets shape + resource)
+    // In the dish, scale them down: at full size two particles fill the glass and there's nowhere
+    // left to show a cell swimming, a grazer hunting, or a virus drifting.
+    const R = powerLawSize() * (demoWorld ? CFG.demo.foodScale : 1);
     const rot = rand(0, Math.PI*2), seed = rand(0, 100);
     const cs = CFG.grid.cs, n = Math.ceil(2*R/cs) + 2, half = n*cs/2;
     // sub-blob centers for aggregates
@@ -824,6 +837,11 @@
   }
 
   function newGame(isDemo) {
+    demoWorld = !!isDemo;                    // set FIRST: makeSubstrate reads it while seeding
+    // THE TUTORIAL IS A PETRI DISH. Shrink the world to the viewport, so everything the director
+    // stages is on screen from the moment it exists and the camera can sit perfectly still. A real
+    // run gets the whole ocean back.
+    if (isDemo) setWorld(VIEW_W, VIEW_H); else setWorld(WORLD_DEF_W, WORLD_DEF_H);
     const first = makeCell(WORLD_W/2, WORLD_H/2, CFG.cell.startEnergy, -Math.PI/2, 1);
     for (let i = 0; i < Math.round(CFG.cell.startUpgrades); i++) grantRandomUpgrade(first); // testing aid
     // In the demo NOTHING is controlled: the attract mode is the simulation running itself, and a
@@ -833,17 +851,19 @@
     // A run opens at day.startHour (midnight by default). The DEMO opens at midday instead: a dark,
     // empty, becalmed midnight sea is the worst possible advert for the game. Noon is the bloom.
     const tod0 = isDemo ? 0.5 : 0;
-    const seedFood = foodTargetFor(dielLight(tod0));   // start at the food the STARTING hour supports
+    // In the dish the DIRECTOR owns the cast: a handful of particles and nothing else. Every protist,
+    // every phage arrives because a beat introduced it, which is the only way a lesson stays a lesson.
+    const seedFood = isDemo ? CFG.demo.food : foodTargetFor(dielLight(tod0));
     for (let i = 0; i < seedFood; i++) substrates.push(makeSubstrate());
     predators = [];
-    for (let i = 0; i < CFG.predator.count; i++) {
+    if (!isDemo) for (let i = 0; i < CFG.predator.count; i++) {
       let x, y; // keep initial protists away from the lone founder
       do { x = rand(0, WORLD_W); y = rand(0, WORLD_H); } while (toroDist2(x, y, WORLD_W/2, WORLD_H/2) < 550*550);
       predators.push(makePredator(x, y, null, rand(0, 25)));
     }
     enzymes = []; toxins = []; nutrients = []; particles = [];
     phages = [];
-    for (let i = 0; i < CFG.phage.greenCount; i++) { // seed OFFSCREEN so no virus is on the opening view — they diffuse in
+    if (!isDemo) for (let i = 0; i < CFG.phage.greenCount; i++) { // seed OFFSCREEN so no virus is on the opening view — they diffuse in
       const a = rand(0, 6.28), d = Math.hypot(VIEW_W, VIEW_H)/2 + rand(80, 500);
       phages.push(makePhage("green", wrapX(first.x + Math.cos(a)*d), wrapY(first.y + Math.sin(a)*d)));
     }
@@ -864,7 +884,7 @@
       // Stamped ONCE, at the start of the run, not per day: continuing into day 2 re-submits the
       // same run id, and a run must not be able to change which board it belongs to halfway through.
       device: isTouch ? "touch" : "desktop",
-      demo: !!isDemo };
+      demo: !!isDemo, demoFood: isDemo ? CFG.demo.food : null };
     updateDiel();
     if (!isDemo) Audio.play("spawn", 0.5);
   }
@@ -883,46 +903,98 @@
   const alive = (e) => e && e.alive !== false && !e.dead;
   const anyCell = () => cells.find((c) => c.alive && !c.cyst) || cells[0];
   function demoFocus(e, secs) { if (e) { demo.focus = e; demo.hold = secs || 0; } }
+  // Put a fresh entity somewhere sensible inside the dish, near the middle, clear of the rim.
+  function dishSpot(distFromCentre) {
+    const a = rand(0, TAU), d = distFromCentre != null ? distFromCentre : rand(60, dishRadius()*0.55);
+    return { x: WORLD_W/2 + Math.cos(a)*d, y: WORLD_H/2 + Math.sin(a)*d };
+  }
+  const near = (e, dist) => { const a = rand(0, TAU); return { x: e.x + Math.cos(a)*dist, y: e.y + Math.sin(a)*dist }; };
+  const centre = (e) => { if (e) { e.x = WORLD_W/2; e.y = WORLD_H/2; } return e; };
   const DEMO_BEATS = [
-    { cap: "A bacterium cannot steer. It swims in a straight line — a <b>run</b> — then <b>tumbles</b> to a random new heading.",
-      secs: 8, setup: () => anyCell() },
-    { cap: "It is far too small to swallow a particle, so it digests one from the outside: an <b>enzyme</b> dissolves the particle, and the cell absorbs what comes loose.",
-      secs: 11, setup: () => {                       // park a cell on the doorstep of a particle
-        const c = anyCell(), s = substrates.find((p) => p.phase === "live");
-        if (c && s) { const a = rand(0, TAU); c.x = wrapX(s.x + Math.cos(a)*(s.R + 26)); c.y = wrapY(s.y + Math.sin(a)*(s.R + 26));
+    { cap: "This is one <b>bacterium</b>. It cannot steer: it swims in a straight line — a <b>run</b> — then <b>tumbles</b> to a random new heading, and repeats. It is not looking for anything. It cannot.",
+      secs: 9, setup: () => centre(anyCell()) },
+    // THE FOOD. Introduce the three resources by colour, on an actual particle, before anything eats one.
+    { cap: "Its food is <b>marine snow</b> — dead plankton and waste, sinking. Each particle is a patchwork of three things: <b class='c-lip'>lipid</b>, <b class='c-pro'>protein</b> and <b class='c-carb'>carbohydrate</b>. Watch the colours.",
+      secs: 10, setup: () => centre(substrates.find((p) => p.phase === "live")) || null },
+    { cap: "A bacterium is far too small to swallow any of it. So it digests from the OUTSIDE: it releases an <b>enzyme</b>, the matching blocks dissolve, and it absorbs what comes loose. One enzyme per resource — and it starts with only <b class='c-carb'>carbohydrase</b>.",
+      secs: 12, setup: () => {                       // park a cell on the doorstep of a particle
+        const c = anyCell(), s = centre(substrates.find((p) => p.phase === "live"));
+        if (c && s) { const a = rand(0, TAU); c.x = s.x + Math.cos(a)*(s.R + 24); c.y = s.y + Math.sin(a)*(s.R + 24);
           c.angle = Math.atan2(dy(s.y, c.y), dx(s.x, c.x)); c.tumbling = false; c.enzCd = 0.2; }
         return c;
       } },
     { cap: "Fed well enough, it <b>elongates and divides</b>. Every cell becomes two, so a colony goes exponential — 1, 2, 4, 8…",
-      secs: 9, setup: () => anyCell(),
+      secs: 9, setup: () => centre(anyCell()),
       tick: (c, t) => { if (alive(c) && t > 2.5) c.energy = CFG.cell.divideThreshold + 1; } },  // nudge it over the line, on camera
-    { cap: "Bacteria are prey. Single-celled <b>protists</b> graze on them — the link that carries all this carbon up the food web.",
-      secs: 10, setup: () => {
+    // THE PREDATOR. Focus the PROTIST, not the cell — it's the thing being introduced.
+    { cap: "This is a <b style='color:#ff9ec0'>protist</b>: a single-celled hunter, far bigger than a bacterium, and it eats them. This is the link that carries all this carbon up the food web.",
+      secs: 11, setup: () => {
         const c = anyCell(); if (!c) return null;
-        const a = rand(0, TAU);
-        const pr = makePredator(wrapX(c.x + Math.cos(a)*190), wrapY(c.y + Math.sin(a)*190), CFG.predator.startEnergy, 0);
+        const pr = makePredator(WORLD_W/2, WORLD_H/2, CFG.predator.startEnergy, 0);
         predators.push(pr);
+        const p = near(pr, 120); c.x = p.x; c.y = p.y;   // its dinner, beside it
+        return pr;                                       // the grazer is the subject
+      } },
+    // THE VIRUSES. Both colours, side by side, with the phage itself in the ring.
+    { cap: "<b style='color:#8bf06a'>Green</b> and <b style='color:#ff5a52'>red</b> are the same creature — a <b>phage</b> — coloured by what it can do to YOU. <b style='color:#8bf06a'>Green</b> can't infect this cell. <b style='color:#ff5a52'>Red</b> can. A phage cannot chase: it drifts until it collides.",
+      secs: 12, setup: () => {
+        const c = centre(anyCell()); if (!c) return null;
+        demo.hero = c;                                // red/green is judged against this cell
+        const tier = upgradeTier(c);
+        let shown = null;
+        for (let i = 0; i < 3; i++) {                 // reds: tuned to this cell's tier
+          const p = near(c, rand(70, 130));
+          const ph = makePhage("green", p.x, p.y, tier);
+          phages.push(ph); if (!shown) shown = ph;
+        }
+        for (let i = 0; i < 3; i++) {                 // greens: tuned far away, harmless to it
+          const p = near(c, rand(70, 130));
+          phages.push(makePhage("green", p.x, p.y, tier + CFG.phage.hostTolerance + 3));
+        }
+        return shown;                                 // ring the virus, not the cell
+      } },
+    { cap: "A <b style='color:#ff5a52'>red</b> one that lands injects its DNA, turns the cell into a factory, and bursts it open — a <b>lysis</b> that seeds the water with more phages. This is the commonest death in the ocean.",
+      secs: 10, setup: () => {
+        const c = centre(anyCell()); if (!c) return null;
+        demo.hero = c;
+        c.infectedGreen = true; c.lysisT = 5;         // on a schedule, not on a dice roll
         return c;
       } },
-    { cap: "<b>Phages</b> can't chase anything — they drift until they collide with a cell. Then one injects its DNA, hijacks the cell to copy itself, and bursts it open: a <b>lysis</b> that seeds the water with more phages.",
-      secs: 10, setup: () => {
+    // THE GOLD. Ring the phage first — it's the thing you'll spend the game chasing.
+    { cap: "And this one — the <b style='color:#ffd24a'>gold phage</b> — doesn't kill. It rewrites: it carries a new gene INTO the cell. It is the only thing in this sea that changes what you can do, and it is rare.",
+      secs: 8, setup: () => {
         const c = anyCell(); if (!c) return null;
-        c.infectedGreen = true; c.lysisT = 4.5;      // on a schedule, not on a dice roll
-        for (let i = 0; i < 3; i++) { const a = rand(0, TAU);
-          phages.push(makePhage("green", wrapX(c.x + Math.cos(a)*90), wrapY(c.y + Math.sin(a)*90), upgradeTier(c))); }
-        return c;
+        demo.hero = c;
+        const ph = makePhage("gold", WORLD_W/2, WORLD_H/2);
+        ph.vx = ph.vy = 0;
+        phages.push(ph);
+        demo.gold = ph;
+        const p = near(ph, 150); c.x = p.x; c.y = p.y;
+        return ph;                                     // the gold is the subject; the cell comes to it
+      },
+      tick: (ph, t) => {                               // swim the cell in, on cue
+        const c = demo.hero;
+        if (ph && !ph.dead && alive(c) && t > 1.2) {
+          const k = 1 - Math.exp(-1.1*0.016);
+          c.x += (ph.x - c.x)*k; c.y += (ph.y - c.y)*k;
+          c.angle = Math.atan2(ph.y - c.y, ph.x - c.x);
+        }
       } },
-    { cap: "A rare <b>gold phage</b> rewrites the genome instead of killing. This cell just gained <b>lipase</b> — it can digest the fatty particles it used to swim past.",
-      secs: 10, setup: () => {
-        const c = anyCell(); if (!c) return null;
-        c.enzLvl[0] = Math.max(1, c.enzLvl[0]);      // lipase — deliberately, so it answers beat 2
-        burst(c.x, c.y, "#ffd24a", 18);
+    { cap: "Caught. This lineage just gained <b class='c-lip'>lipase</b> — it can dissolve the <b class='c-lip'>fatty</b> blocks it used to swim straight past. Everything it does from now on, its daughters inherit.",
+      secs: 9, setup: () => {
+        const c = centre((demo.hero && alive(demo.hero)) ? demo.hero : anyCell()); if (!c) return null;
+        if (demo.gold && !demo.gold.dead) demo.gold.dead = true;
+        c.enzLvl[0] = Math.max(1, c.enzLvl[0]);      // lipase — deliberately, so it answers the food beat
+        c.ups = (c.ups || []).concat([{ t: state.elapsed, label: "Lipase 1", abbr: "L1", color: RESOURCES[0].color, acquired: true }]);
+        burst(c.x, c.y, "#ffd24a", 22);
+        Audio.play("upgrade", 0.5);
         return c;
       } },
   ];
   function startDemo() {
     newGame(true);
-    demo = { i: -1, t: 0, secs: 0, focus: null, hold: 0, idle: false, idleT: 0 };
+    demo = { i: -1, t: 0, secs: 0, focus: null, hold: 0, idle: false, idleT: 0,
+             dish: true, rim: 0, hero: null, gold: null };
     nextDemoBeat();
   }
   function stopDemo() {
@@ -959,8 +1031,9 @@
   function nextDemoBeat() {
     if (!demo) return;
     demo.i++; demo.t = 0;
-    if (demo.i >= DEMO_BEATS.length) {              // the lesson is over; keep the ocean alive
+    if (demo.i >= DEMO_BEATS.length) {              // the lesson is over — the dish becomes the ocean
       demo.idle = true; demo.idleT = 0; demo.secs = Infinity;
+      openDemoWorld();
       if (el.demoCap) el.demoCap.classList.add("hidden");
       return;
     }
@@ -992,7 +1065,29 @@
       demo.idleT -= dt;
       if (demo.idleT <= 0) { demo.idleT = rand(7, 12); demo.focus = demoInteresting(); }
     } else if (demo.t >= demo.secs) nextDemoBeat();
-    // ease the camera on (toroidal: chase the SHORT way round, never across the whole world)
+    if (demo.rim > 0) demo.rim = Math.max(0, demo.rim - dt/CFG.demo.rimFade);   // the glass dissolves
+    if (demo.dish) {
+      // Inside the dish the camera does not move AT ALL. The whole world is on screen, so there is
+      // nothing to chase — and a still camera is what lets the eye follow the ring instead of fighting it.
+      cam.x = WORLD_W/2; cam.y = WORLD_H/2;
+      // Instead the SUBJECT comes to the stage: whatever the beat is about is drawn gently to the
+      // middle of the glass and held there. A soft spring, not a clamp — the protist still hunts and
+      // the cell still swims, they just do it where you're looking.
+      const f = demo.focus;
+      if (f && !demo.idle && alive(f)) {
+        // A subject swims at 240px/s; a gentle tether just loses. Reel it in hard once it leaves the
+        // middle fifth, so it can still swim, hunt and drift — but always in front of you.
+        const lim = dishRadius()*0.2;
+        const ex = f.x - WORLD_W/2, ey = f.y - WORLD_H/2, d = Math.hypot(ex, ey);
+        if (d > lim) {
+          const pull = (d - lim)*(1 - Math.exp(-3.4*dt));
+          f.x -= ex/d*pull; f.y -= ey/d*pull;
+        }
+      }
+      confineToDish();
+      return;
+    }
+    // Out in the open ocean the screensaver drifts between whatever is worth watching.
     const f = demo.focus;
     if (f) {
       const k = 1 - Math.exp(-2.6*dt);
@@ -1000,11 +1095,71 @@
       cam.y = wrapY(cam.y + dy(f.y, cam.y)*k);
     }
   }
+  // ---- the dish ------------------------------------------------------------
+  // Inside the dish the DIRECTOR is the only source of organisms — no immigration, no viral
+  // reservoir, no gold respawn. A tutorial where things wander in uninvited isn't a tutorial.
+  const dishOn = () => !!(demo && demo.dish);
+  // dishOn() is useless while newGame is still seeding — `demo` and `state` don't exist yet — so the
+  // dish needs its own flag, set before the first particle is made.
+  let demoWorld = false;
+  const dishRadius = () => Math.min(WORLD_W, WORLD_H)/2 - CFG.demo.dishPad;
+  // Hold everything inside the glass. The world is a torus, but the DISH is plain circular geometry:
+  // an organism that reaches the rim is set back on it and has its outward velocity removed, so it
+  // slides along the glass instead of grinding into it or wrapping round to the far side.
+  function confineToDish() {
+    if (!demo || !demo.dish) return;
+    const cx = WORLD_W/2, cy = WORLD_H/2, R = dishRadius();
+    const hold = (e, rad) => {
+      const ex = e.x - cx, ey = e.y - cy, d = Math.hypot(ex, ey) || 1e-6, lim = Math.max(8, R - rad);
+      if (d <= lim) return;
+      const nx = ex/d, ny = ey/d;
+      e.x = cx + nx*lim; e.y = cy + ny*lim;
+      if (e.vx != null) { const vn = e.vx*nx + e.vy*ny; if (vn > 0) { e.vx -= vn*nx; e.vy -= vn*ny; } }
+      if (e.tvx != null) { const tn = e.tvx*nx + e.tvy*ny; if (tn > 0) { e.tvx -= tn*nx; e.tvy -= tn*ny; } }
+    };
+    for (const c of cells) hold(c, cellHalfLen(c) + 2);
+    for (const p of predators) hold(p, p.r);
+    for (const ph of phages) hold(ph, ph.r + 2);
+    for (const s of substrates) hold(s, s.R*0.92);
+    for (const n of nutrients) hold(n, 2);
+  }
+  // The lesson is over: the rim dissolves and the dish becomes the ocean. Everything is shifted so it
+  // stays where it looks like it is — the world grows around the organisms rather than under them.
+  function openDemoWorld() {
+    if (!demo || !demo.dish) return;
+    const ox = (WORLD_DEF_W - WORLD_W)/2, oy = (WORLD_DEF_H - WORLD_H)/2;
+    setWorld(WORLD_DEF_W, WORLD_DEF_H);
+    const shift = (e) => { e.x += ox; e.y += oy; };
+    [cells, predators, phages, substrates, nutrients, particles, enzymes, toxins].forEach((list) => list.forEach(shift));
+    cam.x += ox; cam.y += oy;
+    demo.dish = false; demo.rim = 1;      // rim fades out over CFG.demo.rimFade seconds
+    demoWorld = false;                    // particles spawning into the open ocean are full size again
+    state.demoFood = null;                // the sea refills to its real diel target — the ocean arrives
+  }
+  function drawDish() {
+    if (!demo || (!demo.dish && !(demo.rim > 0))) return;
+    const a = demo.dish ? 1 : demo.rim;
+    const R = dishRadius(), x = sx(WORLD_W/2), y = sy(WORLD_H/2);
+    ctx.save();
+    ctx.globalAlpha = a*0.62;             // everything outside the glass is darkened away
+    ctx.fillStyle = "#02090c";
+    ctx.beginPath(); ctx.rect(-6000, -6000, 24000, 24000); ctx.arc(x, y, R, 0, TAU, true); ctx.fill();
+    ctx.globalAlpha = a;
+    ctx.strokeStyle = "rgba(87,224,192,.20)"; ctx.lineWidth = 10;
+    ctx.beginPath(); ctx.arc(x, y, R + 5, 0, TAU); ctx.stroke();
+    ctx.strokeStyle = "rgba(190,245,232,.42)"; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.arc(x, y, R, 0, TAU); ctx.stroke();
+    ctx.restore();
+  }
   function drawDemoFocus() {                        // a soft ring so you know what you're being shown
     if (!demo || !demo.focus || demo.idle || !alive(demo.focus)) return;
-    const f = demo.focus, r = (f.r || cellHalfLen(f) || 10) + 16 + Math.sin(state.elapsed*3)*2.5;
+    const f = demo.focus;
+    // a particle is sized by R, a protist/phage by r, a cell by its length — the ring has to fit
+    // whatever it's pointing at, or it points at nothing
+    const rad = f.R || f.r || cellHalfLen(f) || 10;
+    const r = rad + 14 + Math.sin(state.elapsed*3)*2.5;
     ctx.save();
-    ctx.strokeStyle = "rgba(87,224,192,.55)"; ctx.lineWidth = 1.5;
+    ctx.strokeStyle = "rgba(87,224,192,.75)"; ctx.lineWidth = 1.8;
     ctx.setLineDash([5, 5]); ctx.lineDashOffset = -state.elapsed*14;
     ctx.beginPath(); ctx.arc(sx(f.x), sy(f.y), r, 0, TAU); ctx.stroke();   // drawn INSIDE the zoom transform, like the cells
     ctx.restore();
@@ -1863,7 +2018,7 @@
     } else state.predExtinct = false;
     // immigration: grazers drift in toward a target that RISES with bacterial abundance
     // (density-dependent top-down pressure), and never below the crash floor.
-    state.predImmigrateT -= dt;
+    if (!dishOn()) state.predImmigrateT -= dt;
     if (state.predImmigrateT <= 0) {
       const P = CFG.predator;
       state.predImmigrateT = state.predRespawn;
@@ -1956,7 +2111,7 @@
     phages = phages.filter((p) => !p.dead);
     if (phages.length > CFG.phage.maxCount) phages.length = CFG.phage.maxCount;
     // background viral reservoir: when green phage runs low, seed one OFFSCREEN (it diffuses in — never pops into view)
-    state.greenSeedT -= dt;
+    if (!dishOn()) state.greenSeedT -= dt;
     if (state.greenSeedT <= 0) {
       state.greenSeedT = rand(CFG.phage.greenSeed[0], CFG.phage.greenSeed[1]);
       // pick an (abundance-weighted) lineage and make sure SOME phage can infect it. Gating per-tier, not on
@@ -1976,7 +2131,7 @@
     }
     // keep the board stocked with gold — respawns the instant one is used, usually buried inside a
     // distant particle so you have to dig it out. On touch there are several, and they're closer in.
-    const goldWant = isTouch ? CFG.phage.goldCountTouch : CFG.phage.goldCount;
+    const goldWant = dishOn() ? 0 : (isTouch ? CFG.phage.goldCountTouch : CFG.phage.goldCount);
     const goldMin = isTouch ? CFG.phage.goldMinDistTouch : CFG.phage.goldMinDist;
     const goldHave = phages.reduce((n, p) => n + (p.type === "gold" && !p.dead ? 1 : 0), 0);
     if (goldHave < goldWant && phages.length < CFG.phage.maxCount) {
@@ -2028,6 +2183,7 @@
     drawWater(); // ambient background stays unscaled so the corners never go empty
     ctx.save();
     if (ZOOM !== 1) { ctx.translate(VIEW_W/2, VIEW_H/2); ctx.scale(ZOOM, ZOOM); ctx.translate(-VIEW_W/2, -VIEW_H/2); }
+    drawDish();                       // the glass, and the dark beyond it
     for (const p of substrates) drawSubstrate(p);
     for (const z of enzymes) drawEnzyme(z);
     for (const z of toxins) drawToxin(z);
@@ -2039,7 +2195,7 @@
     drawDemoFocus();      // inside the zoom transform, so the ring tracks the cell exactly
     ctx.restore();
     drawDayNight(); // time-of-day color wash (screen space, over the world, under the minimap)
-    drawMinimap(); // HUD-space, never zoomed
+    if (!dishOn()) drawMinimap(); // HUD-space, never zoomed — pointless when the dish IS the view
   }
   // The page around the stage was a fixed midnight gradient while the sea inside it went from navy to
   // bright teal — at noon the game looked like a lit window cut into a dark wall. Drive the page from
@@ -2209,7 +2365,10 @@
       ctx.restore(); return;
     }
     // green phage — color-coded by danger to YOU: red = can infect your cell, green = harmless
-    const pc = controlledCell(), danger = pc && hostMatch(ph.host, upgradeTier(pc));
+    // In the tutorial there IS no controlled cell, so red/green would have nothing to be relative to
+    // and every phage would read harmless. Judge them against the cell the lesson is about instead.
+    const pc = controlledCell() || (demo && alive(demo.hero) ? demo.hero : null);
+    const danger = pc && hostMatch(ph.host, upgradeTier(pc));
     const col = danger ? "#ff5a52" : "#7CFC5A", r = 3.8;
     ctx.fillStyle = "rgba(8,12,10,0.6)"; ctx.beginPath(); ctx.arc(0, 0, r + 1.7, 0, 6.28); ctx.fill(); // dark halo → pops against same-color blocks
     ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.beginPath();
