@@ -282,10 +282,14 @@
     if (!e.repeat && e.key === "Shift") switchControl();  // switch which lineage you're steering
   });
   addEventListener("keyup", (e) => { keys[e.key.toLowerCase()] = false; });
-  // on-screen thumbstick (mobile); direction only — the mover normalises magnitude
+  // on-screen thumbstick (mobile). Tap/flick a direction and the cell RUNS that way
+  // for a few seconds on its own (no need to hold); dragging keeps re-aiming it, and
+  // tapping the centre stops. Direction only — the mover normalises magnitude.
   const touchVec = { x: 0, y: 0, active: false };
+  const TOUCH_RUN_SECS = 3;
+  let touchRunT = 0; // seconds left on a committed tap-run
   function axis() {
-    if (touchVec.active) return { x: touchVec.x, y: touchVec.y };
+    if (touchRunT > 0 && (touchVec.x || touchVec.y)) return { x: touchVec.x, y: touchVec.y };
     let x = 0, y = 0;
     if (keys["a"]||keys["arrowleft"]) x -= 1; if (keys["d"]||keys["arrowright"]) x += 1;
     if (keys["w"]||keys["arrowup"]) y -= 1; if (keys["s"]||keys["arrowdown"]) y += 1;
@@ -312,6 +316,7 @@
   let state = null, cells = [], substrates = [], enzymes = [], toxins = [], nutrients = [],
       predators = [], phages = [], particles = [], flagPhase = 0, cam = { x: 0, y: 0 }, paused = false;
   let ZOOM = 1; // world magnification — bumped on touch devices so cells aren't tiny on a small screen
+  let isTouch = false; // coarse-pointer device → mobile control + HUD layout (minimap top-left, etc.)
   let chartLog = false; // generation-history charts: log vs. linear y-axis (toggled by clicking a chart)
 
   function cellHalfLen(c) {
@@ -681,6 +686,8 @@
   function update(dt) {
     if (!state || !state.running) return;
     state.elapsed += dt; env.update();
+    // a committed tap-run keeps steering the player for TOUCH_RUN_SECS after the finger lifts
+    if (touchRunT > 0 && !touchVec.active) touchRunT = Math.max(0, touchRunT - dt);
     for (const c of cells) if (c.alive) updateCell(c, dt);
     // dividing before lysis lets a cell shed the virus into one daughter and escape clean
     for (const c of cells) if (c.alive && c.energy >= CFG.cell.divideThreshold) divide(c);
@@ -1362,7 +1369,9 @@
   }
 
   function drawMinimap() {
-    const mw = 150, mh = mw*WORLD_H/WORLD_W, mx = VIEW_W - mw - 12, my = VIEW_H - mh - 12;
+    // desktop: bottom-right. touch: top-left (thumb-free corner on a phone).
+    const mw = isTouch ? 132 : 150, mh = mw*WORLD_H/WORLD_W;
+    const mx = isTouch ? 12 : VIEW_W - mw - 12, my = isTouch ? 12 : VIEW_H - mh - 12;
     ctx.save();
     ctx.globalAlpha = 0.85; ctx.fillStyle = "rgba(4,20,26,0.7)"; ctx.strokeStyle = "rgba(120,220,200,0.4)";
     ctx.lineWidth = 1; ctx.fillRect(mx, my, mw, mh); ctx.strokeRect(mx, my, mw, mh);
@@ -2106,8 +2115,8 @@
   // buttons + the tappable genome bar cover every action, so the game is fully
   // playable by touch. Uses Touch events for the widest device support.
   let _stickId = null;
-  function releaseStick() {
-    _stickId = null; touchVec.active = false; touchVec.x = touchVec.y = 0;
+  function releaseStick() { // full stop (used when pausing / opening a menu)
+    _stickId = null; touchVec.active = false; touchVec.x = touchVec.y = 0; touchRunT = 0;
     if (el.stickBase) el.stickBase.classList.remove("on");
     if (el.stickKnob) el.stickKnob.style.transform = "translate(-50%,-50%)";
   }
@@ -2121,15 +2130,22 @@
         const d = Math.hypot(dxp, dyp), cl = d > MAXR ? MAXR / d : 1;
         knob.style.transform = `translate(calc(-50% + ${dxp*cl}px), calc(-50% + ${dyp*cl}px))`;
         touchVec.active = true;
-        if (d > DEAD) { touchVec.x = dxp/d; touchVec.y = dyp/d; } else { touchVec.x = touchVec.y = 0; } // centre = tumble
+        // aim (re-arms the run) unless the finger is at the centre, which cancels the run (a stop gesture)
+        if (d > DEAD) { touchVec.x = dxp/d; touchVec.y = dyp/d; touchRunT = TOUCH_RUN_SECS; }
+        else { touchVec.x = touchVec.y = 0; touchRunT = 0; }
       };
       const find = (list) => { for (const t of list) if (t.identifier === _stickId) return t; return null; };
+      // lifting the finger COMMITS the run: keep the aimed direction and let it coast for TOUCH_RUN_SECS
+      const commit = () => {
+        _stickId = null; touchVec.active = false;
+        base.classList.remove("on"); knob.style.transform = "translate(-50%,-50%)";
+      };
       zone.addEventListener("touchstart", (e) => {
         if (_stickId !== null) return;
         _stickId = e.changedTouches[0].identifier; base.classList.add("on"); track(e.changedTouches[0]); e.preventDefault();
       }, { passive: false });
       zone.addEventListener("touchmove", (e) => { const t = find(e.changedTouches); if (t) { track(t); e.preventDefault(); } }, { passive: false });
-      const end = (e) => { if (find(e.changedTouches)) releaseStick(); };
+      const end = (e) => { if (find(e.changedTouches)) commit(); };
       zone.addEventListener("touchend", end); zone.addEventListener("touchcancel", end);
     }
     const gated = (fn) => (e) => { if (e) e.preventDefault(); if (!paused && !helpOpen && !sciOpen && state && state.running) fn(); };
@@ -2159,7 +2175,7 @@
   if (el.detailChart) el.detailChart.addEventListener("click", () => { chartLog = !chartLog; if (_detailRec) openScoreDetail(_detailRank, _detailRec); });
 
   const coarse = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
-  if (coarse || "ontouchstart" in window) { document.body.classList.add("touch"); ZOOM = 1.35; }
+  if (coarse || "ontouchstart" in window) { document.body.classList.add("touch"); isTouch = true; ZOOM = 1.35; }
   setupTouch();
 
   // temperature & salinity are held neutral for now (reserved for future levels:
