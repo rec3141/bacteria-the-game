@@ -249,6 +249,7 @@
     tutorialBtn: document.getElementById("tutorialBtn"), demoExit: document.getElementById("demoExit"),
     demoPlay: document.getElementById("demoPlay"), demoBack: document.getElementById("demoBack"),
     menuBtn: document.getElementById("menuBtn"), menuBtn2: document.getElementById("menuBtn2"),
+    feedbackBtn: document.getElementById("feedbackBtn"), feedbackBtn2: document.getElementById("feedbackBtn2"),
     science: document.getElementById("science"), sciBody: document.getElementById("sciBody"), sciBack: document.getElementById("sciBack"),
     sciBtn: document.getElementById("sciBtn"), sciBtn2: document.getElementById("sciBtn2"), sciBtn3: document.getElementById("sciBtn3"),
     analysisChart: document.getElementById("analysisChart"), analysisStats: document.getElementById("analysisStats"),
@@ -3000,16 +3001,22 @@
     if (el.detailTitle) el.detailTitle.innerHTML =
       `${rankHtml}${rec.name ? " · " + escapeHtml(rec.name) : ""} · <b>${rec.score}</b> · generation ${rec.gen} · survived ${fmtDur(rec.dur)}`;
     [el.scoresList, el.scoresKey, el.currentRun].forEach((e) => e && e.classList.add("hidden"));
+    // On the pause screen this button is the way INTO the leaderboard, not back out of it.
+    if (el.detailBack) el.detailBack.textContent = (rec.id === -1) ? "High scores →" : "← Back to list";
     el.scoreDetail.classList.remove("hidden");
   }
   function closeScoreDetail() {
     if (el.scoreDetail) el.scoreDetail.classList.add("hidden");
     showScores(); // rebuilds & re-shows the list (and the current-run row if paused mid-game)
   }
-  function showScores() {
+  // `liveDetail` = the PAUSE screen. Pausing to be shown a table of other people's scores is the
+  // wrong answer to "how am I doing?" — what you want mid-run is your OWN run: the ecotype chart,
+  // the food/mortality panel, the phylogeny, the genome. That's the same page the leaderboard opens
+  // for a saved run, so pause just opens it on the live one. "← Back to list" from there still takes
+  // you to the board, so nothing is lost.
+  function showScores(opts) {
     const active = !!(state && state.running && !state.demo); // paused mid-game — the attract loop isn't a game to end
-    if (el.scoreDetail) el.scoreDetail.classList.add("hidden"); // always open on the list, not a stale detail
-    [el.scoresList, el.scoresKey].forEach((e) => e && e.classList.remove("hidden"));
+    const live = !!(opts && opts.liveDetail) && active;
     if (el.scoresTitle) el.scoresTitle.textContent = paused ? "Paused" : "High Scores";
     if (el.scoresBack) el.scoresBack.textContent = paused ? "Resume" : "Back";
     if (el.endGameBtn) el.endGameBtn.classList.toggle("hidden", !active);
@@ -3020,11 +3027,43 @@
         `<span><i class="eco-line" style="border-color:${PROTIST_COLOR}"></i>protists</span>` +
         `<span><i class="eco-line" style="border-color:${VIRUS_COLOR}"></i>viruses</span>`;
     }
-    renderScoreList();       // draw from cache/local immediately…
+    if (live) {
+      openScoreDetail(`<span class="livedot"></span>this run`, currentRunLine());
+    } else {
+      if (el.scoreDetail) el.scoreDetail.classList.add("hidden"); // open on the list, not a stale detail
+      [el.scoresList, el.scoresKey].forEach((e) => e && e.classList.remove("hidden"));
+      renderScoreList();     // draw from cache/local immediately…
+    }
     fetchScores();           // …then refresh from the shared leaderboard when it responds
     el.scores.classList.remove("hidden");
   }
   function hideScores() { hideCircos(); el.scores.classList.add("hidden"); if (el.scoreDetail) el.scoreDetail.classList.add("hidden"); }
+  // BETA FEEDBACK. Opens a pre-filled GitHub issue rather than posting anything itself: the tester
+  // sees exactly what is being sent and can edit or abandon it, and it needs no backend and stores
+  // nothing. The prefill is the boring half of a bug report — build, device, and what the run was
+  // doing — which is the half testers can't be expected to reconstruct after the fact.
+  const FEEDBACK_URL = "https://github.com/rec3141/bacteria-the-game/issues/new";
+  function feedbackContext() {
+    const L = [];
+    L.push(`build: ${BUILD}`);
+    L.push(`device: ${isTouch ? "touch" : "desktop"} · ${window.innerWidth}×${window.innerHeight}`);
+    L.push(`browser: ${navigator.userAgent}`);
+    if (state) {
+      L.push(`run: ${state.role} · day ${state.day || 1} · ${clockStr()} · gen ${state.gen} · ` +
+             `${Math.round(state.score)} cal · ${cells.length} bacteria · ${predators.length} protists`);
+      L.push(`adaptations: ${(state.upgrades || []).map((u) => u.abbr).join(" ") || "none"}`);
+      if (cfgTuned()) L.push(`NOTE: tuning panel was used — this run is not comparable to a default one`);
+    }
+    return L.join("\n");
+  }
+  function sendFeedback() {
+    const body = [
+      "<!-- What happened? What did you expect? Anything you were doing at the time helps. -->",
+      "", "", "---", "```", feedbackContext(), "```",
+    ].join("\n");
+    const url = `${FEEDBACK_URL}?title=${encodeURIComponent("Feedback: ")}&body=${encodeURIComponent(body)}`;
+    window.open(url, "_blank", "noopener");
+  }
   let helpOpen = false, sciOpen = false;
   // The day's real-time length is a tunable knob, so the help screen must not hardcode it — it used
   // to promise "one hour per real minute", which stopped being true the moment day.lengthSec moved.
@@ -3043,7 +3082,7 @@
   function showScience() { if (el.science) { el.science.classList.remove("hidden"); sciOpen = true; if (el.sciBody) el.sciBody.scrollTop = 0; } }
   function hideScience() { if (el.science) { el.science.classList.add("hidden"); sciOpen = false; } }
   function toggleHelp() { helpOpen ? hideHelp() : showHelp(); }
-  function pauseGame() { if (!state || !state.running || paused) return; paused = true; releaseStick(); showScores(); }
+  function pauseGame() { if (!state || !state.running || paused) return; paused = true; releaseStick(); showScores({ liveDetail: true }); }
   function resumeGame() { paused = false; hideScores(); }
   function endGame() { if (!state || !state.running || state.demo) return; paused = false; hideScores(); gameOver(); } // the demo has no score to end
   let _toastTimer = null;
@@ -3785,6 +3824,8 @@
   bindLineageHover(el.analysisChart, analysisRec);
   bindLineageHover(el.detailChart, () => _detailRec);
   if (el.tutorialBtn) el.tutorialBtn.addEventListener("click", watchTutorial);
+  if (el.feedbackBtn) el.feedbackBtn.addEventListener("click", sendFeedback);
+  if (el.feedbackBtn2) el.feedbackBtn2.addEventListener("click", sendFeedback);
   if (el.menuBtn) el.menuBtn.addEventListener("click", toTitle);
   if (el.menuBtn2) el.menuBtn2.addEventListener("click", toTitle);
   if (el.demoPlay) el.demoPlay.addEventListener("click", start);
