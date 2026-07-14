@@ -36,8 +36,8 @@
       chemoRange0: 400, chemoRangePer: 130, // chemotaxis sensing range grows with chemoLevel
       chemoTurn0: 1.15, chemoTurnPer: 0.5,  // ...and its steering sharpness too
       fedLinger: 2.2, maxCells: 100000, // effectively uncapped (perf backstop only)
-      touchLatchSecs: 0.5, // phone stick: hold it at FULL deflection this long to lock in a run
-                           // that keeps going after you lift your thumb (tap the centre to stop)
+      touchLatchSecs: 0.25, // phone stick: hold it at FULL deflection this long to lock in a run
+                            // that keeps going after you lift your thumb (tap the centre to stop)
       touchRunSecs: 2.0,   // ...and the locked run winds down over this long rather than sticking
                            // on forever — the knob eases back to centre as it runs out
     },
