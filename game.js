@@ -106,7 +106,8 @@
              // with energy. Grabbing a gold phage as a grazer lengthens the burst — that's the
              // protist's version of an adaptation, and it stacks for the rest of the run.
              turboSecs: 0.25, turboMult: 2.6, turboCost: 7, turboGoldBonus: 0.12, turboMaxSecs: 1.5 },
-    // "A day in the life": a 24h clock at 1h = 1min (24-min day); conditions follow a diel cycle.
+    // "A day in the life": a 24h clock compressed into day.lengthSec (240s = a 4-minute day, so 1h
+    // of sea time every 10s). Don't quote a rate here — lengthSec is a knob. Conditions follow a diel cycle.
     // tod (time-of-day) runs 0→1 over the day, starting at DAWN (6am). Curves below drive it.
     // WHERE and WHEN this run happens. Latitude + day-of-year give the real sun: its declination,
     // its altitude through the day, and therefore true sunrise/sunset — including midnight sun and
