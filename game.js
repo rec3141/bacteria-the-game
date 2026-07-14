@@ -3374,7 +3374,7 @@
     "cell.runMax": "Longest run an autonomous cell takes before tumbling (s).",
     "cell.tumbleDur": "Seconds a cell spends tumbling (reorienting).",
     "cell.tumbleTurn": "How sharply an autonomous cell turns while tumbling (rad/s).",
-    "cell.playerTumbleTurn": "How fast YOUR cell drifts off-heading when you let go of the controls.",
+    "cell.playerTumbleTurn": "How fast YOUR cell drifts off-heading when you let go of the controls. COSMETIC ONLY: you stop dead when you release (low Reynolds number), so this changes nothing about where you go — it's a reminder of the run-and-tumble your autonomous cells are actually doing. Don't document it as a movement mechanic; it isn't one.",
     "cell.enzymeCooldown": "Seconds between an autonomous cell's enzyme releases (picked at random in this range).",
     "cell.cystBelow": "Energy below which an autonomous cell gives up and encysts (goes dormant).",
     "cell.cystWake": "Energy a cyst must accumulate before it revives.",
