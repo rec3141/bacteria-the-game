@@ -225,7 +225,7 @@
   #scoresTable .lead { font-size: 11px; }
   #scoresTable .run { text-align: center; }
   #scoresTable td.chart { padding: 3px 8px; }
-  #scoresTable td.chart canvas { display: block; border-radius: 4px; }
+  #scoresTable td.chart canvas { display: block; width: 132px; height: 30px; border-radius: 4px; }
   .crow { cursor: pointer; padding: 7px 11px; background: rgba(87,224,192,.08);
     border: 1px solid rgba(87,224,192,.3); border-radius: 8px; text-align: left; font-size: 13px; }
   .crow:hover { background: rgba(87,224,192,.14); }
@@ -335,10 +335,10 @@
     background: #08222a; border: 1px solid rgba(87,224,192,.45); border-radius: 12px;
     padding: 8px 8px 6px; box-shadow: 0 10px 34px rgba(0,0,0,.6); }
   #circosPop.hidden { display: none !important; }
-  #circosPop canvas { display: block; background: transparent; }
+  #circosPop canvas { display: block; width: 230px; height: 230px; background: transparent; }
   #circosCap { max-width: 230px; text-align: center; font-size: 10.5px; line-height: 1.35;
     color: var(--muted); margin-top: 3px; }
-  #detailCircos { display: block; margin: 2px auto 0; background: transparent; }
+  #detailCircos { display: block; width: 280px; height: 280px; margin: 2px auto 0; background: transparent; }
   /* height:auto — the canvas is sized to the number of lineages in game.js (drawClado), so it must
      scale by its own aspect rather than being pinned to a fixed box that squashes the rows. */
   #analysisClado, #detailClado { display: block; width: 100%; height: auto; border-radius: 6px; }
