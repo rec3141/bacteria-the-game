@@ -19,6 +19,12 @@
 
   // ------------------------------------------------------------ world / view
   let VIEW_W = 800, VIEW_H = 680; // canvas backing size; on mobile it tracks the stage so the game fills the screen
+  // The canvas USED to be a fixed 800×680 that CSS scaled down to fit the phone. It now tracks the
+  // stage's real size, so that implicit downscale is gone — and anything tuned in the old design
+  // space (the touch zoom, the minimap) has to re-apply it or it comes out magnified twice.
+  const DESIGN_W = 800;
+  const TOUCH_ZOOM = 1.35 * 1.25;                     // tuned against the 800px design canvas
+  const viewScale = () => VIEW_W / DESIGN_W;          // 1 on a full-size canvas, ~0.46 on a phone
   const WORLD_W = 2600, WORLD_H = 2000;
 
   const CFG = {
@@ -77,7 +83,8 @@
     nutrient: { life: 16, radius: 3.2, maxCount: 600 },
     // trophic role-swap: when your whole population dies you flip to the other trophic level
     // instead of a game-over — bacteria extinct → you become a protist (grazer); protists extinct → back to a bacterium.
-    cycle: { reseedBacteria: 16, reseedProtists: 4, protistThrust: 240, protistEatScore: 3 },
+    cycle: { reseedBacteria: 16, reseedProtists: 4, protistThrust: 240, protistEatScore: 3,
+             preyFloor: 20, preyEvery: 5 },   // as a grazer, bacteria keep drifting in to hunt
     // "A day in the life": a 24h clock at 1h = 1min (24-min day); conditions follow a diel cycle.
     // tod (time-of-day) runs 0→1 over the day, starting at DAWN (6am). Curves below drive it.
     day: { lengthSec: 1440, startHour: 6 },
@@ -89,7 +96,8 @@
     predator: {
       count: 4, radius: 22, wanderSpeed: 50, chaseSpeed: 85, senseRange: 170, satiatedTime: 4.5,
       startEnergy: 100, mealEnergy: 58, metabolism: 1.44, // eats cells for energy, drains over time (raised 25% to curb the boom from doubled food)
-      maturity: 8, lifespan: [55, 100],                  // senescence: dies of old age
+      maturity: 8,                                       // no senescence — a grazer dies of STARVATION
+                                                         // (or antibiotics), never of old age
       reproEnergy: 160, reproCooldown: 11,               // reproduction, gated only by feeding — faster so grazers can chase a bacterial boom
       safetyMax: 600,                                    // perf backstop only — never binds ecologically
       minCount: 2, immigrateEvery: 8,                    // starting immigration/respawn interval (halves on each protist extinction)
@@ -150,7 +158,9 @@
     genome: document.getElementById("genome"), helix: document.getElementById("helix"),
     title: document.getElementById("title"), over: document.getElementById("over"), chartwrap: document.getElementById("chartwrap"), hud: document.getElementById("hud"),
     stage: document.getElementById("stage"), game: document.getElementById("game"),
-    touch: document.getElementById("touch"),
+    touch: document.getElementById("touch"), stickZone: document.getElementById("stickZone"),
+    stickBase: document.getElementById("stickBase"), stickKnob: document.getElementById("stickKnob"),
+    tEnz: document.getElementById("tEnz"),
     tLin: document.getElementById("tLin"), tPause: document.getElementById("tPause"),
     admin: document.getElementById("admin"), adminBody: document.getElementById("adminBody"),
     adminDoc: document.getElementById("adminDoc"),
@@ -571,7 +581,6 @@
       vx: 0, vy: 0, r: CFG.predator.radius, satiated: 0, controlled: false,
       heading: rand(0, 6.28), wobble: rand(0, 6.28), pseudo: rand(0, 6.28),
       age: age || 0, energy: energy == null ? CFG.predator.startEnergy : energy,
-      lifespan: rand(CFG.predator.lifespan[0], CFG.predator.lifespan[1]),
       reproCd: CFG.predator.reproCooldown, toxT: 0, dead: false };
   }
 
@@ -596,7 +605,7 @@
     cam.x = first.x; cam.y = first.y;
     state = { gen: 1, score: 0, running: true, elapsed: 0, activeEnzyme: 2, role: "bacterium", // start with carbohydrase, as a bacterium
       greenSeedT: rand(CFG.phage.greenSeed[0], CFG.phage.greenSeed[1]),
-      predImmigrateT: CFG.predator.immigrateEvery,
+      predImmigrateT: CFG.predator.immigrateEvery, preyT: 0,
       predRespawn: CFG.predator.immigrateEvery, predExtinct: false, // respawn interval halves each time protists go fully extinct
       mortLive: [0, 0, 0, 0], mortFull: [0, 0, 0, 0], // cause-of-death tallies (grazing/viral/starvation/antibiotic) per sample interval
       tod: 0, light: 0, foodTarget: CFG.substrate.count, graze: 1, // diel state (set by updateDiel each frame)
@@ -925,6 +934,17 @@
     if (state.role === "protist" && !controlledProtist()) {
       if (predators.length) predators[0].controlled = true; else becomeBacterium();
     }
+    // Prey supply. The grazers have their own immigration keeping them topped up; the bacteria had
+    // none — becomeProtist() seeded 16 once and that was it. Eat those and the sea went permanently
+    // sterile, so you starved as a protist with nothing left to hunt. Keep prey drifting in.
+    if (state.role === "protist") {
+      state.preyT -= dt;
+      if (state.preyT <= 0) {
+        state.preyT = CFG.cycle.preyEvery;
+        const short = CFG.cycle.preyFloor - cells.length;
+        if (short > 0) immigrateBacteria(Math.min(short, 8));
+      }
+    }
     for (const q of particles) { q.x += q.vx*dt; q.y += q.vy*dt; q.vx *= 0.9; q.vy *= 0.9; q.life -= dt; }
     particles = particles.filter((q) => q.life > 0);
     // camera follows whichever entity you're controlling (cell or protist)
@@ -1247,7 +1267,10 @@
         burst(pr.x, pr.y, "#ff9ec0", 10);
       }
       // death: antibiotic KILL (energy gone while poisoned) releases biomass as food; natural death (senescence/starvation) releases nothing
-      if (pr.age >= pr.lifespan || pr.energy <= 0) {
+      // Starvation is the only clock a grazer needs. Senescence used to kill it as well, and since
+      // an unfed protist starves at startEnergy/metabolism (~69s) while its lifespan rolled 55-100s,
+      // the two clocks just raced each other — a well-fed grazer would drop dead with a full bar.
+      if (pr.energy <= 0) {
         pr.dead = true;
         if (pr.energy <= 0 && pr.toxT > 0) releaseBiomass(pr);
         else burst(pr.x, pr.y, "#b9a9b0", 8); // natural death — inert grey puff
@@ -1637,11 +1660,13 @@
 
   function drawPredator(pr) {
     const cx = sx(pr.x), cy = sy(pr.y); if (!onScreen(cx, cy, pr.r + 8)) return;
-    // life-stage cues: juveniles are smaller, elders shrink and grey out
-    const lifeFrac = clamp(pr.age/pr.lifespan, 0, 1);
+    // life-stage cues: juveniles are smaller; a STARVING grazer shrinks and greys out. This tracks
+    // ENERGY, not age — starvation is the only thing that kills a protist now, so the visual
+    // telegraphs the clock that's actually running instead of an invisible one.
     const grow = clamp(pr.age/CFG.predator.maturity, 0.55, 1);
-    const r = pr.r*grow*(1 - 0.18*Math.max(0, lifeFrac - 0.55)/0.45);
-    const old = Math.max(0, lifeFrac - 0.6)/0.4; // 0..1 over final 40% of life
+    const spent = 1 - clamp(pr.energy/CFG.predator.startEnergy, 0, 1); // 0 = well fed, 1 = starving
+    const r = pr.r*grow*(1 - 0.18*clamp((spent - 0.55)/0.45, 0, 1));
+    const old = clamp((spent - 0.6)/0.4, 0, 1); // greys out as its reserves run out
     ctx.save(); ctx.translate(cx, cy);
     if (pr.satiated > 0) ctx.globalAlpha = 0.5;
     const g = ctx.createRadialGradient(0, 0, 3, 0, 0, r + 6);
@@ -1667,9 +1692,14 @@
     // reads fine on a monitor is unreadable mush at a third of the size in your hand, so the
     // phone map answers only the two questions worth answering at a glance: what's hunting me,
     // and where's the gold.
-    const mw = isTouch ? 220 : 150, mh = mw*WORLD_H/WORLD_W;
-    const mx = isTouch ? 12 : VIEW_W - mw - 12, my = isTouch ? 12 : VIEW_H - mh - 12;
-    const ps = isTouch ? 2 : 1;   // mark scale
+    // Sizes are in DESIGN space (the old 800px canvas) and scaled to whatever canvas we actually
+    // have. 220px was 27.5% of an 800px canvas; on a 370px phone canvas it would be 59% — which is
+    // how the map ended up swallowing the ocean once the canvas became responsive.
+    const vs = isTouch ? viewScale() : 1;
+    const mw = (isTouch ? 220 : 150) * vs, mh = mw*WORLD_H/WORLD_W;
+    const pad = 12 * vs;
+    const mx = isTouch ? pad : VIEW_W - mw - pad, my = isTouch ? pad : VIEW_H - mh - pad;
+    const ps = (isTouch ? 2 : 1) * vs;   // mark scale, same design-space correction
     ctx.save();
     // The frame is translucent on desktop, but at phone size a particle drifting behind a
     // 220px map bleeds straight through it and swamps the marks. Nearly opaque there.
@@ -2129,6 +2159,10 @@
     const w = Math.round(r.width), h = Math.round(r.height);
     if (canvas.width !== w || canvas.height !== h) {
       canvas.width = w; canvas.height = h; VIEW_W = w; VIEW_H = h; waterDots = makeWaterDots();
+      // Re-derive the zoom from the canvas we actually got. Without this the touch zoom (tuned
+      // when the canvas was a fixed 800px being CSS-scaled down) composites with the responsive
+      // canvas and the world is magnified twice over.
+      if (isTouch) ZOOM = TOUCH_ZOOM * viewScale();
     }
   }
   let last = 0;
@@ -2277,7 +2311,6 @@
     "predator.mealEnergy": "Energy a protist gains per bacterium eaten.",
     "predator.metabolism": "Energy per second a protist burns — raise it to starve the grazers out.",
     "predator.maturity": "Seconds before a protist is old enough to reproduce.",
-    "predator.lifespan": "Age range at which a protist dies of old age (s).",
     "predator.reproEnergy": "Energy a protist must reach to divide.",
     "predator.reproCooldown": "Minimum seconds between a protist's divisions.",
     "predator.safetyMax": "Hard cap on protists — a performance backstop, never ecologically binding.",
@@ -2679,7 +2712,7 @@
   const coarse = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
   if (coarse || "ontouchstart" in window) {
     document.body.classList.add("touch"); isTouch = true;
-    ZOOM = 1.35 * 1.25; // phone: magnify the world so cells aren't specks, +25% again by request
+    ZOOM = TOUCH_ZOOM * viewScale(); // resizeCanvas re-derives this whenever the canvas changes size
     // The genes are controls, not HUD, so on a phone they belong in the control deck with the
     // stick and buttons — not floating over the ocean inside #hud (which is pointer-events:none).
     // They go at the TOP of the deck's right column, above the action buttons, leaving the whole
