@@ -61,7 +61,9 @@
     touchSpeedScale: 0.625,
     grid: { cs: 7 },                 // destructible-particle voxel size (px)
     substrate: {
-      count: 60, moteEnergy: 7,      // board particle count (a knob for future levels; food scarcity keeps colonies + the phage bursts they feed manageable)
+      count: 60, moteEnergy: 7,     // count = the food the sea supports at FULL light; the diel target
+                                    // scales it by the light (see diel.foodFloor), so this is the noon ceiling
+      bloomEvery: 0.5,              // seconds per particle added/removed as the field tracks that target
       sizeMin: 30, sizeMax: 200, sizeExp: 1.6, // Junge-like size spectrum: abundance ∝ size^-sizeExp → many small, few large (lower exp = flatter = more big particles)
       carveRate: 4.5,                // density removed /sec per covered voxel
       lifeMin: 130, lifeMax: 300,    // each particle has its own lifespan (staggered)
@@ -375,6 +377,11 @@
     const ch = (i) => Math.round(N[i] + (D[i] - N[i])*t);
     return `rgb(${ch(0)},${ch(1)},${ch(2)})`;
   }
+  // How much food the sea supports at this light level. Shared by updateDiel and the initial seed —
+  // the board used to be seeded with the FULL substrate.count no matter the time of day, so a run
+  // starting at midnight opened with 60 particles against a target of 21 and could only drift down.
+  const foodTargetFor = (light) => Math.round(CFG.substrate.count *
+    (CFG.diel.foodFloor + (1 - CFG.diel.foodFloor)*clamp(light, 0, 1)));
   function dielLight(tod) {
     // Light doesn't snap off the moment the sun touches the horizon — it fades out through twilight
     // as the sun keeps sinking. So the ramp is continuous, and deep night is genuinely dark because
@@ -395,7 +402,7 @@
     env.tempC = D.tempBase + D.tempAmp*Math.sin((tod - D.tempLag)*TAU); // warmest early afternoon
     env.salinity = 35;
     env.update();
-    state.foodTarget = Math.round(CFG.substrate.count * (D.foodFloor + (1 - D.foodFloor)*light)); // photosynthesis: food blooms with light
+    state.foodTarget = foodTargetFor(light);   // photosynthesis: food blooms with the light
     state.graze = 0.6 + D.grazeNight*(1 - light); // grazers press harder at night
   }
   // composition succession over the day: fresh diatoms (lipid) bloom in the light → grazing makes
@@ -680,7 +687,8 @@
     for (let i = 0; i < Math.round(CFG.cell.startUpgrades); i++) grantRandomUpgrade(first); // testing aid
     first.controlled = true; cells = [first]; // start as a single founder cell
     substrates = [];
-    for (let i = 0; i < CFG.substrate.count; i++) substrates.push(makeSubstrate());
+    const seedFood = foodTargetFor(dielLight(0));   // start at the food the STARTING hour supports
+    for (let i = 0; i < seedFood; i++) substrates.push(makeSubstrate());
     predators = [];
     for (let i = 0; i < CFG.predator.count; i++) {
       let x, y; // keep initial protists away from the lone founder
@@ -700,7 +708,7 @@
       predImmigrateT: CFG.predator.immigrateEvery, preyT: 0, turboBonus: 0,
       predRespawn: CFG.predator.immigrateEvery, predExtinct: false, // respawn interval halves each time protists go fully extinct
       mortLive: [0, 0, 0, 0], mortFull: [0, 0, 0, 0], // cause-of-death tallies (grazing/viral/starvation/antibiotic) per sample interval
-      tod: 0, light: 0, foodTarget: CFG.substrate.count, graze: 1, // diel state (set by updateDiel each frame)
+      tod: 0, light: 0, foodTarget: foodTargetFor(dielLight(0)), graze: 1, foodT: 0, // diel state (updateDiel refreshes each frame)
       chartT: 0, history: [], fullT: 0, fullHist: [], fullInterval: 1, upgrades: [] };
     updateDiel();
     Audio.play("spawn", 0.5);
@@ -1030,7 +1038,20 @@
     }
     // diel food supply: shrink the field toward the production target when spent; grow it back as the bloom returns
     if (substrates.some((s) => s.remove)) substrates = substrates.filter((s) => !s.remove);
-    if (substrates.length < state.foodTarget) substrates.push(spawnDriftingSubstrate());
+    // The field tracks the diel target in BOTH directions, at a visible rate. It used to only ever
+    // grow (one per frame, so it snapped up), and shrink solely when a particle happened to be eaten
+    // or aged out — which in a 240s run never happens fast enough, so the bloom never receded.
+    state.foodT -= dt;
+    if (state.foodT <= 0) {
+      state.foodT = CFG.substrate.bloomEvery;
+      if (substrates.length < state.foodTarget) substrates.push(spawnDriftingSubstrate());
+      else if (substrates.length > state.foodTarget) {
+        // the bloom recedes: an excess particle starts dissolving and erodes away voxel by voxel,
+        // rather than simply vanishing
+        const live = substrates.filter((p) => p.phase === "live" && p.organic > 0);
+        if (live.length) startDissolve(live[(Math.random()*live.length)|0]);
+      }
+    }
     updateEnzymes(dt); updateToxins(dt); updateNutrients(dt); updatePredators(dt); updatePhages(dt);
     // while you're a protist: keep control on a living grazer, or flip back to a bacterium when they die out
     if (state.role === "protist" && !controlledProtist()) {
@@ -1578,9 +1599,14 @@
   function makeWaterDots() { return Array.from({ length: 70 }, () => ({ u: Math.random(), v: Math.random(), r: Math.random()*2 + 0.5 })); }
   function drawWater() {
     ctx.save(); ctx.globalAlpha = 0.2; ctx.fillStyle = "#bfeee0";
-    const ox = ((cam.x*0.3)%40+40)%40, oy = ((cam.y*0.3)%40+40)%40;
+    // Parallax: the field slides against the camera and wraps at the canvas edge. The offset used to
+    // be pre-modded by 40 — ((cam.x*0.3) % 40) — which is a SAWTOOTH: it ramps 0->40 then snaps back
+    // to 0, so the whole starfield jumped 40px at once every ~133px of camera travel. Wrapping at
+    // VIEW_W/VIEW_H instead makes it slide.
+    const ox = cam.x*0.3, oy = cam.y*0.3;
     for (const d of waterDots) {
-      const px = ((d.x - ox)%VIEW_W + VIEW_W)%VIEW_W, py = ((d.y - oy)%VIEW_H + VIEW_H)%VIEW_H;
+      const px = (((d.u*VIEW_W - ox) % VIEW_W) + VIEW_W) % VIEW_W;
+      const py = (((d.v*VIEW_H - oy) % VIEW_H) + VIEW_H) % VIEW_H;
       ctx.beginPath(); ctx.arc(px, py, d.r, 0, 6.28); ctx.fill();
     }
     ctx.restore();
@@ -2428,6 +2454,7 @@
     "touchSpeedScale": "TOUCH ONLY: how fast swimming things move — your cells AND the protists together, so predator/prey stays in proportion. The phone magnifies the world onto a small screen, which makes the same world-speed read as much faster. 1 = desktop speed. NOTE: energy costs are per SECOND, so slower swimming means a trip to food costs more energy.",
     "grid.cs": "Voxel size of destructible particles (px) — smaller = finer digging but more work per frame. Only affects NEWLY spawned particles.",
     "substrate.count": "How many food particles are kept drifting in the water. Applies as particles respawn.",
+    "substrate.bloomEvery": "Seconds per particle as the food field tracks the diel target — lower = the bloom rises and recedes faster. The target itself is substrate.count scaled by the light (see diel.foodFloor).",
     "substrate.moteEnergy": "Energy in each nutrient mote freed by dissolving a voxel.",
     "substrate.sizeMin": "Smallest particle radius (px).",
     "substrate.sizeMax": "Largest particle radius (px).",
