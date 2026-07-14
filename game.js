@@ -221,6 +221,42 @@
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d");
 
+  // CANVAS_DPR_START — pure sizing helpers, also executed by the Node contract test.
+  const CANVAS_DPR_MAX = 3;
+  function canvasPixelRatio() {
+    const ratio = typeof window !== "undefined" ? Number(window.devicePixelRatio) : 1;
+    return Math.max(1, Math.min(CANVAS_DPR_MAX, Number.isFinite(ratio) ? ratio : 1));
+  }
+  function logicalCanvasSize(target) {
+    const attrWidth = Number(target.getAttribute && target.getAttribute("width"));
+    const attrHeight = Number(target.getAttribute && target.getAttribute("height"));
+    return {
+      width: Number(target.dataset && target.dataset.logicalWidth) || attrWidth || target.clientWidth || 1,
+      height: Number(target.dataset && target.dataset.logicalHeight) || attrHeight || target.clientHeight || 1,
+    };
+  }
+  function prepareHiDpiCanvas(target, logicalWidth, logicalHeight, context) {
+    const previous = logicalCanvasSize(target);
+    const width = Math.max(1, Math.round(logicalWidth || previous.width));
+    const height = Math.max(1, Math.round(logicalHeight || previous.height));
+    const ratio = canvasPixelRatio();
+    const backingWidth = Math.max(1, Math.round(width * ratio));
+    const backingHeight = Math.max(1, Math.round(height * ratio));
+    const resized = target.width !== backingWidth || target.height !== backingHeight;
+    if (target.dataset) {
+      target.dataset.logicalWidth = String(width);
+      target.dataset.logicalHeight = String(height);
+      target.dataset.pixelRatio = String(ratio);
+    }
+    if (resized) { target.width = backingWidth; target.height = backingHeight; }
+    const g = context || target.getContext("2d");
+    // Assigning width/height resets the context, and a window can move between monitors with
+    // different DPRs, so establish the logical-coordinate transform on every preparation.
+    g.setTransform(ratio, 0, 0, ratio, 0, 0);
+    return { context: g, width, height, ratio, resized };
+  }
+  // CANVAS_DPR_END
+
   const el = {
     energyFill: document.getElementById("energyFill"), energyTxt: document.getElementById("energyTxt"),
     gen: document.getElementById("gen"), score: document.getElementById("score"), colony: document.getElementById("colony"), colonyWord: document.getElementById("colonyWord"),
@@ -1701,8 +1737,12 @@
   }
   function drawAnalysis() {
     if (!actx || !state) return;
-    annotateRun(actx, el.analysisChart.width, el.analysisChart.height, state.fullHist, state.upgrades, state.elapsed, state.roleSwaps);
-    if (asctx) annotateSub(asctx, el.analysisSubChart.width, el.analysisSubChart.height, state.fullHist, state.upgrades, state.elapsed, state.roleSwaps);
+    const ecoSurface = prepareHiDpiCanvas(el.analysisChart, null, null, actx);
+    annotateRun(ecoSurface.context, ecoSurface.width, ecoSurface.height, state.fullHist, state.upgrades, state.elapsed, state.roleSwaps);
+    if (asctx) {
+      const subSurface = prepareHiDpiCanvas(el.analysisSubChart, null, null, asctx);
+      annotateSub(subSurface.context, subSurface.width, subSurface.height, state.fullHist, state.upgrades, state.elapsed, state.roleSwaps);
+    }
     if (el.analysisSubLabel) el.analysisSubLabel.textContent = subLabelText();
     if (el.analysisClado) drawClado(el.analysisClado, analysisRec());
     if (el.analysisStats) el.analysisStats.innerHTML = runStatsHtml(state.fullHist, state.upgrades);
@@ -2923,9 +2963,8 @@
     const gw = el.genome.clientWidth, gh = el.genome.clientHeight;
     if (!gw || !gh) return;                          // not laid out yet (or headless)
     const w = Math.round(gw), h = Math.round(gh);
-    if (el.helix.width !== w) el.helix.width = w;
-    if (el.helix.height !== h) el.helix.height = h;
-    const g = hlxCtx; g.clearRect(0, 0, w, h);
+    const surface = prepareHiDpiCanvas(el.helix, w, h, hlxCtx);
+    const g = surface.context; g.clearRect(0, 0, w, h);
     const col = pc ? levelColor(ecoMask(pc), upgradeTier(pc)) : "#8dffdc"; // lineage = generation color of the steered cell
     const cy = h/2, amp = h*0.40, P = 26;
     g.strokeStyle = col; g.lineCap = "round";
@@ -2940,8 +2979,14 @@
   }
   function drawChart() {
     if (!state) return;
-    if (cctx) renderEcoChart(cctx, CHART.W, CHART.H, state.history, CHART.samples);
-    if (sctx) renderSubChart(sctx, CHART.W, CHART.subH, state.history, CHART.samples);
+    if (cctx) {
+      const surface = prepareHiDpiCanvas(el.chart, CHART.W, CHART.H, cctx);
+      renderEcoChart(surface.context, surface.width, surface.height, state.history, CHART.samples);
+    }
+    if (sctx) {
+      const surface = prepareHiDpiCanvas(el_subchart, CHART.W, CHART.subH, sctx);
+      renderSubChart(surface.context, surface.width, surface.height, state.history, CHART.samples);
+    }
   }
 
   // ---------------------------------------------------------------- high scores
@@ -3139,7 +3184,10 @@
     el.scoresList.innerHTML = h + `</tbody></table>`;
     el.scoresList.querySelectorAll("canvas[data-cid]").forEach((cv) => { // the run's simplified generational trajectory
       const rec = arr.find((r) => String(recId(r)) === cv.getAttribute("data-cid"));
-      if (rec) renderEcoChart(cv.getContext("2d"), cv.width, cv.height, rec.hist || []);
+      if (rec) {
+        const surface = prepareHiDpiCanvas(cv);
+        renderEcoChart(surface.context, surface.width, surface.height, rec.hist || []);
+      }
     });
     el.scoresList.querySelectorAll("th.sortable").forEach((th) => th.addEventListener("click", () => {
       const kk = th.getAttribute("data-k");
@@ -3252,8 +3300,9 @@
     const root = buildClado(rec);
     let leaves = 0;
     if (root) (function count(n) { leaves += n.leaves.length; n.children.forEach(count); })(root);
-    canvas.height = clamp(leaves*22 + 34, 110, 520);
-    renderClado(canvas.getContext("2d"), canvas.width, canvas.height, rec);
+    const logical = logicalCanvasSize(canvas);
+    const surface = prepareHiDpiCanvas(canvas, logical.width, clamp(leaves*22 + 34, 110, 520));
+    renderClado(surface.context, surface.width, surface.height, rec);
   }
   function renderClado(g, W, H, rec) {
     g.clearRect(0, 0, W, H);
@@ -3350,7 +3399,8 @@
   }
   function showCircos(rec) {
     if (!el.circosPop || !el.circosCanvas) return;
-    renderCircos(el.circosCanvas.getContext("2d"), el.circosCanvas.width, el.circosCanvas.height, rec.upgrades, runMid(rec));
+    const surface = prepareHiDpiCanvas(el.circosCanvas);
+    renderCircos(surface.context, surface.width, surface.height, rec.upgrades, runMid(rec));
     const n = rec.upgrades ? rec.upgrades.length : 0;
     el.circosPop.style.borderColor = "";
     if (el.circosCap) el.circosCap.innerHTML = n
@@ -3368,7 +3418,8 @@
     // run-level log drew the SAME ring for every band, which looked exactly like a broken plot —
     // so say plainly that this run predates the data instead of quietly drawing a lie.
     if (!lin) {
-      renderCircos(el.circosCanvas.getContext("2d"), el.circosCanvas.width, el.circosCanvas.height, [],
+      const surface = prepareHiDpiCanvas(el.circosCanvas);
+      renderCircos(surface.context, surface.width, surface.height, [],
                    { top: band.count + (band.count === 1 ? " cell" : " cells"), bot: "tier " + band.tier });
       el.circosPop.style.borderColor = color;
       if (el.circosCap) el.circosCap.innerHTML =
@@ -3377,7 +3428,8 @@
       return;
     }
     const ups = lin.ups || [];
-    renderCircos(el.circosCanvas.getContext("2d"), el.circosCanvas.width, el.circosCanvas.height, ups,
+    const surface = prepareHiDpiCanvas(el.circosCanvas);
+    renderCircos(surface.context, surface.width, surface.height, ups,
                  { top: band.count + (band.count === 1 ? " cell" : " cells"), bot: "tier " + band.tier });
     el.circosPop.style.borderColor = color;
     if (el.circosCap) el.circosCap.innerHTML =
@@ -3409,9 +3461,10 @@
       if (!rec) { hideCircos(); return; }
       const r = canvas.getBoundingClientRect();
       if (!r.width || !r.height) return;
-      const band = ecoBandAt(rec.hist || [], canvas.width, canvas.height,
-                             (e.clientX - r.left)*(canvas.width/r.width),
-                             (e.clientY - r.top)*(canvas.height/r.height));
+      const logical = logicalCanvasSize(canvas);
+      const band = ecoBandAt(rec.hist || [], logical.width, logical.height,
+                             (e.clientX - r.left)*(logical.width/r.width),
+                             (e.clientY - r.top)*(logical.height/r.height));
       if (!band) { hideCircos(); return; }
       showLineageCircos(rec, band);
       positionCircos(e);
@@ -3480,9 +3533,16 @@
     if (!el.scoreDetail || !el.detailChart) return;
     hideCircos();                             // the hover popup would otherwise hang over the detail view
     _detailRec = rec; _detailRank = rankHtml; // remembered so the log/linear toggle can redraw it
-    if (el.detailCircos) renderCircos(el.detailCircos.getContext("2d"), el.detailCircos.width, el.detailCircos.height, rec.upgrades, runMid(rec));
-    annotateRun(el.detailChart.getContext("2d"), el.detailChart.width, el.detailChart.height, rec.hist || [], rec.upgrades, rec.dur, rec.roleSwaps);
-    if (el.detailSubChart) annotateSub(el.detailSubChart.getContext("2d"), el.detailSubChart.width, el.detailSubChart.height, rec.hist || [], rec.upgrades, rec.dur, rec.roleSwaps);
+    if (el.detailCircos) {
+      const surface = prepareHiDpiCanvas(el.detailCircos);
+      renderCircos(surface.context, surface.width, surface.height, rec.upgrades, runMid(rec));
+    }
+    const ecoSurface = prepareHiDpiCanvas(el.detailChart);
+    annotateRun(ecoSurface.context, ecoSurface.width, ecoSurface.height, rec.hist || [], rec.upgrades, rec.dur, rec.roleSwaps);
+    if (el.detailSubChart) {
+      const subSurface = prepareHiDpiCanvas(el.detailSubChart);
+      annotateSub(subSurface.context, subSurface.width, subSurface.height, rec.hist || [], rec.upgrades, rec.dur, rec.roleSwaps);
+    }
     if (el.detailSubLabel) el.detailSubLabel.textContent = subLabelText();
     if (el.detailClado) drawClado(el.detailClado, rec);
     if (el.detailStats) el.detailStats.innerHTML = runStatsHtml(rec.hist || [], rec.upgrades);
@@ -3631,9 +3691,12 @@
   // blobby grazer once a role-swap has flipped you. Only redrawn when the role changes — the face
   // color underneath carries the lineage, so the ink never has to change.
   function drawRoleSprite(cv, role) {
-    if (!cv || cv.dataset.role === role) return;
+    if (!cv) return;
+    const logical = logicalCanvasSize(cv);
+    const surface = prepareHiDpiCanvas(cv, Math.round(cv.clientWidth) || logical.width, Math.round(cv.clientHeight) || logical.height);
+    if (cv.dataset.role === role && !surface.resized) return;
     cv.dataset.role = role;
-    const g = cv.getContext("2d"), w = cv.width, hgt = cv.height;
+    const g = surface.context, w = surface.width, hgt = surface.height;
     g.clearRect(0, 0, w, hgt);
     g.save(); g.translate(w/2, hgt/2);
     g.fillStyle = "#06232a"; g.strokeStyle = "#06232a"; g.lineJoin = "round";
@@ -3736,8 +3799,10 @@
     const r = el.stage.getBoundingClientRect();
     if (!r.width || !r.height) return; // not laid out yet (or headless)
     const w = Math.round(r.width), h = Math.round(r.height);
-    if (canvas.width !== w || canvas.height !== h) {
-      canvas.width = w; canvas.height = h; VIEW_W = w; VIEW_H = h; // dots are normalized — no rebuild
+    const changed = VIEW_W !== w || VIEW_H !== h;
+    prepareHiDpiCanvas(canvas, w, h, ctx);
+    if (changed) {
+      VIEW_W = w; VIEW_H = h; // logical CSS pixels; dots are normalized — no rebuild
       // Re-derive the zoom from the canvas we actually got. Without this the touch zoom (tuned
       // when the canvas was a fixed 800px being CSS-scaled down) composites with the responsive
       // canvas and the world is magnified twice over.
