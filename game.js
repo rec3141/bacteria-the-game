@@ -57,9 +57,9 @@
                            // mid-evolution instead of grinding there to test the late game.
       genomeUpkeep: 0.05, // extra respiration per adaptation tier — the metabolic cost of a bigger genome (streamlining pressure)
       touchLatchSecs: 0.25, // phone stick: hold it at FULL deflection this long to lock in a run
-                            // that keeps going after you lift your thumb (tap the centre to stop)
+                            // that keeps going after you lift your thumb (tap the center to stop)
       touchRunSecs: 2.0,   // ...and the locked run winds down over this long rather than sticking
-                           // on forever — the knob eases back to centre as it runs out
+                           // on forever — the knob eases back to center as it runs out
     },
     respirationBase: 0.9,
     // TOUCH ONLY: scales how fast things SWIM (your cells and the protists, together — halving
@@ -115,7 +115,7 @@
       lightGamma: 1.8,                            // shapes the daylight curve: >1 deepens night, sharpens noon
       twilight: 0.21,                             // light fades through twilight rather than snapping off at the
                                                   // horizon; 0.21 ~ 12 deg below it (nautical dusk)
-      // The WATER's colour is the clock: lerped from midnight navy to midday teal. It used to be a
+      // The WATER's color is the clock: lerped from midnight navy to midday teal. It used to be a
       // fixed background with a pale wash painted OVER the world at noon, which filmed over the
       // organisms (washed out) and banded as the low alpha faded (jittery).
       waterNight: [2, 9, 22], waterDay: [18, 78, 92],
@@ -155,7 +155,7 @@
   const CFG_DEFAULTS = JSON.parse(JSON.stringify(CFG));
 
   // Resource classes: each exoenzyme dissolves only its matching resource. Voxels
-  // are colour-coded by resource so a particle reads as its biochemical makeup.
+  // are color-coded by resource so a particle reads as its biochemical makeup.
   const RESOURCES = [
     { key: "lipid",   enzyme: "lipase",       color: "#efd98a", cal: 9 }, // 0 — fats/oils, wheat-yellow (9 kcal/g)
     { key: "protein", enzyme: "protease",     color: "#ef8b3c", cal: 4 }, // 1 — proteinaceous, orange (4 kcal/g).
@@ -227,7 +227,7 @@
   };
   const actx = el.analysisChart ? el.analysisChart.getContext("2d") : null;
   const asctx = el.analysisSubChart ? el.analysisSubChart.getContext("2d") : null;
-  el.enz.forEach((e, i) => { if (e) e.style.setProperty("--gc", RESOURCES[i].color); }); // per-gene colour (used when owned)
+  el.enz.forEach((e, i) => { if (e) e.style.setProperty("--gc", RESOURCES[i].color); }); // per-gene color (used when owned)
   if (el.abilChemo) el.abilChemo.style.setProperty("--gc", "#ffd24a"); // chemotaxis = gold
   if (el.abilCrispr) el.abilCrispr.style.setProperty("--gc", "#c39bff"); // CRISPR = violet
   if (el.enzTox) el.enzTox.style.setProperty("--gc", "#f05ad0"); // antibiotic = magenta
@@ -378,7 +378,7 @@
     const H = Math.acos(cosH)/DEG/15;           // half the daylength, in hours
     return { polar: null, sunrise: 12 - H, sunset: 12 + H, daylightHours: 2*H };
   }
-  // The sea's colour, lerped straight from midnight navy to midday teal. Colouring the WATER (rather
+  // The sea's color, lerped straight from midnight navy to midday teal. Coloring the WATER (rather
   // than washing a film over the finished frame) is what keeps the organisms at full contrast: at
   // noon the sea is bright and the cells still read sharply against it.
   function waterColor(light) {
@@ -449,10 +449,10 @@
   addEventListener("keyup", (e) => { keys[e.key.toLowerCase()] = false; });
   // on-screen thumbstick (mobile). Tap/flick a direction and the cell RUNS that way
   // for a few seconds on its own (no need to hold); dragging keeps re-aiming it, and
-  // tapping the centre stops. Direction only — the mover normalises magnitude.
+  // tapping the center stops. Direction only — the mover normalizes magnitude.
   // The stick LATCHES: push it to full deflection and hold that heading for
   // CFG.cell.touchLatchSecs, and the run locks in — let go and the cell keeps swimming that
-  // way until you stop it (tap the stick's centre). Below full deflection it's an ordinary
+  // way until you stop it (tap the stick's center). Below full deflection it's an ordinary
   // analog stick: you steer only while your thumb is down. Committing on a dwell-at-max is
   // predictable in a way a flick isn't — a flick's direction depends on exactly when the
   // browser last sampled your finger, which is not something a player can feel.
@@ -468,7 +468,7 @@
   let touchAtMax = false;    // thumb is out at the rim right now
   let _latchTimer = null;
   function axis() {
-    // latched, or thumb currently down and off-centre
+    // latched, or thumb currently down and off-center
     if ((touchLatched || touchVec.active) && (touchVec.x || touchVec.y)) return { x: touchVec.x, y: touchVec.y };
     let x = 0, y = 0;
     if (keys["a"]||keys["arrowleft"]) x -= 1; if (keys["d"]||keys["arrowright"]) x += 1;
@@ -506,7 +506,7 @@
     return clamp(CFG.cell.baseHalf + Math.max(0, c.energy - CFG.cell.lenBaseEnergy)*CFG.cell.elongK,
                  CFG.cell.baseHalf, CFG.cell.maxHalf);
   }
-  // cell poles in LOCAL coords relative to the cell centre (for torus-safe checks)
+  // cell poles in LOCAL coords relative to the cell center (for torus-safe checks)
   function cellPolesLocal(c) {
     const hl = cellHalfLen(c) - CFG.cell.radius, ax = Math.cos(c.angle), ay = Math.sin(c.angle);
     return [ax*hl, ay*hl, -ax*hl, -ay*hl];
@@ -521,7 +521,7 @@
   // so runs skew per-skill. Shared with cell.startUpgrades, which pre-loads the starting cell.
   function grantRandomUpgrade(c) {
     const pool = ["chemo", "enz0", "enz1", "enz2", "antibiotic"];
-    if (!c.crispr) pool.push("crispr");            // one-time: phage-immune-harvesting defence system
+    if (!c.crispr) pool.push("crispr");            // one-time: phage-immune-harvesting defense system
     const pick = pool[(Math.random()*pool.length)|0];
     if (pick === "crispr") {
       c.crispr = true;
@@ -608,7 +608,7 @@
     const R = powerLawSize(); // size follows a global power-law spectrum, independent of kind (which now sets shape + resource)
     const rot = rand(0, Math.PI*2), seed = rand(0, 100);
     const cs = CFG.grid.cs, n = Math.ceil(2*R/cs) + 2, half = n*cs/2;
-    // sub-blob centres for aggregates
+    // sub-blob centers for aggregates
     const subs = [];
     if (spec.shape === "aggregate") for (let i = 0; i < 7; i++) {
       const a = rand(0, 6.28), d = rand(0, R*0.55); subs.push({ x: Math.cos(a)*d, y: Math.sin(a)*d, r: rand(0.3, 0.5)*R });
@@ -753,7 +753,7 @@
     // No promise of a way back: the grazers have their own immigration (minCount, respawnFloor) and
     // effectively never all die, so becomeBacterium() almost never fires. Tell the player what they
     // CAN do instead of something that won't happen.
-    flashRole("You are now a PROTIST", "graze the bacteria — Space for a turbo burst");
+    flashRole("You are now a PROTIST", "your kind died out — graze the bacteria instead · Space to sprint");
     Audio.play("spawn", 0.6);
   }
   // Only fires if every grazer dies at once — which their immigration makes very unlikely. Kept as a
@@ -763,7 +763,7 @@
     predators.forEach((p) => (p.controlled = false));
     if (!cells.length) immigrateBacteria(CFG.cycle.reseedBacteria);
     const c = cells[0]; if (c) { c.controlled = true; c.invuln = Math.max(c.invuln, 2); cam.x = c.x; cam.y = c.y; }
-    flashRole("You are now a BACTERIUM", "forage, evolve, divide — you flip to a protist if your kind dies out");
+    flashRole("You are now a BACTERIUM", "the grazers died out — forage, evolve, divide");
     Audio.play("spawn", 0.6);
   }
   let _roleT = null;
@@ -827,7 +827,7 @@
     }
     return true;
   }
-  // a deployable's colour + short label — same colours the gene chips use, so the phone's
+  // a deployable's color + short label — same colors the gene chips use, so the phone's
   // release button and the genome row can never disagree about what "carb" looks like
   const TOXIN_UI = "#f05ad0";
   const deployColor = (id) => (id === AB ? TOXIN_UI : RESOURCES[id].color);
@@ -861,7 +861,7 @@
     }
     return { reps, ks: [...reps.keys()].sort((a, b) => a - b) };
   }
-  const lineageKeyColor = (k) => levelColor(Math.floor(k/64), k % 64); // key → the colour it's drawn in
+  const lineageKeyColor = (k) => levelColor(Math.floor(k/64), k % 64); // key → the color it's drawn in
   function switchControl(dir) {              // dir -1 steps back through the lineages; default forward
     if (!state || !state.running) return;
     const step = dir === -1 ? -1 : 1;
@@ -985,9 +985,9 @@
     // a run played with the tuning panel open isn't comparable to anyone else's — say so
     const tuned = cfgTuned() ? `<br><span style="font-size:12px;opacity:.7;color:#ffd24a">tuned run — kept local, not sent to the shared leaderboard</span>` : "";
     const dayN = state.day || 1;
-    el.overTitle.textContent = dayComplete ? `You survived day ${dayN}! 🌅` : "Run ended";
+    el.overTitle.textContent = dayComplete ? `You survived day ${dayN} 🌅` : "Run ended";
     el.overMsg.innerHTML = (dayComplete
-      ? `${dayN === 1 ? "A full day" : `${dayN} full days`} in the life — your lineage reached <b>generation ${state.gen}</b> and consumed ${cal}.`
+      ? `${dayN === 1 ? "A full day" : `${dayN} full days`} in the life of a bacterium. Your lineage reached <b>generation ${state.gen}</b> and consumed ${cal}.`
       : `Your lineage reached <b>generation ${state.gen}</b> and consumed ${cal}.`) + tuned;
     // you can only carry on from a day you SURVIVED — not from a run that ended
     if (el.continueBtn) el.continueBtn.classList.toggle("hidden", !dayComplete);
@@ -1012,7 +1012,7 @@
     state.elapsed += dt; updateDiel();               // advance the day; drive light/temp/food/grazing
     // end of a day: you made it. Offer to carry on into the next one (see continueDay).
     if (state.elapsed >= state.day * CFG.day.lengthSec) { gameOver(true); return; }
-    // A locked run winds down instead of sticking on: the knob eases back to centre and the
+    // A locked run winds down instead of sticking on: the knob eases back to center and the
     // rim's glow fades, so you can watch it run out rather than being stuck swimming. Held
     // thumb pauses the countdown — that's you steering, not coasting.
     if (touchLatched && !touchVec.active) {
@@ -1024,7 +1024,7 @@
         parkKnob(0, 0);
       } else {
         // now that the stick is analog, the knob's position IS the speed — so easing it back to
-        // centre has to actually slow the cell, not just look like it. The run coasts to a stop.
+        // center has to actually slow the cell, not just look like it. The run coasts to a stop.
         touchVec.x = touchLatchVec.x*frac; touchVec.y = touchLatchVec.y*frac;
         parkKnob(touchLatchVec.x*stickMaxR*frac, touchLatchVec.y*stickMaxR*frac);
         if (el.stickBase) el.stickBase.style.setProperty("--lock", frac.toFixed(3));
@@ -1147,7 +1147,7 @@
     if (sp > vmax) { c.vx = c.vx/sp*vmax; c.vy = c.vy/sp*vmax; }
     c.x = wrapX(c.x + c.vx*dt); c.y = wrapY(c.y + c.vy*dt);
 
-    // collide the rod against solid particles at both poles and the centre
+    // collide the rod against solid particles at both poles and the center
     const pl = cellPolesLocal(c);
     const pts = [[c.x + pl[0], c.y + pl[1]], [c.x, c.y], [c.x + pl[2], c.y + pl[3]]];
     for (const [sx, sy] of pts) {
@@ -1227,8 +1227,8 @@
         if (res >= 0) releaseEnzyme(c, res);
       }
     }
-    // autonomous chemical defence: a cell that evolved the antibiotic zaps protists that close in.
-    // Kept deliberately sparing — it's a last-ditch defence, not a constant kill field, so protists
+    // autonomous chemical defense: a cell that evolved the antibiotic zaps protists that close in.
+    // Kept deliberately sparing — it's a last-ditch defense, not a constant kill field, so protists
     // aren't wiped out around every colony (long cooldown + fires only when a grazer is right on top).
     if (c.antibiotic > 0 && c.energy > CFG.cell.antibioticCost*3.5) {
       c.toxCd = (c.toxCd || 0) - dt;
@@ -1303,7 +1303,7 @@
   // offscreen without popping them into view.
   //
   // It samples the WHOLE world and rejects the visible box, rather than picking a point on
-  // a ring around the camera. That distinction is the whole fix: a camera-centred ring ties
+  // a ring around the camera. That distinction is the whole fix: a camera-centered ring ties
   // the ecology to the viewport, so a player who stops moving respawns every particle onto
   // one fixed annulus around themselves. The colony grows where the food is, and the map
   // turns into a donut of bacteria with a starved hole where the player sits. Food has to be
@@ -1418,7 +1418,7 @@
       if (pr.energy <= 0) {
         pr.dead = true;
         if (pr.energy <= 0 && pr.toxT > 0) releaseBiomass(pr);
-        else burst(pr.x, pr.y, "#b9a9b0", 8); // natural death — inert grey puff
+        else burst(pr.x, pr.y, "#b9a9b0", 8); // natural death — inert gray puff
       }
     }
     if (newborns.length || predators.some((p) => p.dead))
@@ -1583,7 +1583,7 @@
   const onScreen = (x, y, m) => x > -m && x < VIEW_W + m && y > -m && y < VIEW_H + m;
 
   function draw() {
-    // The sea itself carries the time of day: deep navy at midnight, bright teal at noon. Colouring
+    // The sea itself carries the time of day: deep navy at midnight, bright teal at noon. Coloring
     // the WATER (rather than washing a translucent film over the finished frame, as this used to)
     // keeps the organisms at full contrast — noon is brighter without everything going milky.
     ctx.fillStyle = waterColor(state && state.light != null ? state.light : 0.6);
@@ -1600,13 +1600,13 @@
     for (const pr of predators) drawPredator(pr);
     for (const c of cells) drawCell(c);
     ctx.restore();
-    drawDayNight(); // time-of-day colour wash (screen space, over the world, under the minimap)
+    drawDayNight(); // time-of-day color wash (screen space, over the world, under the minimap)
     drawMinimap(); // HUD-space, never zoomed
   }
   function drawDayNight() {
     if (!state) return;
     const D = CFG.diel, light = state.light || 0;
-    // The darkening/brightening lives in the water colour itself now (see waterColor), so nothing is
+    // The darkening/brightening lives in the water color itself now (see waterColor), so nothing is
     // painted over the world except this: a warm glow while the sun is low. It peaks at dawn and dusk
     // and is gone by mid-morning, so it never dulls the daytime picture.
     const gold = clamp((0.4 - light)/0.4, 0, 1) * clamp(light*5, 0, 1);
@@ -1614,8 +1614,8 @@
   }
 
   let waterDots = makeWaterDots();
-  // Dots live in NORMALISED space (u,v in 0..1) so a canvas resize just re-scales them instead of
-  // re-randomising the whole field — a resize used to snap the starfield to a brand-new layout.
+  // Dots live in NORMALIZED space (u,v in 0..1) so a canvas resize just re-scales them instead of
+  // re-randomizing the whole field — a resize used to snap the starfield to a brand-new layout.
   function makeWaterDots() { return Array.from({ length: 70 }, () => ({ u: Math.random(), v: Math.random(), r: Math.random()*2 + 0.5 })); }
   function drawWater() {
     ctx.save(); ctx.globalAlpha = 0.2; ctx.fillStyle = "#bfeee0";
@@ -1644,7 +1644,7 @@
     for (let gj = 0; gj < p.n; gj++) for (let gi = 0; gi < p.n; gi++) {
       const idx = gj*p.n + gi, v = p.grid[idx]; if (v <= 0) continue;
       const res = p.gtype[idx];
-      // colour = resource class, shaded by how deeply buried the voxel is
+      // color = resource class, shaded by how deeply buried the voxel is
       g.fillStyle = grain ? lut[res][Math.min(depth[idx], GRAIN_MAXD)] : RESOURCES[res].color;
       g.globalAlpha = 0.6 + 0.4*v;
       g.fillRect(gi*cs, gj*cs, cs+0.5, cs+0.5);
@@ -1677,7 +1677,7 @@
     }
     return d;
   }
-  // depth → colour, precomputed: 3 resources × 15 depths. Rebuilt only when a grain knob
+  // depth → color, precomputed: 3 resources × 15 depths. Rebuilt only when a grain knob
   // moves, so tuning it live costs nothing per voxel.
   const RES_RGB = RESOURCES.map((r) => {
     const v = parseInt(r.color.slice(1), 16);
@@ -1708,7 +1708,7 @@
     ctx.drawImage(p.cache, cx - p.half, cy - p.half);
   }
 
-  const ENZ_RGB = ["239,217,138", "239,139,60", "111,168,255"]; // matches RESOURCES colours
+  const ENZ_RGB = ["239,217,138", "239,139,60", "111,168,255"]; // matches RESOURCES colors
   function drawEnzyme(z) {
     const cx = sx(z.x), cy = sy(z.y); if (!onScreen(cx, cy, z.r + 4)) return;
     const rgb = ENZ_RGB[z.res] || "190,130,255";
@@ -1718,7 +1718,7 @@
     ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, z.r, 0, 6.28); ctx.fill();
     ctx.restore();
   }
-  function drawToxin(z) { // magenta antibiotic haze — distinct from the resource-coloured enzyme clouds
+  function drawToxin(z) { // magenta antibiotic haze — distinct from the resource-colored enzyme clouds
     const cx = sx(z.x), cy = sy(z.y); if (!onScreen(cx, cy, z.r + 4)) return;
     ctx.save(); ctx.translate(cx, cy);
     const g = ctx.createRadialGradient(0, 0, z.r*0.2, 0, 0, z.r);
@@ -1755,10 +1755,10 @@
       ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.arc(0, 0, 1.7, 0, 6.28); ctx.fill();
       ctx.restore(); return;
     }
-    // green phage — colour-coded by danger to YOU: red = can infect your cell, green = harmless
+    // green phage — color-coded by danger to YOU: red = can infect your cell, green = harmless
     const pc = controlledCell(), danger = pc && hostMatch(ph.host, upgradeTier(pc));
     const col = danger ? "#ff5a52" : "#7CFC5A", r = 3.8;
-    ctx.fillStyle = "rgba(8,12,10,0.6)"; ctx.beginPath(); ctx.arc(0, 0, r + 1.7, 0, 6.28); ctx.fill(); // dark halo → pops against same-colour blocks
+    ctx.fillStyle = "rgba(8,12,10,0.6)"; ctx.beginPath(); ctx.arc(0, 0, r + 1.7, 0, 6.28); ctx.fill(); // dark halo → pops against same-color blocks
     ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.beginPath();
     ctx.moveTo(0, r); ctx.lineTo(0, r + 3.5); ctx.stroke();                    // tail fiber
     ctx.fillStyle = col; ctx.strokeStyle = danger ? "#4a0d0a" : "#0d4a18"; ctx.lineWidth = 0.8;
@@ -1775,7 +1775,7 @@
     ctx.save(); ctx.translate(cx, cy); ctx.rotate(c.angle);
     if (c.invuln > 0 && Math.floor(c.invuln*10) % 2 === 0) ctx.globalAlpha = 0.5;
     if (c.cyst) {
-      // resting cyst: no flagellum, contracted, thick resistant wall, muted colour
+      // resting cyst: no flagellum, contracted, thick resistant wall, muted color
       const chl = Math.max(rad, hl*0.7);
       ctx.fillStyle = "#5f7a63"; ctx.strokeStyle = "#2e3f2b"; ctx.lineWidth = 2.4;
       roundedCapsule(ctx, chl, rad*1.1); ctx.fill(); ctx.stroke();
@@ -1817,13 +1817,13 @@
 
   function drawPredator(pr) {
     const cx = sx(pr.x), cy = sy(pr.y); if (!onScreen(cx, cy, pr.r + 8)) return;
-    // life-stage cues: juveniles are smaller; a STARVING grazer shrinks and greys out. This tracks
+    // life-stage cues: juveniles are smaller; a STARVING grazer shrinks and grays out. This tracks
     // ENERGY, not age — starvation is the only thing that kills a protist now, so the visual
     // telegraphs the clock that's actually running instead of an invisible one.
     const grow = clamp(pr.age/CFG.predator.maturity, 0.55, 1);
     const spent = 1 - clamp(pr.energy/CFG.predator.startEnergy, 0, 1); // 0 = well fed, 1 = starving
     const r = pr.r*grow*(1 - 0.18*clamp((spent - 0.55)/0.45, 0, 1));
-    const old = clamp((spent - 0.6)/0.4, 0, 1); // greys out as its reserves run out
+    const old = clamp((spent - 0.6)/0.4, 0, 1); // grays out as its reserves run out
     ctx.save(); ctx.translate(cx, cy);
     if (pr.satiated > 0) ctx.globalAlpha = 0.5;
     const g = ctx.createRadialGradient(0, 0, 3, 0, 0, r + 6);
@@ -1835,7 +1835,7 @@
     for (let i = 0; i <= 9; i++) { const a = i/9*6.28, rr = r*(0.85 + 0.25*Math.sin(a*3 + pr.pseudo)); ctx[i ? "lineTo" : "moveTo"](Math.cos(a)*rr, Math.sin(a)*rr); }
     ctx.closePath(); ctx.fill();
     ctx.fillStyle = "rgba(90,20,50,0.8)"; ctx.beginPath(); ctx.arc(Math.cos(pr.pseudo)*3, Math.sin(pr.pseudo)*3, r*0.3, 0, 6.28); ctx.fill();
-    if (pr.controlled) { // the protist YOU are steering. No ring — the camera already centres you,
+    if (pr.controlled) { // the protist YOU are steering. No ring — the camera already centers you,
                          // and the minimap marks you. A turbo burst flares instead.
       if (pr.turboT > 0) {
         ctx.globalAlpha = clamp(pr.turboT/CFG.cycle.turboSecs, 0, 1);
@@ -1869,14 +1869,14 @@
     ctx.strokeStyle = "rgba(120,220,200,0.4)";
     ctx.lineWidth = 1; ctx.fillRect(mx, my, mw, mh); ctx.strokeRect(mx, my, mw, mh);
     const kx = mw/WORLD_W, ky = mh/WORLD_H;
-    // CENTRED on the player: everything is drawn relative to your cell (toroidal wrap via dx/dy),
+    // CENTERED on the player: everything is drawn relative to your cell (toroidal wrap via dx/dy),
     // so you stay in the middle and the world scrolls under you — much easier to navigate the wrap.
     const pc = controlledEntity(), cx0 = mx + mw/2, cy0 = my + mh/2; // cell OR protist — the map follows whoever you are
     const MX = pc ? (ex) => cx0 + dx(ex, pc.x)*kx : (ex) => mx + ex*kx;
     const MY = pc ? (ey) => cy0 + dy(ey, pc.y)*ky : (ey) => my + ey*ky;
     ctx.beginPath(); ctx.rect(mx, my, mw, mh); ctx.clip(); // keep marks inside the frame
     // particles are omitted — the map shows only the living things
-    if (!isTouch) { // colony dots coloured by generation (same palette as the chart); cysts hidden
+    if (!isTouch) { // colony dots colored by generation (same palette as the chart); cysts hidden
       for (const c of cells) if (!c.controlled && !c.cyst) {
         ctx.fillStyle = levelColor(ecoMask(c), upgradeTier(c));
         ctx.fillRect(MX(c.x) - 1, MY(c.y) - 1, 2, 2);
@@ -1886,7 +1886,7 @@
     for (const pr of predators) { ctx.beginPath(); ctx.arc(MX(pr.x), MY(pr.y), 2.5*ps, 0, 6.28); ctx.fill(); }
     // gold phage — a bright STAR so it stands out from round dots
     for (const ph of phages) if (ph.type === "gold") drawMiniStar(MX(ph.x), MY(ph.y), 5.5*ps, 2.4*ps, "#ffd24a");
-    // your cell — a white-ringed teal DIAMOND, dead centre
+    // your cell — a white-ringed teal DIAMOND, dead center
     if (pc) drawMiniDiamond(cx0, cy0, 4.5*ps, "#8dffdc");
     ctx.restore();
   }
@@ -1903,7 +1903,7 @@
   // ---------------------------------------------------------------- eco chart
   // An ecotype is the set of acquired capabilities. Carbohydrase is universal, so
   // the differentiators are lipase(1) | protease(2) | chemotaxis(4) → 8 ecotypes.
-  // Colours: dataviz skill's validated 8-hue categorical palette (dark, CVD-safe order).
+  // Colors: dataviz skill's validated 8-hue categorical palette (dark, CVD-safe order).
   const CHART = { interval: 0.5, samples: 200, W: 800, H: 96, subH: 64, surface: "#06181d" };
   const ECO_COLOR = ["#3987e5", "#199e70", "#c98500", "#008300", "#9085e9", "#e66767", "#d55181", "#d95926"];
   const PROTIST_COLOR = "#ff9ec0", VIRUS_COLOR = "#8bf06a", CYST_COLOR = "#9aa6a0", CRISPR_COLOR = "#c39bff", TOXIN_COLOR = "#f05ad0";
@@ -1925,7 +1925,7 @@
   function updateLegend(eco, preds, green) {
     if (!el.legend) return;
     // Just the totals. The per-ecotype breakdown ("carb only 1 · +lipase 6 · +protease 1 · …") grew a
-    // line per gene combination and crowded the legend off the chart; the colour bands already show
+    // line per gene combination and crowded the legend off the chart; the color bands already show
     // the composition, and the run analysis on death gives the detail.
     let colony = 0; for (let m = 0; m < 8; m++) colony += eco[m];
     let html = `<span><i class="gen-swatch"></i>${colony === 1 ? "bacterium" : "bacteria"} <b>${colony}</b></span>`;
@@ -1937,11 +1937,11 @@
   function ecoCounts() { const e = [0,0,0,0,0,0,0,0]; for (const c of cells) e[ecoMask(c)]++; return e; }
   // per-ecotype count + average upgrade level (total enzyme levels above base + chemoLevel) for the chart
   function ecoSample() {
-    // bucket active cells by GENERATION = (ecotype, upgrade tier). Each bucket becomes its own flat-coloured
-    // polygon in the stack — a new lineage gets a new colour, and cells keep it until they upgrade again.
+    // bucket active cells by GENERATION = (ecotype, upgrade tier). Each bucket becomes its own flat-colored
+    // polygon in the stack — a new lineage gets a new color, and cells keep it until they upgrade again.
     const eco = [0,0,0,0,0,0,0,0], buckets = {};
     for (const c of cells) {
-      const m = ecoMask(c); eco[m]++;          // cysts included in their generation bucket (coloured, not a separate grey band)
+      const m = ecoMask(c); eco[m]++;          // cysts included in their generation bucket (colored, not a separate gray band)
       const key = m*64 + Math.min(63, upgradeTier(c)); // mask (0-7) high bits, tier low bits
       buckets[key] = (buckets[key] || 0) + 1;
     }
@@ -1960,7 +1960,7 @@
     return [h, s*100, l*100];
   }
   const ECO_HSL = ECO_COLOR.map(hexToHsl);
-  function levelColor(m, lvl) { // DISCRETE staggered colour per generation → sharp transitions, not a smooth rainbow
+  function levelColor(m, lvl) { // DISCRETE staggered color per generation → sharp transitions, not a smooth rainbow
     const L = Math.round(lvl), hsl = ECO_HSL[m];
     const hue = (((hsl[0] + L*58) % 360) + 360) % 360;        // big hue jumps so consecutive levels contrast
     const light = clamp(hsl[2] + (L % 2 ? -13 : 9), 24, 74);  // alternate darker/lighter to separate them further
@@ -1985,8 +1985,8 @@
     g.fillText(String(Math.round(maxY)) + (chartLog ? " ·log" : ""), 3, 10); g.fillText("0", 3, H - 3);
     if (hist.length > 1) {
       const last = hist.length - 1;
-      // one FLAT-coloured polygon per GENERATION bucket (ecotype+tier), stacked from the baseline.
-      // Each new lineage = a new colour that grows in and fades out as its population rises and falls — no gradients.
+      // one FLAT-colored polygon per GENERATION bucket (ecotype+tier), stacked from the baseline.
+      // Each new lineage = a new color that grows in and fades out as its population rises and falls — no gradients.
       const bks = hist.map(sampleBuckets), cum = hist.map(() => 0);
       const keySet = new Set(); for (const b of bks) for (const k in b) keySet.add(+k);
       const keys = [...keySet].sort((a, b) => a - b); // stable order: mask-major, tier-minor → bands don't jump around
@@ -2047,7 +2047,7 @@
     if (el.helix.width !== w) el.helix.width = w;
     if (el.helix.height !== h) el.helix.height = h;
     const g = hlxCtx; g.clearRect(0, 0, w, h);
-    const col = pc ? levelColor(ecoMask(pc), upgradeTier(pc)) : "#8dffdc"; // lineage = generation colour of the steered cell
+    const col = pc ? levelColor(ecoMask(pc), upgradeTier(pc)) : "#8dffdc"; // lineage = generation color of the steered cell
     const cy = h/2, amp = h*0.40, P = 26;
     g.strokeStyle = col; g.lineCap = "round";
     for (const ph of [0, Math.PI]) {                 // two anti-phase strands
@@ -2120,7 +2120,7 @@
     // paused mid-game: drop the live run into the list so you can see exactly where it ranks
     const liveLine = (state && state.running) ? currentRunLine() : null;
     if (liveLine) arr.push(liveLine);
-    if (!arr.length) { el.scoresList.innerHTML = `<p class="empty">No runs yet — play a game and your bacteria's evolutionary history will appear here.</p>`; return; }
+    if (!arr.length) { el.scoresList.innerHTML = `<p class="empty">No runs yet. Play a game and your lineage's evolutionary history will appear here.</p>`; return; }
     // all-time leader per category → 🏆 badge on that run's value
     const leader = {};
     for (const k of ["score", "gen", "dur", "ad"]) { let best = -Infinity, id = null; for (const r of arr) { const v = SCORE_VAL[k](r); if (v > best) { best = v; id = recId(r); } } leader[k] = id; }
@@ -2205,7 +2205,7 @@
     if (el.scoresBack) el.scoresBack.textContent = paused ? "Resume" : "Back";
     if (el.endGameBtn) el.endGameBtn.classList.toggle("hidden", !active);
     if (el.currentRun) el.currentRun.classList.add("hidden"); // the live run now appears inline in the ranked list
-    if (el.scoresKey) { // colours now encode GENERATION (ecotype + upgrade tier), so no fixed per-ecotype swatch
+    if (el.scoresKey) { // colors now encode GENERATION (ecotype + upgrade tier), so no fixed per-ecotype swatch
       el.scoresKey.innerHTML =
         `<span><i class="gen-swatch"></i>bacteria</span>` +
         `<span><i class="eco-line" style="border-color:${PROTIST_COLOR}"></i>protists</span>` +
@@ -2248,7 +2248,7 @@
 
   // ------------------------------------------------------------------ hud sync
   // Paint one rolodex button: the face is what's loaded, prev/next peek out behind it so you
-  // can see what a swipe would bring up. Nulls hide the neighbours (nothing else to cycle to).
+  // can see what a swipe would bring up. Nulls hide the neighbors (nothing else to cycle to).
   function paintRolo(btn, face, prev, next) {
     if (!btn) return;
     const f = btn.querySelector(".rface"), p = btn.querySelector(".rprev"),
@@ -2259,7 +2259,7 @@
   }
   // What you currently ARE, drawn in dark ink on the lineage button's face: a flagellated rod, or a
   // blobby grazer once a role-swap has flipped you. Only redrawn when the role changes — the face
-  // colour underneath carries the lineage, so the ink never has to change.
+  // color underneath carries the lineage, so the ink never has to change.
   function drawRoleSprite(cv, role) {
     if (!cv || cv.dataset.role === role) return;
     cv.dataset.role = role;
@@ -2339,7 +2339,7 @@
     if (el.roleTag) el.roleTag.classList.toggle("hidden", !protist);
     if (protist) return;
     const c = controlledCell();
-    drawHelix(c); // DNA double-helix backbone under the genome, drawn in the current lineage's colour
+    drawHelix(c); // DNA double-helix backbone under the genome, drawn in the current lineage's color
     syncRolodex(c);
     const pc = controlledCell();
     const amp = (n) => n >= 1 ? ` <span class="amp">×${n}</span>` : ""; // expression as gene amplification (×N); shown from ×1 so the chip width doesn't jump
@@ -2367,7 +2367,7 @@
     if (!r.width || !r.height) return; // not laid out yet (or headless)
     const w = Math.round(r.width), h = Math.round(r.height);
     if (canvas.width !== w || canvas.height !== h) {
-      canvas.width = w; canvas.height = h; VIEW_W = w; VIEW_H = h; // dots are normalised — no rebuild
+      canvas.width = w; canvas.height = h; VIEW_W = w; VIEW_H = h; // dots are normalized — no rebuild
       // Re-derive the zoom from the canvas we actually got. Without this the touch zoom (tuned
       // when the canvas was a fixed 800px being CSS-scaled down) composites with the responsive
       // canvas and the world is magnified twice over.
@@ -2475,7 +2475,7 @@
     "cell.startUpgrades": "TESTING AID: how many random adaptations the starting cell already has, drawn from the same pool a gold phage gives. 0 = the normal game. Raise it to drop straight into the late game instead of grinding there.",
     "cell.maxCells": "Hard cap on living cells — a performance backstop, not an ecological limit.",
     "cell.touchLatchSecs": "Phone thumbstick: how long you must hold it at FULL deflection before the run locks in and keeps going after you lift your thumb. Lower = quicker to commit but easier to trigger by accident.",
-    "cell.touchRunSecs": "How long a locked-in run lasts before it winds down on its own (the knob eases back to centre as it runs out). Stops the stick getting stuck on. Touching it again pauses the countdown; re-latching refills it.",
+    "cell.touchRunSecs": "How long a locked-in run lasts before it winds down on its own (the knob eases back to center as it runs out). Stops the stick getting stuck on. Touching it again pauses the countdown; re-latching refills it.",
     "cycle.turboSecs": "Base length of a protist's turbo burst (Space, or the release button on a phone).",
     "cycle.turboMult": "How much faster a protist swims during a turbo burst.",
     "cycle.turboCost": "Energy a protist spends per turbo burst. It has no other use for energy but staying alive, so this is the real price of a sprint.",
@@ -2484,9 +2484,9 @@
     "day.latitude": "Latitude of this run, degrees (+N / -S). With day.dayOfYear it gives the real sun: sunrise, sunset, how high it climbs. Past ~66.5 you get midnight sun or polar night depending on the season.",
     "day.dayOfYear": "Day of the year, 1-365. 172 = June solstice, 355 = December solstice, 80/266 = the equinoxes. Sets the sun's declination, so it decides the season.",
     "diel.twilight": "How far the sun sinks below the horizon before the light is fully gone. 0.21 is roughly nautical dusk (12 deg). Higher = longer, softer twilight.",
-    "diel.lightGamma": "Shapes the daylight curve across the 24h. 1 = a plain sinusoid; higher deepens the night and sharpens midday. The light drives food supply, grazing pressure and the colour of the water.",
-    "diel.waterNight": "The sea's colour at midnight (r, g, b). The water itself carries the time of day.",
-    "diel.waterDay": "The sea's colour at noon (r, g, b). Push it up to make midday brighter.",
+    "diel.lightGamma": "Shapes the daylight curve across the 24h. 1 = a plain sinusoid; higher deepens the night and sharpens midday. The light drives food supply, grazing pressure and the color of the water.",
+    "diel.waterNight": "The sea's color at midnight (r, g, b). The water itself carries the time of day.",
+    "diel.waterDay": "The sea's color at noon (r, g, b). Push it up to make midday brighter.",
     "diel.goldTint": "Strength of the warm glow while the sun is low (dawn/dusk).",
     "diel.q10": "Q10: metabolic rate multiplies by this for every +10 degC. 2 = the textbook value (rate doubles). 1 = temperature has no effect. Applies to bacteria AND protists.",
     "diel.q10RefC": "Reference temperature for Q10 — metabolism runs at its base rate here.",
@@ -2791,7 +2791,7 @@
   //     hold the stick and tap `release` at the same time. Pointer events carry a pointerId
   //     and each finger is tracked independently, so both work at once.
   //   - the stick only took its direction from MOVE events, so a quick flick that started
-  //     at the centre (thumb lands, flicks off) committed no direction at all and the cell
+  //     at the center (thumb lands, flicks off) committed no direction at all and the cell
   //     just sat there. The release point is now sampled on pointerup as well.
   let _stickId = null;
   // Travel is derived from the base's ACTUAL size rather than hardcoded — the stick is clamp()-fluid,
@@ -2832,7 +2832,7 @@
     const zone = el.stickZone, base = el.stickBase, knob = el.stickKnob;
     if (zone && base && knob) {
       const park = parkKnob;
-      // aim from a pointer's position: past the dead-zone it steers; at the centre it stops
+      // aim from a pointer's position: past the dead-zone it steers; at the center it stops
       const aim = (e) => {
         const r = base.getBoundingClientRect(), cx = r.left + r.width/2, cy = r.top + r.height/2;
         const maxR = r.width * STICK_TRAVEL, dead = r.width * STICK_DEADF;
@@ -2850,7 +2850,7 @@
           // gentle lean is a slow crawl and a full push is a sprint.
           const mag = clamp((d - dead) / Math.max(1, maxR - dead), 0, 1);
           touchVec.x = (dxp/d)*mag; touchVec.y = (dyp/d)*mag;
-        } else {                                    // back to the centre = stop, and drop the latch
+        } else {                                    // back to the center = stop, and drop the latch
           touchVec.x = touchVec.y = 0; clearLatchTimer(); setLatched(false);
         }
       };

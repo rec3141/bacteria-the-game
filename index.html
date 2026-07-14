@@ -63,7 +63,7 @@
   #energyTxt { min-width: 20px; opacity: .95; }
   .stats-inline { opacity: .72; letter-spacing: .2px; }
   .stats-inline b { color: #d6efe6; font-weight: 600; }
-  /* GENOME: capabilities as gene loci on a DNA double-helix (drawn in the current lineage's colour) */
+  /* GENOME: capabilities as gene loci on a DNA double-helix (drawn in the current lineage's color) */
   .genome { position: relative; display: flex; align-items: center; gap: 5px; padding: 10px 8px; }
   #helix { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
   .gene { position: relative; z-index: 1; padding: 2px 8px; border-radius: 5px; font-size: 11px; line-height: 1.35;
@@ -71,7 +71,7 @@
     color: rgba(210,228,222,.42); opacity: .62; transition: opacity .12s, box-shadow .12s, color .12s; }
   .gene:not(.owned) { border-style: dashed; opacity: .42; }        /* a silent / not-yet-acquired locus */
   .gene.owned { opacity: 1; color: var(--gc); border-color: var(--gc); box-shadow: inset 0 0 14px -7px var(--gc); }
-  /* the loaded gene (Space/tap releases this one): colour-filled background, not just a ring, for at-a-glance visibility */
+  /* the loaded gene (Space/tap releases this one): color-filled background, not just a ring, for at-a-glance visibility */
   .gene.active { font-weight: bold; color: #eefbf6;
     background: color-mix(in srgb, var(--gc) 34%, rgba(6,22,27,.9));
     box-shadow: 0 0 0 1.5px var(--gc), 0 0 12px -2px var(--gc); }
@@ -318,7 +318,7 @@
   .tbtn.pause { width: clamp(44px, 12vw, 50px); height: clamp(44px, 12vw, 50px); font-size: 12px; }
   /* Rolodex button: the loaded thing floods the face; the ones either side of it in the
      cycle peek out above and below like cards in a stack, so you can see what a swipe
-     would bring up. Colours are set from game.js (same source as the gene chips). */
+     would bring up. Colors are set from game.js (same source as the gene chips). */
   .tbtn.rolo { position: relative; background: transparent; border: none; box-shadow: none;
     overflow: visible; }
   .rolo .rface, .rolo .rprev, .rolo .rnext { position: absolute; inset: 0; border-radius: 50%; }
@@ -328,7 +328,7 @@
   .rolo .rface { z-index: 2; border: 2px solid rgba(255,255,255,.42);
     box-shadow: 0 2px 12px rgba(0,0,0,.5), inset 0 -6px 14px -8px rgba(0,0,0,.55); }
   /* the lineage button draws what you currently are — a bacterium, or a protist once you've
-     been flipped — in dark ink over the lineage's own colour */
+     been flipped — in dark ink over the lineage's own color */
   /* background:transparent is load-bearing — the global `canvas { background: #06232a }` rule would
      otherwise paint an opaque dark rectangle over the button's face */
   .rolo .rsprite { position: relative; z-index: 3; width: 62%; height: 62%;
@@ -382,7 +382,7 @@
     font-variant-numeric: tabular-nums; outline: none; }
   .anum:focus { border-color: var(--accent); }
   .arow.changed .anum { border-color: #ffd24a; color: #ffe9a8; }
-  /* Hover strip: the native title tooltip is slow and covers neighbouring rows,
+  /* Hover strip: the native title tooltip is slow and covers neighboring rows,
      so the hovered knob's description also lands here, instantly and in place. */
   #adminDoc { flex: 0 0 auto; min-height: 52px; padding: 7px 12px; font-size: 11px; line-height: 1.4;
     border-top: 1px solid rgba(255,255,255,.1); background: rgba(87,224,192,.05); color: var(--muted); }
@@ -465,7 +465,7 @@
         <h1>Bacteria!</h1>
         <p class="tag">forage · evolve · divide · endure</p>
       </div>
-      <p class="lede">You are a single bacterium adrift in a drop of the sea. Dissolve the marine particles around you for food, harvest genes from rare viruses, and divide to make your evolution count — everything out here is trying to eat, infect, or outcompete you. Make it through <b>a full day in the life</b>, as the sea's light, warmth and food rise and fall around you.</p>
+      <p class="lede">You are a single bacterium adrift in a drop of the sea. Dissolve marine particles for food, harvest genes from rare viruses, and divide to pass on what you've evolved. Everything out here is trying to eat, infect, or outcompete you — <b>survive a full day</b>, as the sea's light, warmth and food rise and fall around you.</p>
       <div class="btnrow">
         <button id="startBtn">Begin life</button>
         <button id="scoresBtn" class="ghost">High scores</button>
@@ -481,40 +481,39 @@
           <h3>Controls</h3>
           <ul>
             <li><kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd> / <kbd>W A S D</kbd> — <b>run</b> in a direction; let go to <b>tumble</b> (reorient randomly)</li>
-            <li><kbd>Space</kbd> — release the loaded <b>enzyme</b> (dissolve the particle ahead) or <b>antibiotic</b> (poison nearby protists). As a <b>protist</b>, Space is <b>turbo</b> instead: a short sprint that costs energy — and each <span class="c-gold">gold phage</span> you catch as a grazer makes the burst last longer.</li>
-            <li><kbd>Tab</kbd> — switch which enzyme/antibiotic is loaded &nbsp;·&nbsp; <kbd>M</kbd> — cycle sound (music / effects / off)</li>
-            <li><kbd>Shift</kbd> — <b>switch lineage</b>: hand control to another of your lineages</li>
-            <li><kbd>Esc</kbd> — pause &amp; high scores &nbsp;·&nbsp; <b>Help</b> button — this guide</li>
-            <li class="touchonly"><b>On a phone:</b> all the controls sit in the <b>deck below the ocean</b>, so your thumbs never cover it. Steer with the <b>thumbstick</b>; push it <b>all the way out and hold a beat</b> (¼s) to <b>lock in a run</b> — the rim lights up and the cell keeps swimming that way after you let go. The lock <b>winds down over a couple of seconds</b> (watch the knob ease back to centre), so it never sticks on; tap the stick's <b>centre</b> to stop it early. The two round buttons to its right carry <b>no labels, only colour</b>: the small inner one is your current <b>lineage</b> (with a little <b>bacterium</b> drawn on it — a <b>protist</b> once you've been flipped), and the big outer one is your loaded enzyme (or <span style="color:#f05ad0">antibiotic</span>). Their neighbours peek out behind like cards in a stack. <b>Tap to fire / switch, swipe up or down to change</b> — and you can hold the stick and tap them <b>at the same time</b>. Tapping a gene in the <b>genome row</b> still loads it directly; swipe the chart (up top) to fold it away.</li>
+            <li><kbd>Space</kbd> — release the loaded <b>enzyme</b> (dissolves the particle ahead) or <b>antibiotic</b> (poisons nearby protists). As a <b>protist</b>, Space is a <b>turbo</b> sprint instead.</li>
+            <li><kbd>Tab</kbd> — change which gene is loaded &nbsp;·&nbsp; <kbd>Shift</kbd> — hand control to another of your lineages</li>
+            <li><kbd>M</kbd> — cycle sound (music / effects / off) &nbsp;·&nbsp; <kbd>Esc</kbd> — pause and view high scores</li>
+            <li class="touchonly"><b>On a phone</b> the controls sit in the <b>deck below the ocean</b>, so your thumbs never cover the water. Steer with the <b>thumbstick</b>: push it all the way out and hold for a beat to <b>lock in a run</b> — the rim lights up and the cell keeps swimming after you let go, then the lock winds down over a few seconds. Tap the stick's center to stop early. The two round buttons carry <b>color instead of labels</b>: the small one is your <b>lineage</b>, the big one your <b>loaded gene</b>. Tap to fire or switch, swipe up or down to cycle — and you can hold the stick and tap at the same time. Tapping a chip in the <b>genome row</b> loads that gene directly; swipe the chart to fold it away.</li>
           </ul>
         </section>
         <section>
           <h3>The loop</h3>
-          <p>You can't swim through the big particles, but you can <b>dissolve</b> them with extracellular enzymes to reach the nutrients inside. Eat enough and you <b>elongate and divide</b>; daughters forage on their own and inherit everything you've evolved. Respiration burns energy every second. A cell that runs low on energy forms a resistant <b>cyst</b> until conditions improve.</p>
-        </section>
-        <section>
-          <h3>A day in the life</h3>
-          <p>Each run is one <b>24-hour day</b> (the clock top-left runs at 1 hour per real minute). Conditions cycle: at <b>dawn</b> it's cool, dim and food is scarce; by <b>midday</b> sunlight drives a <span class="c-lip">phytoplankton bloom</span> (warm water speeds your metabolism, but food is everywhere); through the afternoon the bloom is grazed into <span class="c-pro">fecal pellets</span> and ages into <span class="c-carb">marine snow</span>; at <b>night</b> it's cold and lean, and grazers press hardest. <b>Survive the whole day</b> to win the day.</p>
-        </section>
-        <section>
-          <h3>When your kind dies out</h3>
-          <p>Extinction isn't the end — it's a <b>role swap</b>. If all your bacteria die, you <b>become a protist</b> and graze the bacteria instead, moving up a trophic level; fresh, diverse prey keeps drifting in for you to hunt. A grazer has no enzymes, so <kbd>Space</kbd> becomes a <b>turbo</b> burst — and every <span class="c-gold">gold phage</span> you catch as a protist makes that burst last longer. It's a one-way trip: the grazers keep immigrating, so you stay one.</p>
+          <p>You can't swim through the big particles, but you can <b>dissolve</b> them with extracellular enzymes and absorb the nutrients released. Respiration burns energy every second, so you must keep eating. Eat well and you <b>elongate and divide</b>: daughters forage on their own and inherit everything you've evolved. A cell that runs low on energy forms a resistant <b>cyst</b> and waits for conditions to improve.</p>
         </section>
         <section>
           <h3>Food — three resources</h3>
-          <p>Particles are patchy mixes of <span class="c-lip">lipid</span>, <span class="c-pro">protein</span> and <span class="c-carb">carbohydrate</span>. Each needs its own enzyme, and you start able to digest only <span class="c-carb">carbohydrate</span> (<b>carbohydrase</b>).</p>
+          <p>Particles are patchy mixes of <span class="c-lip">lipid</span>, <span class="c-pro">protein</span> and <span class="c-carb">carbohydrate</span>, and each resource needs its own enzyme to unlock. You begin able to digest <span class="c-carb">carbohydrate</span> only. <span class="c-lip">Lipid</span> is the richest fuel — worth more than twice as many calories as carbohydrate — so a lineage that evolves <b>lipase</b> scores far faster.</p>
         </section>
         <section>
           <h3>Gold phages — adaptations <span class="c-gold">🧬</span></h3>
-          <p>Chase down the rare <span class="c-gold">gold phage</span> (a star on the minimap, often buried in a particle) to gain a random heritable adaptation: a new enzyme (<span class="c-lip">lipase</span>/<span class="c-pro">protease</span>), higher enzyme <b>expression</b>, <b>chemotaxis</b> (auto-seek food), an <span style="color:#f05ad0">antibiotic</span> (an anti-protist toxin), or <b>CRISPR</b> (a phage defence).</p>
+          <p>Chase down a rare <span class="c-gold">gold phage</span> (a star on the minimap, often buried inside a particle) to gain a random heritable adaptation: a new enzyme (<span class="c-lip">lipase</span> or <span class="c-pro">protease</span>), higher <b>expression</b> of an enzyme you already have, <b>chemotaxis</b> (your cells seek out food on their own), an <span style="color:#f05ad0">antibiotic</span>, or <b>CRISPR</b> (phage defense — immune viruses become food). Adaptations only spread to your descendants, so <b>adapt early, then divide</b>.</p>
         </section>
         <section>
           <h3>Viruses — phages</h3>
-          <p>Phages drift, stick to particles, and infect cells — but a virus only infects cells at a similar <b>adaptation level</b> to the host it came from, so it's colour-coded to you: <span style="color:#ff5a52">red</span> ones can infect your current cell, <span class="c-vir">green</span> ones can't. As you evolve, your level shifts, so which viruses read red or green changes over the run. An infected cell eventually <b>lyses</b>, releasing more phages.</p>
+          <p>Phages drift, stick to particles, and infect cells — but only cells at a similar <b>adaptation level</b> to the host they came from, so they are color-coded to whichever cell you're steering: <span style="color:#ff5a52">red</span> can infect it, <span class="c-vir">green</span> cannot. Every adaptation shifts your level, so a cohort of viruses tuned to you turns harmless as you evolve past it. An infected cell eventually <b>lyses</b>, releasing a burst of new phages.</p>
+        </section>
+        <section>
+          <h3>A day in the life</h3>
+          <p>The clock top-left runs at <b>one hour per real minute</b>, and surviving a full 24 hours wins the day. Conditions cycle as it turns: <b>dawn</b> is cool, dim and lean; by <b>midday</b> sunlight drives a <span class="c-lip">phytoplankton bloom</span>, and warm water speeds your metabolism as much as it feeds you; through the <b>afternoon</b> the bloom is grazed into <span class="c-pro">fecal pellets</span> and ages into <span class="c-carb">marine snow</span>; at <b>night</b> the sea is cold and food is scarce, and the grazers press hardest.</p>
+        </section>
+        <section>
+          <h3>If your kind dies out</h3>
+          <p>Extinction isn't the end — it's a <b>role swap</b>. If every one of your bacteria dies, you become a <b>protist</b> and move up a trophic level, grazing bacteria instead of particles. A grazer has no enzymes, so <kbd>Space</kbd> becomes a <b>turbo</b> burst, and each <span class="c-gold">gold phage</span> you catch extends it. Fresh prey keeps drifting in to hunt — but so do rival grazers, so the swap is one-way.</p>
         </section>
         <section>
           <h3>The chart</h3>
-          <p>The graph below the ocean stacks your bacteria by <b>generation</b> — each colour is a lineage at a given level of adaptation, a new shade each time a lineage <b>adapts</b>, so you can watch generations rise and fall (dormant <span class="c-cyst">cysts</span> are counted in their generation's band). Lines overlay for <span class="c-prot">protists</span> and <span class="c-vir">viruses</span>, and a second graph tracks the <b>food available</b>. Your run's full story — and where each adaptation happened — is shown when you die.</p>
+          <p>The graph below the ocean stacks your bacteria by <b>generation</b>: each color is one lineage at one level of adaptation, taking a new shade every time it adapts, so you can watch lineages rise and fall in real time (dormant <span class="c-cyst">cysts</span> stay counted in their band). Overlaid lines track <span class="c-prot">protists</span> and <span class="c-vir">viruses</span>, and a second graph shows the <b>food available</b>. When a run ends you get the whole story, with every adaptation marked where it happened.</p>
         </section>
       </div>
       <button id="helpBack" class="ghost">Back</button>
@@ -522,59 +521,71 @@
     <div id="science" class="screen hidden">
       <h1>The Science</h1>
       <div id="sciBody">
-        <p class="intro">This game is a playful, simplified model of <b>marine microbial ecology</b> — the hidden world of bacteria, viruses, and single-celled predators that runs the ocean. Everything you do is based on real biology. Here's the science behind each piece; the underlined words are Wikipedia links.</p>
+        <p class="intro">This game is a playful, simplified model of <b>marine microbial ecology</b> — the hidden world of bacteria, viruses and single-celled predators that runs the ocean. Every mechanic in it is drawn from real biology. Here is the science behind each piece; the underlined words are Wikipedia links.</p>
         <section><h2><span class="n">01</span>The ocean is mostly microbes</h2>
-          <p>A teaspoon of seawater holds around a million <a class="wiki" href="https://en.wikipedia.org/wiki/Bacteria">bacteria</a> and ten million <a class="wiki" href="https://en.wikipedia.org/wiki/Virus">viruses</a>. These <a class="wiki" href="https://en.wikipedia.org/wiki/Bacterioplankton">bacterioplankton</a> are the ocean's recyclers: they break down dead material and return its nutrients to the food web, a cycle called the <a class="wiki" href="https://en.wikipedia.org/wiki/Microbial_loop">microbial loop</a>. They're invisible, but they drive the planet's carbon and nutrient cycles.</p>
-          <p class="game">In the game you play <b>one bacterium</b> in that world — a single cell trying to eat, grow, and survive.</p></section>
-        <section><h2><span class="n">02</span>Marine snow: food from above</h2>
-          <p>The big drifting particles you eat are <a class="wiki" href="https://en.wikipedia.org/wiki/Marine_snow">marine snow</a> — clumps of dead plankton, poop, and mucus that sink through the ocean carrying <a class="wiki" href="https://en.wikipedia.org/wiki/Particulate_organic_matter">organic matter</a> to the deep. Real particles come in every size, with tiny ones vastly outnumbering big ones — a <a class="wiki" href="https://en.wikipedia.org/wiki/Power_law">power-law</a> size distribution — exactly how the game spawns them.</p>
-          <p class="game">Particles (marine snow, fecal pellets, diatom shells, chitin) drift in, get eaten, and recycle — <b>many small, a few big</b>, like the real sea.</p></section>
-        <section><h2><span class="n">03</span>Eating with enzymes</h2>
-          <p>A bacterium is too small to swallow a particle, so it digests food <em>outside</em> its body: it releases <a class="wiki" href="https://en.wikipedia.org/wiki/Exoenzyme">extracellular enzymes</a> that chop big molecules into small ones through <a class="wiki" href="https://en.wikipedia.org/wiki/Hydrolysis">hydrolysis</a>, then absorbs the pieces. Each enzyme works on only one kind of molecule.</p>
-          <p class="game"><b>Space</b> releases your loaded enzyme, dissolving the matching blocks into nutrients. Different foods need different enzymes — which you evolve.</p></section>
-        <section><h2><span class="n">04</span>Three fuels: fat, protein, carbs</h2>
-          <p>Living matter is built from three <a class="wiki" href="https://en.wikipedia.org/wiki/Nutrient#Macronutrients">macronutrients</a>: <a class="wiki c-lip" href="https://en.wikipedia.org/wiki/Lipid">lipids</a> (fats), <a class="wiki c-pro" href="https://en.wikipedia.org/wiki/Protein">proteins</a>, and <a class="wiki c-carb" href="https://en.wikipedia.org/wiki/Carbohydrate">carbohydrates</a> (sugars). They don't carry the same energy: fat packs about <b>9 <a class="wiki" href="https://en.wikipedia.org/wiki/Food_energy">Calories</a> per gram</b>, protein and carbs about 4 — which is why fatty food is so calorie-dense.</p>
-          <p class="game">Your score is <b>Calories</b> eaten, weighted by composition: a <span class="c-lip">lipid</span> block is worth more than twice a <span class="c-carb">carb</span> one — so it pays to unlock lipase and hunt fatty particles.</p></section>
-        <section><h2><span class="n">05</span>Swimming: run and tumble</h2>
-          <p>Many bacteria swim with a corkscrew <a class="wiki" href="https://en.wikipedia.org/wiki/Flagellum">flagellum</a>. They can't steer precisely, so they use <a class="wiki" href="https://en.wikipedia.org/wiki/Chemotaxis">chemotaxis</a>: swim straight ("run") while food gets closer, reorient randomly ("tumble") when it doesn't. Over time this biased random walk carries them toward food.</p>
-          <p class="game">Hold a direction to <b>run</b>; let go to <b>tumble</b>. The <b>chemotaxis</b> adaptation makes your autonomous cells run longer when they sense food getting closer — a biased random walk that drifts them up-gradient, more sharply at higher levels.</p></section>
-        <section><h2><span class="n">06</span>Growing and dividing</h2>
-          <p>Bacteria reproduce by <a class="wiki" href="https://en.wikipedia.org/wiki/Fission_(biology)">binary fission</a> — a cell grows, copies its DNA, and splits in two. Because each cell becomes two, populations grow <a class="wiki" href="https://en.wikipedia.org/wiki/Exponential_growth">exponentially</a>: 1, 2, 4, 8, 16… a well-fed colony explodes astonishingly fast.</p>
-          <p class="game">Eat enough and you <b>elongate and divide</b>. Daughters forage on their own — you keep steering one, and the colony can go exponential. Each division is a new <b>generation</b>.</p></section>
-        <section><h2><span class="n">07</span>Evolution on the fly</h2>
-          <p>Bacteria don't only inherit genes from parents — they pick up brand-new genes from their surroundings, called <a class="wiki" href="https://en.wikipedia.org/wiki/Horizontal_gene_transfer">horizontal gene transfer</a>. One route is <a class="wiki" href="https://en.wikipedia.org/wiki/Transduction_(genetics)">transduction</a>, where a virus carries DNA between cells. Cells can also crank up a trait by making extra copies of a gene (<a class="wiki" href="https://en.wikipedia.org/wiki/Gene_duplication">amplification</a>), boosting its <a class="wiki" href="https://en.wikipedia.org/wiki/Gene_expression">expression</a>.</p>
-          <p class="game">The rare <b>gold phage</b> gives a random heritable adaptation. Your <b>genome</b> strand shows your genes, expression appears as amplification (<b>×2, ×3…</b>), and adaptations only spread when you divide.</p></section>
-        <section><h2><span class="n">08</span>Viruses that hunt bacteria</h2>
-          <p>The most common predators of bacteria are viruses called <a class="wiki" href="https://en.wikipedia.org/wiki/Bacteriophage">bacteriophages</a>. In the <a class="wiki" href="https://en.wikipedia.org/wiki/Lytic_cycle">lytic cycle</a>, a phage injects its DNA, hijacks the cell to build copies of itself, then bursts it open — releasing a "burst" of new phages. Phages are the most abundant biological entities on Earth.</p>
-          <p class="game"><span style="color:#ff5a52">Red</span> phages infect and <b>lyse</b> your cells, releasing more phages. They stick to particles and wait for cells to feed.</p></section>
-        <section><h2><span class="n">09</span>Kill the winner</h2>
-          <p>Phages are picky — each infects only bacteria closely related to the cell it came from. So whichever type becomes <em>most common</em> is the one phages are best at finding and killing — ecologists call this <b>"kill the winner."</b> It stops any one type from taking over and keeps the community <a class="wiki" href="https://en.wikipedia.org/wiki/Biodiversity">diverse</a>, a constant arms race between hosts and their <a class="wiki" href="https://en.wikipedia.org/wiki/Marine_virus">viruses</a>.</p>
-          <p class="game">A virus is <span style="color:#ff5a52">red</span> if it can infect your current cell, <span class="c-vir">green</span> if it can't. As you evolve, which viruses are dangerous changes — and a booming lineage draws its own plague.</p></section>
-        <section><h2><span class="n">10</span>CRISPR: bacterial immunity</h2>
-          <p>Bacteria fight back with <a class="wiki" href="https://en.wikipedia.org/wiki/CRISPR">CRISPR</a> — a real <a class="wiki" href="https://en.wikipedia.org/wiki/Adaptive_immune_system">adaptive immune system</a> that stores snippets of past invaders' DNA and uses them to recognise and destroy those viruses. The same machinery is now the basis of modern <a class="wiki" href="https://en.wikipedia.org/wiki/CRISPR_gene_editing">gene editing</a>.</p>
-          <p class="game">With <b>CRISPR</b>, viruses that can't infect you become <b>food</b> — you harvest the immune ones for energy.</p></section>
-        <section><h2><span class="n">11</span>Chemical warfare</h2>
-          <p>Microbes are chemists. Many make <a class="wiki" href="https://en.wikipedia.org/wiki/Antibiotic">antibiotics</a> and other <a class="wiki" href="https://en.wikipedia.org/wiki/Secondary_metabolite">secondary metabolites</a> — toxins that harm competitors or fend off predators. Bacteria really do make compounds that poison the protists grazing on them.</p>
-          <p class="game">The <b>antibiotic</b> adaptation releases a toxin cloud that poisons nearby protists — and any <b>genetically distant</b> bacteria (three or more mutations away), so distant strains wage chemical war while close kin are spared. Leveling it up widens the cloud.</p></section>
-        <section><h2><span class="n">12</span>Getting eaten</h2>
-          <p>Bacteria are prey too. Single-celled <a class="wiki" href="https://en.wikipedia.org/wiki/Protist">protists</a> graze on them, a key link in the ocean <a class="wiki" href="https://en.wikipedia.org/wiki/Food_web">food web</a>. Predator and prey numbers rise and fall in linked cycles — more prey feeds more predators, which crash the prey, which starves the predators — the classic <a class="wiki" href="https://en.wikipedia.org/wiki/Lotka%E2%80%93Volterra_equations">predator–prey dynamics</a>.</p>
-          <p class="game">The big pink <b>protists</b> hunt your cells. On the chart, protist and bacteria numbers oscillate, each chasing the other, just as the equations predict.</p></section>
-        <section><h2><span class="n">13</span>Waiting out hard times</h2>
-          <p>When conditions get bad, many microbes enter <a class="wiki" href="https://en.wikipedia.org/wiki/Dormancy">dormancy</a> and wait. Some form tough resting <a class="wiki" href="https://en.wikipedia.org/wiki/Microbial_cyst">cysts</a> or <a class="wiki" href="https://en.wikipedia.org/wiki/Endospore">endospores</a> that survive starvation, heat, even centuries, then revive when things improve.</p>
-          <p class="game">A starving cell forms a resistant <b>cyst</b> — dormant and hard to kill — until food returns and it can wake up.</p></section>
-        <section><h2><span class="n">14</span>Many ways to make a living</h2>
-          <p>Because different genes suit different conditions, a species splits into varieties adapted to different niches — <a class="wiki" href="https://en.wikipedia.org/wiki/Ecotype">ecotypes</a>, each filling its own <a class="wiki" href="https://en.wikipedia.org/wiki/Ecological_niche">niche</a>. This diversity makes a community resilient: knock one type back and another takes its place.</p>
-          <p class="game">The coloured bands on the chart are your <b>ecotypes and generations</b> over time — you watch evolution happen, lineage by lineage, as colours rise and fall.</p></section>
-        <section><h2><span class="n">15</span>The music is real DNA</h2>
-          <p>The ambient soundtrack isn't composed — it's <a class="wiki" href="https://en.wikipedia.org/wiki/Sonification">sonified</a> from an actual gene. Each letter of a real <a class="wiki" href="https://en.wikipedia.org/wiki/16S_ribosomal_RNA">16S ribosomal RNA</a> sequence from <a class="wiki" href="https://en.wikipedia.org/wiki/Escherichia_coli"><em>E. coli</em></a> — the very gene biologists use to identify and classify bacteria — is read base by base (A, C, G, T) and mapped to notes in a minor scale, so you are literally listening to a bacterium's DNA.</p>
-          <p class="game">Press <b>M</b> to toggle it. The melody you hear is one pass through the 16S gene; the low drone and echo are just for mood.</p></section>
+          <p>A single milliliter of seawater — a few drops — holds roughly a million <a class="wiki" href="https://en.wikipedia.org/wiki/Bacteria">bacteria</a> and ten million <a class="wiki" href="https://en.wikipedia.org/wiki/Virus">viruses</a>. These <a class="wiki" href="https://en.wikipedia.org/wiki/Bacterioplankton">bacterioplankton</a> are the ocean's recyclers: they break down dead material and return its nutrients to the food web, a cycle called the <a class="wiki" href="https://en.wikipedia.org/wiki/Microbial_loop">microbial loop</a>. They are invisible, and they run the planet's carbon and nutrient cycles.</p>
+          <p class="game">You play <b>one bacterium</b> in that world — a single cell trying to eat, grow and survive.</p></section>
+        <section><h2><span class="n">02</span>Life at the scale of a bacterium</h2>
+          <p>Water does not feel the same to a microbe. At a bacterium's size, viscous forces overwhelm momentum — a regime of very low <a class="wiki" href="https://en.wikipedia.org/wiki/Reynolds_number">Reynolds number</a>, described in Edward Purcell's classic lecture <a class="wiki" href="https://en.wikipedia.org/wiki/Life_at_Low_Reynolds_Number"><em>Life at Low Reynolds Number</em></a>. A swimming cell that stops pushing coasts less than the width of an atom before it halts. There is no gliding, no drifting to a stop: thrust is the only thing holding you in motion, and the moment it ends, so does the motion.</p>
+          <p class="game">Your cell <b>stops the instant you release the keys</b> — that isn't stiff controls, it's physics. Water's <b>viscosity</b> is tracked live (it falls as the sea warms), so you swim slightly faster in the warm afternoon than at dawn.</p></section>
+        <section><h2><span class="n">03</span>Marine snow: food from above</h2>
+          <p>The big drifting particles you eat are <a class="wiki" href="https://en.wikipedia.org/wiki/Marine_snow">marine snow</a> — clumps of dead plankton, fecal matter and mucus that sink through the ocean, carrying <a class="wiki" href="https://en.wikipedia.org/wiki/Particulate_organic_matter">organic matter</a> to the deep in what oceanographers call the <a class="wiki" href="https://en.wikipedia.org/wiki/Biological_pump">biological pump</a>. Real particles come in every size, with small ones vastly outnumbering large — a <a class="wiki" href="https://en.wikipedia.org/wiki/Power_law">power-law</a> size distribution. To a bacterium each particle is an island: a rich, crowded, short-lived hotspot in an otherwise dilute sea.</p>
+          <p class="game">Particles spawn on that same power law — <b>many small, a few big</b>. Their four types are real: <b>marine snow</b>, <b>fecal pellets</b>, <b>diatom frustules</b> (the glassy shells of algae, which leave the shell behind) and <b>chitin</b>, the material of crustacean exoskeletons and the second most abundant biopolymer on Earth.</p></section>
+        <section><h2><span class="n">04</span>Eating outside your body</h2>
+          <p>A bacterium is far too small to swallow a particle, so it digests its food <em>externally</em>: it secretes <a class="wiki" href="https://en.wikipedia.org/wiki/Exoenzyme">extracellular enzymes</a> that cut large molecules into small ones by <a class="wiki" href="https://en.wikipedia.org/wiki/Hydrolysis">hydrolysis</a>, then absorbs the fragments. Each enzyme is specific to one class of molecule — a lipase will not touch a protein — so what a cell can eat is decided entirely by which enzyme genes it carries.</p>
+          <p class="game"><b>Space</b> releases your loaded enzyme, dissolving matching blocks into absorbable nutrients. A particle you have no enzyme for is just an obstacle.</p></section>
+        <section><h2><span class="n">05</span>Three fuels: fat, protein, carbohydrate</h2>
+          <p>Living matter is built from three <a class="wiki" href="https://en.wikipedia.org/wiki/Nutrient#Macronutrients">macronutrients</a>: <a class="wiki c-lip" href="https://en.wikipedia.org/wiki/Lipid">lipids</a> (fats), <a class="wiki c-pro" href="https://en.wikipedia.org/wiki/Protein">proteins</a> and <a class="wiki c-carb" href="https://en.wikipedia.org/wiki/Carbohydrate">carbohydrates</a> (sugars). They do not carry equal energy: fat yields about <b>9 <a class="wiki" href="https://en.wikipedia.org/wiki/Food_energy">Calories</a> per gram</b> against roughly 4 for protein and carbohydrate, because its carbon is more reduced and there is more of it to oxidize. That is why fatty food is so calorie-dense — for a cell as much as for you.</p>
+          <p class="game">Your score is <b>Calories</b> absorbed, weighted by composition on that 9:4:4 ratio. A <span class="c-lip">lipid</span> block is worth more than twice a <span class="c-carb">carbohydrate</span> one, so it pays to evolve lipase and hunt the fatty particles.</p></section>
+        <section><h2><span class="n">06</span>Swimming: run and tumble</h2>
+          <p>Many bacteria swim with a corkscrew <a class="wiki" href="https://en.wikipedia.org/wiki/Flagellum">flagellum</a>. They are too small to steer or to sense a gradient across their own length, so they navigate in time instead of space, by <a class="wiki" href="https://en.wikipedia.org/wiki/Chemotaxis">chemotaxis</a>: swim straight (a "run") while conditions improve, reorient at random (a "tumble") when they stop improving. Neither move is aimed at anything, yet the biased <a class="wiki" href="https://en.wikipedia.org/wiki/Random_walk">random walk</a> that results reliably carries the cell toward food.</p>
+          <p class="game">Hold a direction to <b>run</b>; release to <b>tumble</b>. The <b>chemotaxis</b> adaptation gives your autonomous cells that same bias — they run longer while food is getting closer, and more sharply so at higher expression levels.</p></section>
+        <section><h2><span class="n">07</span>Growing and dividing</h2>
+          <p>Bacteria reproduce by <a class="wiki" href="https://en.wikipedia.org/wiki/Fission_(biology)">binary fission</a>: a cell grows, copies its DNA and splits in two. Because every cell becomes two, populations grow <a class="wiki" href="https://en.wikipedia.org/wiki/Exponential_growth">exponentially</a> — 1, 2, 4, 8, 16 — and a well-fed colony explodes astonishingly fast. What stops it is never the arithmetic; it is running out of food, or being eaten.</p>
+          <p class="game">Eat enough and you <b>elongate and divide</b>. Daughters forage on their own while you keep steering one cell, and each division counts as a new <b>generation</b>.</p></section>
+        <section><h2><span class="n">08</span>Evolution on the fly</h2>
+          <p>Bacteria do not only inherit genes from a parent. They also acquire entirely new ones from their surroundings — <a class="wiki" href="https://en.wikipedia.org/wiki/Horizontal_gene_transfer">horizontal gene transfer</a> — and one route is <a class="wiki" href="https://en.wikipedia.org/wiki/Transduction_(genetics)">transduction</a>, in which a virus ferries DNA from one cell to the next. A cell can also turn up a trait it already has by carrying extra copies of the gene (<a class="wiki" href="https://en.wikipedia.org/wiki/Gene_duplication">amplification</a>), raising its <a class="wiki" href="https://en.wikipedia.org/wiki/Gene_expression">expression</a>. This is why bacterial evolution can outpace our intuitions — and how antibiotic resistance spreads between species.</p>
+          <p class="game">The rare <b>gold phage</b> transduces a random heritable adaptation into your cell. The <b>genome</b> strand shows which genes you carry, amplification appears as <b>×2, ×3…</b>, and — as in life — an adaptation only spreads by <b>dividing</b>.</p></section>
+        <section><h2><span class="n">09</span>Viruses that hunt bacteria</h2>
+          <p>The deadliest predators of bacteria are viruses called <a class="wiki" href="https://en.wikipedia.org/wiki/Bacteriophage">bacteriophages</a>. In the <a class="wiki" href="https://en.wikipedia.org/wiki/Lytic_cycle">lytic cycle</a> a phage injects its DNA, hijacks the cell's machinery to build copies of itself, and bursts the cell open to release them. Phages are the most abundant biological entities on Earth — there are more of them in the sea than there are stars in the observable universe.</p>
+          <p class="game"><span style="color:#ff5a52">Red</span> phages infect your cells and <b>lyse</b> them, releasing a burst of new phages. They stick to particles and wait there for cells to arrive and feed.</p></section>
+        <section><h2><span class="n">10</span>Kill the winner</h2>
+          <p>Phages are specialists: each infects only bacteria closely related to the cell it came from. So whichever strain becomes <em>most abundant</em> is precisely the one its phages find most easily — and it gets cut down. Ecologists call this <b>"kill the winner."</b> It prevents any single type from monopolizing the ocean and keeps the community <a class="wiki" href="https://en.wikipedia.org/wiki/Biodiversity">diverse</a>, in a permanent arms race between hosts and their <a class="wiki" href="https://en.wikipedia.org/wiki/Marine_virus">viruses</a>.</p>
+          <p class="game">A phage reads <span style="color:#ff5a52">red</span> if it can infect the cell you're steering and <span class="c-vir">green</span> if it cannot. Every adaptation shifts you out of reach of the current cohort — and a lineage that booms will, in time, draw its own plague.</p></section>
+        <section><h2><span class="n">11</span>The viral shunt</h2>
+          <p>Phages kill an estimated <b>20–40% of ocean bacteria every single day</b>. Each lysed cell spills its contents back into the water as dissolved organic matter, which other bacteria promptly take up — a huge flux of carbon diverted away from the larger animals that would otherwise have eaten those cells. This is the <a class="wiki" href="https://en.wikipedia.org/wiki/Viral_shunt">viral shunt</a>, and it is one reason the microbial loop retains so much carbon near the surface instead of sending it to the deep.</p>
+          <p class="game">Nothing is wasted: cells that lyse or starve <b>return their matter to the sea</b>, and spent particles recycle into new ones. Watch the food graph — a viral outbreak in a booming lineage feeds the next generation.</p></section>
+        <section><h2><span class="n">12</span>CRISPR: bacterial immunity</h2>
+          <p><a class="wiki" href="https://en.wikipedia.org/wiki/CRISPR">CRISPR</a> is a genuine <a class="wiki" href="https://en.wikipedia.org/wiki/Adaptive_immune_system">adaptive immune system</a>: a bacterium files away snippets of the DNA of viruses that have attacked it, then uses those stored sequences to recognize and cut apart the same invaders on their return. It is inheritance of acquired immunity, and it evolved long before we noticed it — the <a class="wiki" href="https://en.wikipedia.org/wiki/CRISPR_gene_editing">gene-editing tools</a> that won the 2020 Nobel Prize in Chemistry are borrowed bacterial defense machinery.</p>
+          <p class="game">With <b>CRISPR</b>, viruses that cannot infect you stop being scenery and become <b>food</b> — you dismantle the harmless ones for energy.</p></section>
+        <section><h2><span class="n">13</span>Chemical warfare</h2>
+          <p>Microbes are chemists. Many manufacture <a class="wiki" href="https://en.wikipedia.org/wiki/Antibiotic">antibiotics</a> and other <a class="wiki" href="https://en.wikipedia.org/wiki/Secondary_metabolite">secondary metabolites</a> to poison their competitors or deter their predators — most of the antibiotics in our own medicine cabinets were first isolated from soil and marine microbes fighting each other. The targets tend to be distant relatives; close kin, which share the resistance genes, are spared.</p>
+          <p class="game">The <b>antibiotic</b> adaptation releases a toxin cloud that kills nearby protists and any <b>genetically distant</b> bacteria — three or more mutations from you — while your close kin walk through it unharmed. Higher expression widens the cloud.</p></section>
+        <section><h2><span class="n">14</span>Getting eaten, and eating up</h2>
+          <p>Bacteria are prey as well as predator. Single-celled <a class="wiki" href="https://en.wikipedia.org/wiki/Protist">protists</a> graze on them in enormous numbers, forming the link that carries microbial carbon up the <a class="wiki" href="https://en.wikipedia.org/wiki/Food_web">food web</a> to everything larger. Predator and prey then rise and fall in coupled cycles — abundant prey feeds a boom in predators, which crashes the prey, which starves the predators — the classic <a class="wiki" href="https://en.wikipedia.org/wiki/Lotka%E2%80%93Volterra_equations">predator–prey dynamics</a>, and each step up a <a class="wiki" href="https://en.wikipedia.org/wiki/Trophic_level">trophic level</a> passes on only about a tenth of the energy below it.</p>
+          <p class="game">The big pink <b>protists</b> hunt your cells, and on the chart their numbers oscillate against your bacteria exactly as the equations predict. If your lineage is wiped out you <b>become a protist</b> yourself — one trophic level up, grazing the bacteria instead of the particles.</p></section>
+        <section><h2><span class="n">15</span>Waiting out the hard times</h2>
+          <p>When conditions turn against them, many microbes simply stop. They enter <a class="wiki" href="https://en.wikipedia.org/wiki/Dormancy">dormancy</a>, forming tough resting <a class="wiki" href="https://en.wikipedia.org/wiki/Microbial_cyst">cysts</a> or <a class="wiki" href="https://en.wikipedia.org/wiki/Endospore">endospores</a> that shrug off starvation, heat and desiccation, and revive when things improve. Endospores have been revived from sediments thousands of years old. Most of the microbial biomass on Earth, at any given moment, is dormant rather than dead.</p>
+          <p class="game">A starving cell seals itself into a resistant <b>cyst</b>: dormant, unable to eat, immune to viruses and hard to kill — until food returns and it wakes. Cysts stay counted in their generation's band on the chart.</p></section>
+        <section><h2><span class="n">16</span>The turning day</h2>
+          <p>Everything in the surface ocean answers to the sun. Light drives <a class="wiki" href="https://en.wikipedia.org/wiki/Primary_production">primary production</a> by <a class="wiki" href="https://en.wikipedia.org/wiki/Phytoplankton">phytoplankton</a>, so food is manufactured by day and merely consumed by night. And at dusk the largest migration on Earth begins: grazers that sheltered in the dark deep rise toward the surface to feed under cover of night, then sink again at dawn — <a class="wiki" href="https://en.wikipedia.org/wiki/Diel_vertical_migration">diel vertical migration</a>.</p>
+          <p class="game">The game computes the <b>real position of the sun</b> — from latitude, day of year and <a class="wiki" href="https://en.wikipedia.org/wiki/Position_of_the_Sun">solar declination</a> — so sunrise, sunset and twilight fall out of the geometry rather than being assumed. Set the latitude far enough north in the tuning panel and you get <b>midnight sun</b> or <b>polar night</b>, for free. Food blooms with the light, and the grazers press hardest in the dark.</p></section>
+        <section><h2><span class="n">17</span>Temperature sets the pace</h2>
+          <p>A cell has no thermostat, so the sea sets its speed. Biological rates climb with temperature by a rule of thumb called <a class="wiki" href="https://en.wikipedia.org/wiki/Q10_(temperature_coefficient)">Q10</a>: for every 10 °C of warming, <a class="wiki" href="https://en.wikipedia.org/wiki/Metabolism">metabolism</a> roughly <b>doubles</b>. Warmth is therefore double-edged — it accelerates your growth and your <a class="wiki" href="https://en.wikipedia.org/wiki/Cellular_respiration">respiration</a> alike, so a warm cell burns through its reserves faster and starves sooner without food. It is also why a warming ocean is a metabolically hungrier one.</p>
+          <p class="game">Sea temperature follows the sun (peaking in the early afternoon, lagging noon) and drives a live <b>Q10 = 2</b> multiplier on every cell's metabolism — yours, your daughters' and the protists'. The midday bloom feeds you, but it also makes you burn hotter.</p></section>
+        <section><h2><span class="n">18</span>Many ways to make a living</h2>
+          <p>Because different genes suit different conditions, a species fragments into varieties tuned to different circumstances — <a class="wiki" href="https://en.wikipedia.org/wiki/Ecotype">ecotypes</a>, each occupying its own <a class="wiki" href="https://en.wikipedia.org/wiki/Ecological_niche">niche</a>. That diversity is what makes a microbial community resilient: knock one type back and another is already positioned to take its place.</p>
+          <p class="game">The colored bands on the chart are your <b>ecotypes and generations</b> over time. Watching them rise, split and fall <em>is</em> watching evolution happen — lineage by lineage, in a single run.</p></section>
+        <section><h2><span class="n">19</span>The music is real DNA</h2>
+          <p>The soundtrack was not composed. It is <a class="wiki" href="https://en.wikipedia.org/wiki/Sonification">sonified</a> from an actual gene: the <a class="wiki" href="https://en.wikipedia.org/wiki/16S_ribosomal_RNA">16S ribosomal RNA</a> sequence of <a class="wiki" href="https://en.wikipedia.org/wiki/Escherichia_coli"><em>E. coli</em></a> — the very gene biologists read to identify and classify bacteria, and the one used to draw the tree of life. It is played base by base, each letter (A, C, G, T) mapped to a note of a minor scale. You are listening to a bacterium's DNA.</p>
+          <p class="game">Press <b>M</b> to cycle the sound. The melody is one pass through the 16S gene; the drone and echo beneath it are only for atmosphere.</p></section>
         <hr>
-        <p style="color:var(--muted);font-size:13px;">The real ocean is far messier and more wonderful than any game — but if this made a bacterium, a virus, or the microbial loop feel a little more alive, that's the point. Now go evolve something.</p>
+        <p style="color:var(--muted);font-size:13px;">The real ocean is messier and stranger than any game can be — but if this has made a bacterium, a virus or the microbial loop feel a little more alive, it has done its job. Now go and evolve something.</p>
       </div>
       <button id="sciBack" class="ghost">Back</button>
     </div>
     <div id="over" class="screen hidden">
-      <h1 id="overTitle">You died</h1>
+      <h1 id="overTitle">Run ended</h1>
       <p id="overMsg"></p>
       <div id="analysisWrap">
         <div class="alabel">Bacteria &amp; your adaptations over the run</div>
@@ -622,10 +633,10 @@
            so the thumbstick can have the whole left side -->
       <div id="deckRight">
       <div id="tbtns">
-        <!-- Rolodex buttons: the face is flooded with the colour of what's loaded, and the
-             neighbours peek out behind it. Tap to fire, swipe up/down to change.
+        <!-- Rolodex buttons: the face is flooded with the color of what's loaded, and the
+             neighbors peek out behind it. Tap to fire, swipe up/down to change.
              LINEAGE sits first (innermost) and RELEASE last, so the button you hammer is the one
-             furthest from the stick — the two thumbs stop crowding each other. No labels: colour
+             furthest from the stick — the two thumbs stop crowding each other. No labels: color
              carries the enzyme, and the lineage button draws whatever you currently are. -->
         <button id="tLin" class="tbtn rolo" aria-label="Switch lineage — swipe up or down to cycle">
           <span class="rprev"></span><span class="rnext"></span>
