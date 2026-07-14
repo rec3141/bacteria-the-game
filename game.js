@@ -1022,7 +1022,7 @@
     return s;
   }
   const TUT_STEPS = [
-    { cap: "You are this <b>bacterium</b>. Swim with the <b>arrow keys</b> or <b>WASD</b> — and notice that you stop the instant you let go. Water is treacle at this size.",
+    { cap: "You are this <b>bacterium</b>. Swim with the <b>arrow keys</b> or <b>WASD</b> — and notice that you stop the instant you let go. At this size, water is as thick as honey.",
       goal: "Swim to the <b>ringed</b> particle — the <b class='c-carb'>blue</b> blocks in it are carbohydrate",
       setup: () => { clearCast(); const s = spawnCarbParticle(); tut.target = s; demo.focus = s; centre(ctrlCell()); },
       done: () => { const c = ctrlCell(), s = tut.target;
