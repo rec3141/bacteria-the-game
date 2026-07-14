@@ -42,6 +42,11 @@
                            // on forever — the knob eases back to centre as it runs out
     },
     respirationBase: 0.9,
+    // TOUCH ONLY: scales how fast things SWIM (your cells and the protists, together — halving
+    // only your own would hand the grazers a 2x speed advantage). The phone magnifies the world
+    // ~1.7x onto a small pane, so the same world-speed reads as far quicker in the hand.
+    // Thrust and top speed scale together, so acceleration feel is unchanged — just slower.
+    touchSpeedScale: 0.5,
     grid: { cs: 7 },                 // destructible-particle voxel size (px)
     substrate: {
       count: 60, moteEnergy: 7,      // ~2x the old food (~10.5k voxels), spread across a power-law size spectrum
@@ -316,6 +321,8 @@
 
   // --------------------------------------------------------- helpers (torus)
   function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+  // how fast swimming things move; halved on a phone (read live, so the tuning slider works)
+  const swimScale = () => (isTouch ? CFG.touchSpeedScale : 1);
   function rand(a, b) { return a + Math.random()*(b-a); }
   function wrapX(v) { return ((v % WORLD_W) + WORLD_W) % WORLD_W; }
   function wrapY(v) { return ((v % WORLD_H) + WORLD_H) % WORLD_H; }
@@ -798,13 +805,13 @@
       const a = axis();
       if (a.x !== 0 || a.y !== 0) {
         c.tumbling = false; const len = Math.hypot(a.x, a.y); c.angle = Math.atan2(a.y, a.x);
-        const th = CFG.cell.thrust/visc; c.vx += (a.x/len)*th*dt; c.vy += (a.y/len)*th*dt;
+        const th = CFG.cell.thrust/visc*swimScale(); c.vx += (a.x/len)*th*dt; c.vy += (a.y/len)*th*dt;
         c.energy -= CFG.cell.swimCost*dt;
       } else { c.tumbling = true; c.angle += Math.sin(state.elapsed*3 + c.x)*CFG.cell.playerTumbleTurn*dt; }
     } else autonomousMove(c, dt);
 
     const drag = Math.exp(-2.2*visc*dt); c.vx *= drag; c.vy *= drag;
-    const sp = Math.hypot(c.vx, c.vy), vmax = CFG.cell.maxSpeed/Math.sqrt(visc);
+    const sp = Math.hypot(c.vx, c.vy), vmax = CFG.cell.maxSpeed/Math.sqrt(visc)*swimScale();
     if (sp > vmax) { c.vx = c.vx/sp*vmax; c.vy = c.vy/sp*vmax; }
     c.x = wrapX(c.x + c.vx*dt); c.y = wrapY(c.y + c.vy*dt);
 
@@ -859,7 +866,7 @@
       if (c.tumbleT <= 0) { c.tumbling = false; c.runTimer = rand(CFG.cell.runMin, CFG.cell.runMax)*(c.fed > 0 ? 0.4 : 1); }
     } else {
       if (desired != null) c.angle += clamp(angleTo(c.angle, desired), -chemoTurn*dt, chemoTurn*dt); // steer up-gradient
-      const th = CFG.cell.thrust/visc*fedF;
+      const th = CFG.cell.thrust/visc*fedF*swimScale();
       c.vx += Math.cos(c.angle)*th*dt; c.vy += Math.sin(c.angle)*th*dt;
       c.energy -= CFG.cell.swimCost*fedF*dt; c.runTimer -= dt;
       if (c.runTimer <= 0) {
@@ -1006,7 +1013,7 @@
       if (hunting && !target) for (const c of cells) { if (!c.alive || !c.cyst) continue; const d = toroDist2(pr.x, pr.y, c.x, c.y); if (d < td) { td = d; target = c; } }
       if (target) pr.heading = Math.atan2(dy(target.y, pr.y), dx(target.x, pr.x));
       else { pr.wobble += dt; pr.heading += Math.sin(pr.wobble*1.7)*dt*2; }
-      const base = target ? P.chaseSpeed : P.wanderSpeed;
+      const base = (target ? P.chaseSpeed : P.wanderSpeed)*swimScale();
       const spd = (hunting ? base : base*0.5)/Math.sqrt(env.viscosity);
       pr.vx = Math.cos(pr.heading)*spd; pr.vy = Math.sin(pr.heading)*spd;
       pr.x = wrapX(pr.x + pr.vx*dt); pr.y = wrapY(pr.y + pr.vy*dt);
@@ -1936,6 +1943,7 @@
     "cell.touchLatchSecs": "Phone thumbstick: how long you must hold it at FULL deflection before the run locks in and keeps going after you lift your thumb. Lower = quicker to commit but easier to trigger by accident.",
     "cell.touchRunSecs": "How long a locked-in run lasts before it winds down on its own (the knob eases back to centre as it runs out). Stops the stick getting stuck on. Touching it again pauses the countdown; re-latching refills it.",
     "respirationBase": "Baseline energy per second every cell burns just staying alive. The single biggest lever on how punishing the game is.",
+    "touchSpeedScale": "TOUCH ONLY: how fast swimming things move — your cells AND the protists together, so predator/prey stays in proportion. The phone magnifies the world onto a small screen, which makes the same world-speed read as much faster. 1 = desktop speed. NOTE: energy costs are per SECOND, so slower swimming means a trip to food costs more energy.",
     "grid.cs": "Voxel size of destructible particles (px) — smaller = finer digging but more work per frame. Only affects NEWLY spawned particles.",
     "substrate.count": "How many food particles are kept drifting in the water. Applies as particles respawn.",
     "substrate.moteEnergy": "Energy in each nutrient mote freed by dissolving a voxel.",
