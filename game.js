@@ -87,7 +87,9 @@
     demo: { food: 4, foodScale: 0.42, dishPad: 30, rimFade: 1.8,
             driftRate: 0.75,     // how fast the screensaver camera glides to its subject (was 2.6 = a snap)
             nearWindow: 0.9,     // prefer a new subject within this many screens of the camera
-            panSpeed: 340, panHold: 2.2 },  // arrow keys pan the screensaver; it resumes drifting after panHold
+            panSpeed: 340, panHold: 2.2,   // arrow keys pan the screensaver; it resumes drifting after panHold
+            // what the ocean is stocked with the moment the dish opens — an empty sea is a poor reveal
+            openCells: 26, openProtists: 6, openPhages: 30, openFood: 26 },
     // TOUCH-ONLY tuning. The phone is not a smaller desktop, it's a different game: a cramped view,
     // a thumb instead of a keyboard, and players who will give it ninety seconds. These knobs exist
     // to make it FUN there, not to make it match. Desktop is untouched by all of them.
@@ -931,7 +933,7 @@
       secs: 9, setup: () => centre(anyCell()),
       tick: (c, t) => { if (alive(c) && t > 2.5) c.energy = CFG.cell.divideThreshold + 1; } },  // nudge it over the line, on camera
     // THE PREDATOR. Focus the PROTIST, not the cell — it's the thing being introduced.
-    { cap: "This is a <b style='color:#ff9ec0'>protist</b>: a single-celled hunter, far bigger than a bacterium, and it eats them. This is the link that carries all this carbon up the food web.",
+    { cap: "This is a <b style='color:#ff9ec0'>protist</b>: a single-celled hunter one trophic level up. It doesn't dissolve its food — it engulfs bacteria whole. This is the link that carries all this carbon up the food web.",
       secs: 11, setup: () => {
         const c = anyCell(); if (!c) return null;
         const pr = makePredator(WORLD_W/2, WORLD_H/2, CFG.predator.startEnergy, 0);
@@ -1032,7 +1034,7 @@
         demo.focus = tut.target; tut.score0 = state.score; },
       done: () => state.score > (tut.score0 || 0) + 2 },
 
-    { cap: "This is a <b style='color:#ff9ec0'>protist</b> — a single-celled hunter, far bigger than you, and bacteria are what it eats. You cannot fight it and you cannot outrun it forever.",
+    { cap: "This is a <b style='color:#ff9ec0'>protist</b> — a single-celled hunter, and bacteria are what it eats. It doesn't dissolve you from outside the way you eat a particle: it engulfs you whole. You cannot outswim it forever.<br><em style='opacity:.8'>There is something a bacterium can do about a grazer. You don't have it yet.</em>",
       goal: "Let it catch you. <b>Get eaten.</b>",
       setup: () => { clearCast(true); const c = centre(ctrlCell());
         const pr = makePredator(WORLD_W/2 + 170, WORLD_H/2, CFG.predator.startEnergy, 0);
@@ -1323,6 +1325,19 @@
     demo.dish = false; demo.rim = 1;      // rim fades out over CFG.demo.rimFade seconds
     demoWorld = false;                    // particles spawning into the open ocean are full size again
     state.demoFood = null;                // the sea refills to its real diel target — the ocean arrives
+    // STOCK IT. Opening into an empty ocean with four cells in it is an anticlimax — the whole point
+    // of the reveal is that there's more out there than the dish could hold. Fill the world with a
+    // living community: a diverse bacterial population, grazers hunting it, and a viral reservoir.
+    immigrateBacteria(CFG.demo.openCells);
+    for (let i = 0; i < CFG.demo.openProtists; i++) {
+      const a = rand(0, TAU), d = rand(400, 1000);
+      predators.push(makePredator(wrapX(cam.x + Math.cos(a)*d), wrapY(cam.y + Math.sin(a)*d), null, rand(0, 25)));
+    }
+    for (let i = 0; i < CFG.demo.openPhages; i++) {
+      const a = rand(0, TAU), d = rand(300, 1100);
+      phages.push(makePhage("green", wrapX(cam.x + Math.cos(a)*d), wrapY(cam.y + Math.sin(a)*d)));
+    }
+    for (let i = 0; i < CFG.demo.openFood; i++) substrates.push(makeSubstrate());
   }
   function drawDish() {
     if (!demo || (!demo.dish && !(demo.rim > 0))) return;
