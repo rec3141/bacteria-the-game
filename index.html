@@ -115,7 +115,7 @@
     pointer-events: auto; padding: 18px; overflow-y: auto; /* scroll if content is taller than the stage */
     overscroll-behavior: contain; /* no rubber-band scroll chaining on touch */
   }
-  #over .btnrow, #over #nameRow { margin-top: 2px; }
+  #over .btnrow { margin-top: 2px; }   /* #nameRow lives in the analysis panel now and sets its own spacing */
   .screen h1 { margin: 0; font-size: 42px; letter-spacing: 1px;
     color: var(--accent); text-shadow: 0 2px 20px rgba(87,224,192,.4); }
   .screen p { margin: 4px 0; max-width: 460px; line-height: 1.5; }
@@ -181,7 +181,9 @@
        to the content, and only a screen tall enough to scroll pins them to the floor. */
     position: sticky; bottom: 0; z-index: 5; width: 100%;
     padding: 12px 0 6px;
-    background: linear-gradient(to top, var(--sticky-bg) 55%, rgba(4,20,26,0) 100%);
+    /* mostly solid: the row can wrap to two lines, and a soft 55% fade left the buttons floating
+       over the phylogeny with the chart showing through them */
+    background: linear-gradient(to top, var(--sticky-bg) 84%, rgba(4,20,26,0) 100%);
   }
   #scores { --sticky-bg: #04141a; }
   #over   { --sticky-bg: rgba(3,14,18,.97); }
@@ -243,11 +245,17 @@
   #analysisChart { display: block; width: 100%; height: 170px; border-radius: 6px; }
   #analysisStats, #detailStats { font-size: 12px; margin-top: 6px; opacity: .9; font-variant-numeric: tabular-nums; }
   #analysisStats b, #detailStats b { color: var(--accent); }
-  #nameRow { display: flex; align-items: center; gap: 8px; margin: 8px 0 2px; font-size: 12px; }
-  #nameRow label { opacity: .7; }
-  #nameInput { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.18); color: #eafff8;
-    border-radius: 7px; padding: 5px 10px; font-size: 13px; font-family: inherit; width: 180px; outline: none; }
-  #nameInput:focus { border-color: var(--accent); }
+  /* Top of the analysis panel, and loud: this is the screen's one ask. */
+  #nameRow { display: flex; align-items: center; justify-content: center; flex-wrap: wrap;
+    gap: 12px; margin: 2px 0 14px; padding-bottom: 12px;
+    border-bottom: 1px solid rgba(255,255,255,.08); }
+  #nameRow label { font-size: 15px; font-weight: bold; letter-spacing: .3px; color: var(--ink); opacity: .95; }
+  #nameInput { background: rgba(255,255,255,.07); border: 1.5px solid rgba(87,224,192,.45); color: #eafff8;
+    border-radius: 10px; padding: 10px 16px; font-size: 18px; font-weight: bold; letter-spacing: .5px;
+    font-family: inherit; width: 260px; max-width: 60vw; outline: none;
+    transition: border-color .12s, box-shadow .12s; }
+  #nameInput::placeholder { font-weight: normal; opacity: .45; letter-spacing: 0; }
+  #nameInput:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(87,224,192,.18); }
   .score-row.clickable { cursor: pointer; transition: background .12s, border-color .12s; }
   .score-row.clickable:hover { background: rgba(87,224,192,.10); border-color: rgba(87,224,192,.45); }
   .score-meta .pname { font-weight: bold; font-size: 13px; color: #eafff8; }
@@ -711,6 +719,10 @@
       <h1 id="overTitle">Run ended</h1>
       <p id="overMsg"></p>
       <div id="analysisWrap">
+        <!-- Name goes FIRST: it was under the charts, below the fold on a long run, so the one thing
+             the screen actually needs from you was the one thing you had to scroll to find. -->
+        <div id="nameRow"><label for="nameInput">Name for the leaderboard</label>
+          <input id="nameInput" maxlength="18" placeholder="your name" autocomplete="off" spellcheck="false"></div>
         <div class="alabel">Bacteria &amp; your adaptations over the run</div>
         <canvas id="analysisChart" width="900" height="200"></canvas>
         <div class="alabel sublabel" id="analysisSubLabel">Food available (lipid · protein · carb)</div>
@@ -719,8 +731,6 @@
         <canvas id="analysisClado" width="900" height="190"></canvas>
         <div id="analysisStats"></div>
       </div>
-      <div id="nameRow"><label for="nameInput">Name for the leaderboard</label>
-        <input id="nameInput" maxlength="18" placeholder="your name" autocomplete="off" spellcheck="false"></div>
       <div class="btnrow"><button id="continueBtn" class="hidden">Continue</button>
       <button id="restartBtn">Start over</button>
       <button id="menuBtn" class="ghost">Main menu</button>
