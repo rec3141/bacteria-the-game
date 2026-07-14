@@ -2945,6 +2945,91 @@
   }
 
   // ---------------------------------------------------------------- high scores
+  // SCORE_NORMALIZER_START — kept pure so tests can execute this exact production block.
+  const SCORE_CLIENT_LIMITS = { rows: 100, hist: 800, upgrades: 200, lineages: 64 };
+  const scoreClientObject = (value) => !!value && typeof value === "object" && !Array.isArray(value);
+  function scoreClientNumber(value, min, max, fallback = 0) {
+    return Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
+  }
+  function scoreClientInteger(value, min, max, fallback = 0) {
+    return Math.round(scoreClientNumber(value, min, max, fallback));
+  }
+  function scoreClientVector(value, length, max) {
+    if (!Array.isArray(value) || value.length !== length || value.some((v) => !Number.isFinite(v))) return null;
+    return value.map((v) => scoreClientInteger(v, 0, max));
+  }
+  function scoreClientBuckets(value) {
+    if (!scoreClientObject(value)) return null;
+    const out = {};
+    for (const [rawKey, rawCount] of Object.entries(value).slice(0, 64)) {
+      const key = Number(rawKey);
+      if (!Number.isInteger(key) || key < 0 || key > 511 || !Number.isFinite(rawCount)) continue;
+      out[key] = scoreClientInteger(rawCount, 0, 100000);
+    }
+    return out;
+  }
+  function normalizeClientUpgrade(value, maxTime = 86400) {
+    if (!scoreClientObject(value)) return null;
+    const abbr = (typeof value.abbr === "string" ? value.abbr : "").replace(/[^A-Za-z0-9]/g, "").slice(0, 12);
+    if (!abbr) return null;
+    const rawColor = typeof value.color === "string" ? value.color.slice(0, 9) : "";
+    return {
+      t: scoreClientNumber(value.t, 0, maxTime),
+      label: (typeof value.label === "string" ? value.label : abbr).replace(/[\x00-\x1F<>]/g, "").slice(0, 64) || abbr,
+      abbr,
+      color: /^#[0-9A-Fa-f]{3,8}$/.test(rawColor) ? rawColor : "#9fc3ba",
+      acquired: value.acquired === true,
+    };
+  }
+  function normalizeClientUpgrades(value, limit = SCORE_CLIENT_LIMITS.upgrades) {
+    if (!Array.isArray(value)) return [];
+    return value.slice(0, limit).map((item) => normalizeClientUpgrade(item)).filter(Boolean);
+  }
+  function normalizeClientSample(value) {
+    if (!scoreClientObject(value)) return null;
+    const eco = scoreClientVector(value.eco, 8, 100000);
+    if (!eco) return null;
+    const out = { eco, p: scoreClientInteger(value.p, 0, 1000000), v: scoreClientInteger(value.v, 0, 1000000) };
+    const buckets = scoreClientBuckets(value.buckets); if (buckets) out.buckets = buckets;
+    const sub = scoreClientVector(value.sub, 3, 1000000); if (sub) out.sub = sub;
+    const mort = scoreClientVector(value.mort, 4, 1000000); if (mort) out.mort = mort;
+    const lvl = scoreClientVector(value.lvl, 8, 63); if (lvl) out.lvl = lvl;
+    return out;
+  }
+  function normalizeClientLineages(value) {
+    if (!scoreClientObject(value)) return {};
+    const out = {};
+    for (const [rawKey, lineage] of Object.entries(value).slice(0, SCORE_CLIENT_LIMITS.lineages)) {
+      const key = Number(rawKey);
+      if (!Number.isInteger(key) || key < 0 || key > 511 || !scoreClientObject(lineage)) continue;
+      out[key] = { t: scoreClientNumber(lineage.t, 0, 86400), ups: normalizeClientUpgrades(lineage.ups, 32) };
+    }
+    return out;
+  }
+  function normalizeScoreRecord(value) {
+    if (!scoreClientObject(value)) return null;
+    const date = scoreClientInteger(value.date, 0, Number.MAX_SAFE_INTEGER, Date.now());
+    return {
+      id: scoreClientInteger(value.id, 0, Number.MAX_SAFE_INTEGER, date),
+      name: (typeof value.name === "string" ? value.name : "").replace(/[\x00-\x1F<>]/g, "").slice(0, 18),
+      score: scoreClientInteger(value.score, 0, 100000000),
+      gen: scoreClientInteger(value.gen, 0, 1000000),
+      dur: scoreClientInteger(value.dur, 0, 86400),
+      date,
+      hist: Array.isArray(value.hist) ? value.hist.slice(0, SCORE_CLIENT_LIMITS.hist).map(normalizeClientSample).filter(Boolean) : [],
+      upgrades: normalizeClientUpgrades(value.upgrades),
+      device: value.device === "touch" ? "touch" : "desktop",
+      day: scoreClientInteger(value.day, 1, 3650, 1),
+      lineages: normalizeClientLineages(value.lineages),
+      roleSwaps: Array.isArray(value.roleSwaps)
+        ? value.roleSwaps.slice(0, 32).filter(Number.isFinite).map((v) => scoreClientNumber(v, 0, 86400)) : [],
+    };
+  }
+  function normalizeScoreList(value) {
+    if (!Array.isArray(value)) return [];
+    return value.slice(0, SCORE_CLIENT_LIMITS.rows).map(normalizeScoreRecord).filter(Boolean);
+  }
+  // SCORE_NORMALIZER_END
   const HS_KEY = "bacteria_highscores_v1", HS_MAX = 100, NAME_KEY = "bacteria_player_name";
   const API_URL = "scores.php"; // shared leaderboard on the game's own origin; if it's absent/offline we fall back to localStorage
   let playerName = ""; try { playerName = localStorage.getItem(NAME_KEY) || ""; } catch (e) {}
@@ -2953,7 +3038,7 @@
   let scoreWriteQueue = Promise.resolve(); // serialize writes so an older request can never land last
   const NAME_UPDATE_DELAY = 500;
   let nameUpdateTimer = null, pendingNameUpdate = null;
-  function loadScores() { try { return JSON.parse(localStorage.getItem(HS_KEY)) || []; } catch (e) { return []; } }
+  function loadScores() { try { return normalizeScoreList(JSON.parse(localStorage.getItem(HS_KEY))); } catch (e) { return []; } }
   function escapeHtml(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
   let justFinishedTs = null; // marks the run just completed, to highlight it in the list
   function recordGame() {
@@ -2979,7 +3064,7 @@
     scoreWriteQueue = scoreWriteQueue.catch(() => null)
       .then(() => fetch(API_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body }))
       .then((r) => (r.ok ? r.json() : null))
-      .then((list) => { if (Array.isArray(list)) { globalScores = list; refreshScoreListIfOpen(); } })
+      .then((list) => { if (Array.isArray(list)) { globalScores = normalizeScoreList(list); refreshScoreListIfOpen(); } })
       .catch(() => null);
     return scoreWriteQueue;
   }
@@ -3007,7 +3092,7 @@
     try {
       fetch(API_URL, { cache: "no-store" })
         .then((r) => (r.ok ? r.json() : null))
-        .then((list) => { if (Array.isArray(list)) { globalScores = list; refreshScoreListIfOpen(); } })
+        .then((list) => { if (Array.isArray(list)) { globalScores = normalizeScoreList(list); refreshScoreListIfOpen(); } })
         .catch(() => {});
     } catch (e) {}
   }
