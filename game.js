@@ -1212,7 +1212,7 @@
       cand.push({ e, w, d, near: d < R });
     };
     for (const c of cells) if (c.alive && c.infectedGreen) add(c, 5);      // about to burst
-    for (const p of phages) if (p.type === "gold" && !p.dead) add(p, 4);   // the prize
+    for (const p of phages) if (p.type === "gold" && !p.dead) add(p, 4);   // the prize (never in the demo sim)
     for (const p of predators) add(p, 3);                                  // a hunt
     for (const c of cells) if (c.alive && !c.cyst) add(c, 1);              // ordinary life
     if (!cand.length) return anyCell();
@@ -2341,7 +2341,11 @@
     }
     // keep the board stocked with gold — respawns the instant one is used, usually buried inside a
     // distant particle so you have to dig it out. On touch there are several, and they're closer in.
-    const goldWant = dishOn() ? 0 : (isTouch ? CFG.phage.goldCountTouch : CFG.phage.goldCount);
+    // NO GOLD IN THE SIM. The attract ocean isn't a game — there's nobody to catch it, so a gold
+    // phage there is just a lure the camera keeps drifting to and an implied objective that doesn't
+    // exist. Diversity in the demo comes from the population it's seeded with, and from drift.
+    // (The TUTORIAL still gets one: that beat spawns it by hand, deliberately.)
+    const goldWant = (state && state.demo) ? 0 : (isTouch ? CFG.phage.goldCountTouch : CFG.phage.goldCount);
     const goldMin = isTouch ? CFG.phage.goldMinDistTouch : CFG.phage.goldMinDist;
     const goldHave = phages.reduce((n, p) => n + (p.type === "gold" && !p.dead ? 1 : 0), 0);
     if (goldHave < goldWant && phages.length < CFG.phage.maxCount) {
