@@ -41,6 +41,9 @@
                            // 110-170 energy, so it never divided — it just encysted, and a colony left to
                            // itself stalled and died. Measured in a no-predator/no-virus sanctuary over 150s:
                            // 200 -> 49 cells (37 divisions), 175 -> 120 (108), 155 -> 178 (166).
+      // DRIFT: every time YOU adapt, one other cell also changes — see driftAnotherCell.
+      driftOnUpgrade: 1,        // 0 = off (the population then just tracks your genome)
+      driftGainChance: 0.5,     // 0.5 = a coin flip between gaining a gene and losing one
       swimCost: 1.2, enzymeCost: 4, antibioticCost: 6, invulnTime: 2.2,
       runMin: 1.8, runMax: 3.4, tumbleDur: 0.4, tumbleTurn: 7.0, playerTumbleTurn: 2.2,
       enzymeCooldown: [1.0, 2.0],  // how often an autonomous cell CHECKS for a particle worth digesting.
@@ -563,6 +566,44 @@
   // The adaptation pool a gold phage transduces: one option per enzyme (acquire it if locked, else
   // raise its expression), plus chemotaxis / antibiotic / CRISPR. Genes aren't guaranteed each time,
   // so runs skew per-skill. Shared with cell.startUpgrades, which pre-loads the starting cell.
+  // Losing a gene is as real as gaining one — carrying a gene you aren't using costs upkeep, and
+  // streamlining is what actually happens to marine genomes. This is the other half of the drift.
+  // The founding carbohydrase is never lost: without it a cell can eat nothing at all.
+  function loseRandomUpgrade(c) {
+    const opts = [];
+    if (c.enzLvl[0] > 0) opts.push(0);
+    if (c.enzLvl[1] > 0) opts.push(1);
+    if (c.enzLvl[2] > 1) opts.push(2);              // down to the founding level, never below
+    if (c.chemoLevel > 0) opts.push("chemo");
+    if (c.crispr) opts.push("crispr");
+    if (c.antibiotic > 0) opts.push("antibiotic");
+    if (!opts.length) return null;
+    const pick = opts[(Math.random()*opts.length)|0];
+    let locus, color;
+    if (pick === "crispr") { c.crispr = false; locus = "Cr"; color = CRISPR_COLOR; }
+    else if (pick === "antibiotic") { c.antibiotic--; locus = "Ab"; color = TOXIN_COLOR; }
+    else if (pick === "chemo") { c.chemoLevel--; if (!c.chemoLevel) c.chemotaxis = false; locus = "T"; color = "#ffd24a"; }
+    else { c.enzLvl[pick]--; locus = ["L","P","C"][pick]; color = RESOURCES[pick].color; }
+    // drop the LAST log entry for that locus, so the genome and its history still agree
+    const ups = (c.ups || []).slice();
+    for (let k = ups.length - 1; k >= 0; k--) if (locusOf(ups[k]) === locus) { ups.splice(k, 1); break; }
+    c.ups = ups;
+    return { color };
+  }
+  // DRIFT. Your cell taking a gene is a single event in one lineage; on its own the population just
+  // tracks you, and the chart becomes one colour marching up the screen. So every time you adapt,
+  // somewhere else in the sea another cell also changes — it gains a random gene, or it loses one.
+  // That keeps a spread of genomes alive around you, which is what makes the ecotype chart (and
+  // kill-the-winner, which needs variety in adaptation level to bite) mean anything.
+  function driftAnotherCell(source) {
+    if (!CFG.cell.driftOnUpgrade) return;
+    const pool = cells.filter((c) => c.alive && !c.cyst && c !== source);
+    if (!pool.length) return;
+    const c = pool[(Math.random()*pool.length)|0];
+    const gain = Math.random() < CFG.cell.driftGainChance;
+    const u = gain ? grantRandomUpgrade(c) : loseRandomUpgrade(c);
+    if (u) burst(c.x, c.y, u.color, gain ? 8 : 5);   // you can SEE diversity happening out there
+  }
   function grantRandomUpgrade(c) {
     const u = grantRandomUpgrade_(c);
     // concat, not push: daughters share the parent's array by reference until one of them adapts, and
@@ -1878,6 +1919,7 @@
           if (c.controlled) {
             Audio.play("spawn", 0.6); showUpgradeToast(msg, color);
             state.upgrades.push({ t: state.elapsed, label: msg, abbr, color, acquired });
+            driftAnotherCell(c);   // the sea evolves too — someone else gains or loses a gene
           }
         }
         break;
@@ -2314,8 +2356,21 @@
     let html = `<span><i class="gen-swatch"></i>${colony === 1 ? "bacterium" : "bacteria"} <b>${colony}</b></span>`;
     html += `<span><i class="eco-line" style="border-color:${PROTIST_COLOR}"></i>protists <b>${preds}</b></span>`;
     html += `<span><i class="eco-line" style="border-color:${VIRUS_COLOR}"></i>viruses <b>${green || 0}</b></span>`;
-    html += `<span id="chartTitle">ecotype abundance vs. time · click for ${chartLog ? "linear" : "log"}</span>`;
+    // In log mode the stack is Σlog(cells) per lineage, whose height is n·log(GM) — so the number
+    // worth showing alongside it is the GEOMETRIC MEAN lineage size, not the total.
+    if (chartLog) {
+      const gm = geoMeanLineage(ecoSample().buckets);
+      if (gm) html += `<span>geo-mean lineage <b>${gm.toFixed(1)}</b></span>`;
+    }
+    html += `<span id="chartTitle">${chartLog ? "Σlog(cells) per lineage" : "ecotype abundance"} vs. time · click for ${chartLog ? "linear" : "log"}</span>`;
     el.legend.innerHTML = html;
+  }
+  // geometric mean of the living lineages' sizes — the centre of a log-scaled stack
+  function geoMeanLineage(buckets) {
+    const v = Object.values(buckets || {}).filter((n) => n > 0);
+    if (!v.length) return 0;
+    let s = 0; for (const n of v) s += Math.log(n);
+    return Math.exp(s/v.length);
   }
   function ecoCounts() { const e = [0,0,0,0,0,0,0,0]; for (const c of cells) e[ecoMask(c)]++; return e; }
   // per-ecotype count + average upgrade level (total enzyme levels above base + chemoLevel) for the chart
@@ -2358,41 +2413,70 @@
   // Shared renderer: stacked absolute ecotype areas + protist line. Used by the live
   // chart (scrolling window) and by each saved high-score mini-chart (whole game).
   // `denom` sets the x-span (fixed window for live scroll; hist length for saved fill).
+  // THE LOG SCALE, and why it changed.
+  // It used to stack raw counts and log the CUMULATIVE total — log(Σx). On a stacked chart that is
+  // close to useless: the bottom band gets nearly the whole axis, and a rare lineage sitting on top
+  // of a boom is squeezed into a hairline, because what you see is the log of everything BELOW it.
+  // Now each band contributes log(x+1) of its OWN size and those are stacked — Σlog(x). Every
+  // lineage then gets a thickness set by its own abundance, so 2 cells is visible next to 200.
+  // (This is the geometric mean, drawn: Σlog(xᵢ) = n·log(GM), so the stack's total height IS the
+  // count of lineages times the log of their geometric mean. A colony of many similar lineages is
+  // tall; one monster lineage plus stragglers is short. That's the diversity you wanted to see.)
+  const bandVal = (x) => (chartLog ? Math.log10(x + 1) : x);
+  // One scale, shared by the renderer and the hover hit-test, so the two can never drift apart.
+  function ecoScale(hist, H) {
+    const bks = hist.map(sampleBuckets);
+    const keySet = new Set(); for (const b of bks) for (const k in b) keySet.add(+k);
+    const keys = [...keySet].sort((a, b) => a - b);   // stable: mask-major, tier-minor — bands don't jump
+    let maxY = chartLog ? 1 : 10, vMax = 10, peakCells = 0;
+    for (let i = 0; i < hist.length; i++) {
+      let tot = 0, cells = 0;
+      for (const k in bks[i]) { tot += bandVal(bks[i][k]); cells += bks[i][k]; }
+      if (tot > maxY) maxY = tot;
+      if (cells > peakCells) peakCells = cells;
+      const pv = bandVal(hist[i].p || 0);
+      if (pv > maxY) maxY = pv;
+      if ((hist[i].v || 0) > vMax) vMax = hist[i].v;
+    }
+    const pad = H < 70 ? 8 : 14;
+    // v is ALREADY in stacked units (cells, or Σlog-cells) — so the axis itself is linear in them
+    const yAt = (v) => H - (v/maxY)*(H - pad) - 2;
+    return { bks, keys, maxY, vMax, peakCells, pad, yAt };
+  }
   function renderEcoChart(g, W, H, hist, denom) {
     g.clearRect(0, 0, W, H);
     g.fillStyle = CHART.surface; g.fillRect(0, 0, W, H);
-    let maxY = 10, vMax = 10; // viruses get their OWN hidden axis (they hit the ~220 cap and would squash the cells)
-    for (const s of hist) { let tot = 0; for (let i = 0; i < 8; i++) tot += s.eco[i]; if (tot > maxY) maxY = tot; if (s.p > maxY) maxY = s.p; if ((s.v || 0) > vMax) vMax = s.v; }
-    const n = denom || Math.max(hist.length, 2), pad = H < 70 ? 8 : 14;
-    const xAt = (i) => i/(n-1)*W;
-    // log axis: log10(v+1) so 0 still sits on the baseline and a booming colony doesn't flatten everything else
-    const lgMax = Math.log10(maxY + 1) || 1, lgVMax = Math.log10(vMax + 1) || 1;
-    const yAt = chartLog ? (v) => H - (Math.log10(v + 1)/lgMax)*(H-pad) - 2 : (v) => H - (v/maxY)*(H-pad) - 2;
+    const S = ecoScale(hist, H);
+    const n = denom || Math.max(hist.length, 2);
+    const xAt = (i) => i/(n-1)*W, yAt = S.yAt;
     g.strokeStyle = "rgba(255,255,255,0.06)"; g.lineWidth = 1;
-    for (let k = 1; k <= 3; k++) { const y = H - k/4*(H-pad) - 2; g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }
+    for (let k = 1; k <= 3; k++) { const y = H - k/4*(H - S.pad) - 2; g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }
     g.fillStyle = "rgba(215,245,238,0.5)"; g.font = "10px 'Trebuchet MS', sans-serif"; g.textAlign = "left";
-    g.fillText(String(Math.round(maxY)) + (chartLog ? " ·log" : ""), 3, 10); g.fillText("0", 3, H - 3);
+    // In log mode the axis is in Σlog units, which is not a cell count — so label it with the peak
+    // CELLS (what you actually want to know) and mark the axis as Σlog rather than printing a number
+    // that means nothing.
+    g.fillText(chartLog ? S.peakCells + " ·Σlog" : String(Math.round(S.maxY)), 3, 10);
+    g.fillText("0", 3, H - 3);
     if (hist.length > 1) {
       const last = hist.length - 1;
       // one FLAT-colored polygon per GENERATION bucket (ecotype+tier), stacked from the baseline.
-      // Each new lineage = a new color that grows in and fades out as its population rises and falls — no gradients.
-      const bks = hist.map(sampleBuckets), cum = hist.map(() => 0);
-      const keySet = new Set(); for (const b of bks) for (const k in b) keySet.add(+k);
-      const keys = [...keySet].sort((a, b) => a - b); // stable order: mask-major, tier-minor → bands don't jump around
-      for (const key of keys) {
+      // Each new lineage = a new color that grows in and fades out as its population rises and falls.
+      const bks = S.bks, cum = hist.map(() => 0);
+      for (const key of S.keys) {
         const mask = key >> 6, tier = key & 63;
         g.fillStyle = levelColor(mask, tier);
         g.beginPath(); g.moveTo(xAt(0), yAt(cum[0]));
         for (let i = 1; i <= last; i++) g.lineTo(xAt(i), yAt(cum[i]));
-        for (let i = last; i >= 0; i--) g.lineTo(xAt(i), yAt(cum[i] + (bks[i][key] || 0)));
+        for (let i = last; i >= 0; i--) g.lineTo(xAt(i), yAt(cum[i] + bandVal(bks[i][key] || 0)));
         g.closePath(); g.fill();
-        for (let i = 0; i <= last; i++) cum[i] += (bks[i][key] || 0);
+        for (let i = 0; i <= last; i++) cum[i] += bandVal(bks[i][key] || 0);
       }
       g.strokeStyle = PROTIST_COLOR; g.lineWidth = H < 70 ? 1.3 : 1.8; g.beginPath();
-      for (let i = 0; i < hist.length; i++) { const x = xAt(i), y = yAt(hist[i].p); i ? g.lineTo(x, y) : g.moveTo(x, y); }
+      for (let i = 0; i < hist.length; i++) { const x = xAt(i), y = yAt(bandVal(hist[i].p || 0)); i ? g.lineTo(x, y) : g.moveTo(x, y); }
       g.stroke();
       // virus (green-phage) count — dashed line on its OWN hidden axis (scaled to vMax, not the cell axis)
-      const yAtV = chartLog ? (v) => H - (Math.log10(v + 1)/lgVMax)*(H-pad) - 2 : (v) => H - (v/vMax)*(H-pad) - 2;
+      const lgVMax = Math.log10(S.vMax + 1) || 1;
+      const yAtV = chartLog ? (v) => H - (Math.log10(v + 1)/lgVMax)*(H - S.pad) - 2 : (v) => H - (v/S.vMax)*(H - S.pad) - 2;
       g.strokeStyle = VIRUS_COLOR; g.lineWidth = H < 70 ? 1.1 : 1.5; g.setLineDash([3, 3]); g.beginPath();
       for (let i = 0; i < hist.length; i++) { const x = xAt(i), y = yAtV(hist[i].v || 0); i ? g.lineTo(x, y) : g.moveTo(x, y); }
       g.stroke(); g.setLineDash([]);
@@ -2774,21 +2858,16 @@
   // hit-test can't drift away from the picture.
   function ecoBandAt(hist, W, H, mx, my) {
     if (!hist || hist.length < 2) return null;
-    let maxY = 10;
-    for (const s of hist) { let t = 0; for (let i = 0; i < 8; i++) t += s.eco[i]; if (t > maxY) maxY = t; if (s.p > maxY) maxY = s.p; }
-    const n = Math.max(hist.length, 2), pad = H < 70 ? 8 : 14;
-    const lgMax = Math.log10(maxY + 1) || 1;
-    const yAt = chartLog ? (v) => H - (Math.log10(v + 1)/lgMax)*(H-pad) - 2 : (v) => H - (v/maxY)*(H-pad) - 2;
+    const S = ecoScale(hist, H);                       // the SAME scale the renderer used
+    const n = Math.max(hist.length, 2);
     const i = clamp(Math.round(mx/W*(n-1)), 0, hist.length - 1);
-    const bks = hist.map(sampleBuckets);
-    const keySet = new Set(); for (const b of bks) for (const k in b) keySet.add(+k);
-    const keys = [...keySet].sort((a, b) => a - b);   // same stable order the renderer stacks in
     let cum = 0;
-    for (const key of keys) {
-      const cnt = bks[i][key] || 0;
-      if (cnt > 0 && my <= yAt(cum) && my >= yAt(cum + cnt))
+    for (const key of S.keys) {
+      const cnt = S.bks[i][key] || 0;
+      const h = bandVal(cnt);
+      if (cnt > 0 && my <= S.yAt(cum) && my >= S.yAt(cum + h))
         return { key, count: cnt, mask: key >> 6, tier: key & 63 };
-      cum += cnt;
+      cum += h;
     }
     return null;
   }
@@ -2809,11 +2888,16 @@
     canvas.addEventListener("mouseleave", hideCircos);
   }
   function hideCircos() { if (el.circosPop) el.circosPop.classList.add("hidden"); }
-  function positionCircos(e) {   // ride alongside the cursor, but never off-screen
+  // Sit to the LEFT of the pointer: on the right it covered the very chart you were reading, so you
+  // couldn't see the band you were pointing at. Falls back to the right only if there's no room left.
+  function positionCircos(e) {
     if (!el.circosPop) return;
     const p = el.circosPop, w = p.offsetWidth || 246, h = p.offsetHeight || 268;
-    p.style.left = clamp(e.clientX + 18, 6, (window.innerWidth || 900) - w - 6) + "px";
-    p.style.top  = clamp(e.clientY - h/2, 6, (window.innerHeight || 700) - h - 6) + "px";
+    const vw = window.innerWidth || 900, vh = window.innerHeight || 700;
+    let x = e.clientX - w - 18;
+    if (x < 6) x = Math.min(e.clientX + 18, vw - w - 6);   // no room on the left — go right instead
+    p.style.left = clamp(x, 6, vw - w - 6) + "px";
+    p.style.top  = clamp(e.clientY - h/2, 6, vh - h - 6) + "px";
   }
   function fmtDur(s) { const m = Math.floor(s/60); return m + ":" + String(s % 60).padStart(2, "0"); }
   function clockStr() { // in-game 24h clock (1 real-min = 1 game-hour)
@@ -3135,6 +3219,8 @@
     "cell.lenBaseEnergy": "Energy above which a cell starts elongating.",
     "cell.elongK": "Extra half-length gained per unit of energy above lenBaseEnergy.",
     "cell.thrust": "Swim thrust. At low Reynolds number speed is thrust/dragRate, NOT an acceleration — the cell reaches this speed at once and loses it at once. Raise thrust alone and the cell swims faster; raise it with dragRate and the speed is unchanged, only the glide.",
+    "cell.driftOnUpgrade": "1 = every time YOU take a gold phage, one other random cell also changes — it gains a random gene or loses one. This is what keeps a SPREAD of genomes in the sea instead of a population that just tracks your genome (and it gives kill-the-winner something to bite on). 0 = off.",
+    "cell.driftGainChance": "When drift fires, the chance the other cell GAINS a gene rather than losing one. 0.5 = a coin flip. Push it up and the whole sea escalates with you; push it down and genomes streamline around you.",
     "cell.dragRate": "How fast velocity relaxes onto what the thrust sustains (1/s). High = the cell stops dead when you let go, which is what a real bacterium does (viscosity beats inertia at this size). Low = it coasts like a submarine, which is wrong but forgiving. Also sets free-swim speed via thrust/dragRate.",
     "cell.cystDragRate": "Same, for a dormant cyst. Kept low so a cyst keeps drifting with the water instead of freezing in place.",
     "cell.maxSpeed": "Hard cap on swim speed (px/s), applied after thrust/dragRate.",
