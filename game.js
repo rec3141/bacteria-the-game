@@ -241,6 +241,9 @@
     circosCap: document.getElementById("circosCap"), detailCircos: document.getElementById("detailCircos"),
     demoCap: document.getElementById("demoCap"),   // attract-mode caption, over the ocean
     scoreTabs: document.getElementById("scoreTabs"),   // desktop / mobile leaderboard switch
+    analysisClado: document.getElementById("analysisClado"), detailClado: document.getElementById("detailClado"),
+    tutorialBtn: document.getElementById("tutorialBtn"), demoExit: document.getElementById("demoExit"),
+    demoPlay: document.getElementById("demoPlay"), demoBack: document.getElementById("demoBack"),
     science: document.getElementById("science"), sciBody: document.getElementById("sciBody"), sciBack: document.getElementById("sciBack"),
     sciBtn: document.getElementById("sciBtn"), sciBtn2: document.getElementById("sciBtn2"), sciBtn3: document.getElementById("sciBtn3"),
     analysisChart: document.getElementById("analysisChart"), analysisStats: document.getElementById("analysisStats"),
@@ -463,7 +466,9 @@
     // match e.code too: on non-US layouts the key left of "1" doesn't emit a backtick
     if (e.key === "`" || e.code === "Backquote") { e.preventDefault(); toggleAdmin(); return; } // live-tuning panel
     if (adminOpen && e.key === "/" && el.adminSearch) { e.preventDefault(); el.adminSearch.focus(); el.adminSearch.select(); return; }
-    if (e.key === "Escape") { if (adminOpen) { toggleAdmin(false); return; } if (sciOpen) { hideScience(); return; } if (helpOpen) { hideHelp(); return; } if (!(state && state.demo)) togglePause(); return; }
+    if (e.key === "Escape") { if (adminOpen) { toggleAdmin(false); return; } if (sciOpen) { hideScience(); return; } if (helpOpen) { hideHelp(); return; }
+      if (demo && demo.watch) { endTutorial(); return; }   // leave the tutorial, back to the menu
+      if (!(state && state.demo)) togglePause(); return; }
     if (e.key.toLowerCase() === "m") { cycleAudio(); return; } // cycle: all on → music off → effects off → muted
     // Attract mode is running behind the title: any real keypress means "let me play", so drop
     // straight into a run rather than making them find the button.
@@ -557,6 +562,13 @@
   // raise its expression), plus chemotaxis / antibiotic / CRISPR. Genes aren't guaranteed each time,
   // so runs skew per-skill. Shared with cell.startUpgrades, which pre-loads the starting cell.
   function grantRandomUpgrade(c) {
+    const u = grantRandomUpgrade_(c);
+    // concat, not push: daughters share the parent's array by reference until one of them adapts, and
+    // a push would rewrite the other lineage's history too.
+    c.ups = (c.ups || []).concat([{ t: state ? state.elapsed : 0, label: u.msg, abbr: u.abbr, color: u.color, acquired: u.acquired }]);
+    return u;
+  }
+  function grantRandomUpgrade_(c) {
     const pool = ["chemo", "enz0", "enz1", "enz2", "antibiotic"];
     if (!c.crispr) pool.push("crispr");            // one-time: phage-immune-harvesting defense system
     const pick = pool[(Math.random()*pool.length)|0];
@@ -585,7 +597,27 @@
       tumbling: false, runTimer: rand(CFG.cell.runMin, CFG.cell.runMax), tumbleT: 0, tumbleTarget: angle,
       fed: 0, enzCd: rand(CFG.cell.enzymeCooldown[0], CFG.cell.enzymeCooldown[1]),
       infectedGreen: false, lysisT: 0, chemotaxis: false, chemoLevel: 0, crispr: false, antibiotic: 0, toxT: 0,
+      // This cell's OWN adaptation log, in the order it was acquired — inherited whole by its
+      // daughters. The player's run-level log (state.upgrades) only ever knew about the cell you were
+      // steering; this is what lets every lineage on the chart show its own genome.
+      ups: [],
       enzLvl: [0, 0, 1] }; // per-enzyme expression level [lipase, protease, carbohydrase]; 0 = locked, carb starts at 1
+  }
+  // Build an adaptation log from a genome, for cells that were never *granted* anything — immigrants
+  // drift in with a ready-made genome, so their true acquisition order is unknowable. Canonical order
+  // is the honest answer: it says WHAT the lineage carries without inventing a history it never had.
+  function genomeUps(c) {
+    const u = [], push = (label, abbr, color, acquired) => u.push({ t: 0, label, abbr, color, acquired });
+    for (let i = 0; i < 3; i++) {
+      const base = i === 2 ? 1 : 0;                  // carbohydrase is the starting gene, not an adaptation
+      const name = RESOURCES[i].enzyme;
+      for (let k = base + 1; k <= c.enzLvl[i]; k++)
+        push(name[0].toUpperCase() + name.slice(1) + " " + k, ["L","P","C"][i] + k, RESOURCES[i].color, k === 1);
+    }
+    for (let k = 1; k <= (c.chemoLevel || 0); k++) push("Chemotaxis " + k, "T" + k, "#ffd24a", k === 1);
+    if (c.crispr) push("CRISPR", "Cr", CRISPR_COLOR, true);
+    for (let k = 1; k <= (c.antibiotic || 0); k++) push("Antibiotic " + k, "Ab" + k, TOXIN_COLOR, k === 1);
+    return u;
   }
   function ownedEnzymes(c) { const o = []; for (let i = 0; i < 3; i++) if (c.enzLvl[i] > 0) o.push(i); return o; }
 
@@ -762,6 +794,8 @@
       mortLive: [0, 0, 0, 0], mortFull: [0, 0, 0, 0], // cause-of-death tallies (grazing/viral/starvation/antibiotic) per sample interval
       tod: tod0, light: dielLight(tod0), foodTarget: seedFood, graze: 1, foodT: 0, // diel state (updateDiel refreshes each frame)
       chartT: 0, history: [], fullT: 0, fullHist: [], fullInterval: 1, upgrades: [],
+      lineages: {},   // bucket key (ecotype+tier, i.e. one colored band) → that lineage's genome
+
       // Stamped ONCE, at the start of the run, not per day: continuing into day 2 re-submits the
       // same run id, and a run must not be able to change which board it belongs to halfway through.
       device: isTouch ? "touch" : "desktop",
@@ -826,7 +860,25 @@
     demo = { i: -1, t: 0, secs: 0, focus: null, hold: 0, idle: false, idleT: 0 };
     nextDemoBeat();
   }
-  function stopDemo() { demo = null; if (el.demoCap) el.demoCap.classList.add("hidden"); }
+  function stopDemo() {
+    demo = null;
+    if (el.demoCap) el.demoCap.classList.add("hidden");
+    if (el.demoExit) el.demoExit.classList.add("hidden");
+  }
+  // The attract loop plays behind the title menu, which covers most of it — fine as a backdrop, no
+  // good as a lesson. WATCHING the tutorial pulls the menu away so you can actually see the ocean,
+  // and replays it from beat 1.
+  function watchTutorial() {
+    startDemo();
+    demo.watch = true;
+    if (el.title) el.title.classList.add("hidden");
+    if (el.demoExit) el.demoExit.classList.remove("hidden");
+  }
+  function endTutorial() {                    // back to the menu; the demo keeps playing behind it
+    if (demo) demo.watch = false;
+    if (el.demoExit) el.demoExit.classList.add("hidden");
+    if (el.title) el.title.classList.remove("hidden");
+  }
   function nextDemoBeat() {
     if (!demo) return;
     demo.i++; demo.t = 0;
@@ -893,6 +945,7 @@
       if (Math.random() < 0.22) c.crispr = true;
       if (Math.random() < 0.30) c.antibiotic = 1;
       c.invuln = 2.5;
+      c.ups = genomeUps(c);   // it arrived already carrying these — read the log off the genome
       cells.push(c);
     }
   }
@@ -1089,6 +1142,7 @@
     d1.crispr = d2.crispr = c.crispr;
     d1.antibiotic = d2.antibiotic = c.antibiotic;
     d1.enzLvl = c.enzLvl.slice(); d2.enzLvl = c.enzLvl.slice();
+    d1.ups = d2.ups = c.ups || [];   // the adaptation log is heritable too (shared until one of them adapts)
     if (c.infectedGreen) { d2.infectedGreen = true; d2.lysisT = c.lysisT; burst(c.x, c.y, "#7CFC5A", 8); } // virus segregates into one daughter; d1 (your lineage) stays clean
     cells.splice(cells.indexOf(c), 1, d1, d2);
     if (c.controlled) state.gen++; // count a generation only when the cell YOU are steering divides
@@ -1162,8 +1216,12 @@
     annotateRun(actx, el.analysisChart.width, el.analysisChart.height, state.fullHist, state.upgrades, state.elapsed);
     if (asctx) annotateSub(asctx, el.analysisSubChart.width, el.analysisSubChart.height, state.fullHist, state.upgrades, state.elapsed);
     if (el.analysisSubLabel) el.analysisSubLabel.textContent = subLabelText();
+    if (el.analysisClado) drawClado(el.analysisClado, analysisRec());
     if (el.analysisStats) el.analysisStats.innerHTML = runStatsHtml(state.fullHist, state.upgrades);
   }
+  // the live run, shaped like a saved record — so the charts, circos and cladogram take one type
+  const analysisRec = () => state && ({ hist: state.fullHist, upgrades: state.upgrades, lineages: state.lineages,
+                                        gen: state.gen, score: state.score, dur: state.elapsed });
   function gameOver(dayComplete) {
     state.running = false;
     recordGame();
@@ -2159,6 +2217,12 @@
       const m = ecoMask(c); eco[m]++;          // cysts included in their generation bucket (colored, not a separate gray band)
       const key = m*64 + Math.min(63, upgradeTier(c)); // mask (0-7) high bits, tier low bits
       buckets[key] = (buckets[key] || 0) + 1;
+      // Remember what each colored band on the chart actually IS, the first time we see it: the band
+      // is a lineage (an ecotype at an adaptation level), and this is the genome behind that color.
+      // Recorded once per lineage, not per sample — a per-sample copy would balloon the saved run.
+      if (state && state.lineages && !state.lineages[key] && Object.keys(state.lineages).length < 64) {
+        state.lineages[key] = { t: +state.elapsed.toFixed(1), ups: (c.ups || []).slice(0, 32) };
+      }
     }
     return { eco, buckets };
   }
@@ -2296,7 +2360,7 @@
     // through — the backend upserts by id, and the local list replaces by id below.
     const id = state.runId || Date.now();
     const rec = { id, score: Math.round(state.score), gen: state.gen, date: id, dur: Math.round(state.elapsed), hist: state.fullHist, upgrades: state.upgrades, name: playerName,
-                  day: state.day || 1, device: state.device || "desktop",
+                  day: state.day || 1, device: state.device || "desktop", lineages: state.lineages,
                   tuned: cfgTuned() || undefined }; // undefined → omitted by JSON.stringify, so untuned runs are unchanged on the wire
     justFinishedTs = id; lastRec = rec;
     try {
@@ -2398,7 +2462,9 @@
   // single gene amplifying rather than three unrelated events — which is the whole point of drawing
   // it round rather than as another timeline.
   const locusOf = (u) => (String(u.abbr || "").match(/^[A-Za-z]+/) || [""])[0];  // "L2"→"L", "Ab1"→"Ab"
-  function renderCircos(g, W, H, upgrades, rec) {
+  // `mid` is what goes in the hole: {top, bot}. A whole run says "gen 7 / 14,820 cal"; a single
+  // lineage says how many cells it had and how adapted it was.
+  function renderCircos(g, W, H, upgrades, mid) {
     g.clearRect(0, 0, W, H);
     const ups = (upgrades || []).filter((u) => u && u.abbr);
     const cx = W/2, cy = H/2, R = Math.min(W, H)/2 - 22, rIn = R*0.72;
@@ -2443,18 +2509,173 @@
       g.globalAlpha = 1;
     });
     g.fillStyle = "#eafff8"; g.font = "bold 15px 'Trebuchet MS', sans-serif";
-    g.fillText("gen " + (rec && rec.gen != null ? rec.gen : "—"), cx, cy - 8);
+    g.fillText((mid && mid.top) || "", cx, cy - 8);
     g.fillStyle = "rgba(215,245,238,.6)"; g.font = "10.5px 'Trebuchet MS', sans-serif";
-    g.fillText(Math.round((rec && rec.score) || 0).toLocaleString() + " cal", cx, cy + 9);
+    g.fillText((mid && mid.bot) || "", cx, cy + 9);
+  }
+  const runMid = (rec) => ({ top: "gen " + (rec && rec.gen != null ? rec.gen : "—"),
+                             bot: Math.round((rec && rec.score) || 0).toLocaleString() + " cal" });
+  // ---------------------------------------------------------------- cladogram
+  // A run's phylogeny. Every lineage carries its adaptations in the order it got them, so two
+  // lineages that share a prefix share an ancestor — the set of paths IS a tree, and building it is
+  // just a trie over those logs. No extra bookkeeping, no guessing: the branch points are the moments
+  // a lineage adapted away from its parent.
+  // Caveat worth knowing: immigrant lineages drift in with a ready-made genome and no true history
+  // (genomeUps synthesises a canonical order), so they hang off the root by what they CARRY rather
+  // than by descent. In a game where genes also move sideways, that is arguably the honest picture.
+  function buildClado(rec) {
+    const lin = rec.lineages || {};
+    const keys = Object.keys(lin);
+    if (!keys.length) return null;
+    const root = { abbr: null, color: null, depth: 0, children: [], leaves: [] };
+    for (const k of keys) {
+      let node = root;
+      for (const u of (lin[k].ups || [])) {
+        let ch = node.children.find((c) => c.abbr === u.abbr);
+        if (!ch) { ch = { abbr: u.abbr, color: u.color, depth: node.depth + 1, children: [], leaves: [] }; node.children.push(ch); }
+        node = ch;
+      }
+      node.leaves.push(+k);                       // this lineage ends here
+    }
+    return root;
+  }
+  // Size the canvas to the tree before drawing it: a run with 16 lineages needs 16 legible rows, and
+  // a fixed height either squashes them into each other or wastes half the panel on a two-branch run.
+  function drawClado(canvas, rec) {
+    if (!canvas || !rec) return;
+    const root = buildClado(rec);
+    let leaves = 0;
+    if (root) (function count(n) { leaves += n.leaves.length; n.children.forEach(count); })(root);
+    canvas.height = clamp(leaves*22 + 34, 110, 520);
+    renderClado(canvas.getContext("2d"), canvas.width, canvas.height, rec);
+  }
+  function renderClado(g, W, H, rec) {
+    g.clearRect(0, 0, W, H);
+    g.fillStyle = CHART.surface; g.fillRect(0, 0, W, H);
+    const root = buildClado(rec);
+    g.textBaseline = "middle";
+    if (!root) {
+      g.fillStyle = "rgba(215,245,238,.45)"; g.font = "italic 12px 'Trebuchet MS', sans-serif";
+      g.textAlign = "center"; g.fillText("no lineages recorded for this run", W/2, H/2);
+      return;
+    }
+    // peak population of each lineage, so a band that briefly existed doesn't look like a dynasty
+    const peak = {};
+    for (const s of (rec.hist || [])) { const b = sampleBuckets(s); for (const k in b) peak[k] = Math.max(peak[k] || 0, b[k]); }
+    // rows: one per terminal lineage, in depth-first order so the tree doesn't cross itself
+    const rows = [];
+    let maxDepth = 0;
+    (function walk(n) {
+      maxDepth = Math.max(maxDepth, n.depth);
+      for (const k of n.leaves) rows.push({ node: n, key: k });
+      for (const c of n.children) walk(c);
+    })(root);
+    if (!rows.length) return;
+    const padL = 16, padR = 128, padT = 14, padB = 12;
+    const xAt = (d) => padL + (maxDepth ? d/maxDepth : 0)*(W - padL - padR);
+    const rowH = Math.min(26, (H - padT - padB)/Math.max(1, rows.length));
+    rows.forEach((r, i) => { r.y = padT + rowH*(i + 0.5); });   // every terminal lineage gets its own row
+    const yOf = new Map();                                       // a node sits at the middle of its subtree
+    (function place(n) {
+      for (const c of n.children) place(c);
+      const ys = rows.filter((r) => r.node === n).map((r) => r.y);
+      for (const c of n.children) ys.push(yOf.get(c));
+      yOf.set(n, ys.length ? (Math.min(...ys) + Math.max(...ys))/2 : padT);
+    })(root);
+    // edges
+    g.lineWidth = 1.6; g.font = "9.5px 'Trebuchet MS', sans-serif"; g.textAlign = "center";
+    (function draw(n) {
+      const x0 = xAt(n.depth), y0 = yOf.get(n);
+      for (const c of n.children) {
+        const x1 = xAt(c.depth), y1 = yOf.get(c);
+        g.strokeStyle = c.color || "rgba(255,255,255,.3)";
+        g.beginPath(); g.moveTo(x0, y0); g.lineTo(x0, y1); g.lineTo(x1, y1); g.stroke();  // right-angled: a cladogram, not a curve
+        g.fillStyle = c.color || "#9fc3ba";
+        g.fillText(c.abbr, (x0 + x1)/2, y1 - 7);      // the adaptation that split this branch off
+        draw(c);
+      }
+    })(root);
+    // the founder
+    g.fillStyle = "#9fc3ba"; g.textAlign = "right"; g.font = "10px 'Trebuchet MS', sans-serif";
+    g.beginPath(); g.arc(xAt(0), yOf.get(root), 3, 0, TAU); g.fill();
+    // leaves: the colored band from the chart above, so the two plots read as one thing
+    g.textAlign = "left"; g.font = "10.5px 'Trebuchet MS', sans-serif";
+    for (const r of rows) {
+      const xn = xAt(r.node.depth), y = r.y;
+      if (Math.abs(y - yOf.get(r.node)) > 0.5) {          // stub across to its own row
+        g.strokeStyle = "rgba(255,255,255,.25)"; g.lineWidth = 1;
+        g.beginPath(); g.moveTo(xn, yOf.get(r.node)); g.lineTo(xn, y); g.stroke();
+      }
+      const mask = r.key >> 6, tier = r.key & 63, col = levelColor(mask, tier);
+      g.fillStyle = col; g.fillRect(xn + 6, y - 5, 10, 10);   // the same color as its band on the chart above
+      g.fillStyle = "rgba(215,245,238,.85)";
+      g.fillText(`peak ${peak[r.key] || 0}` + (r.node.depth ? "" : "  · founder genome"), xn + 21, y);
+    }
   }
   function showCircos(rec) {
     if (!el.circosPop || !el.circosCanvas) return;
-    renderCircos(el.circosCanvas.getContext("2d"), el.circosCanvas.width, el.circosCanvas.height, rec.upgrades, rec);
+    renderCircos(el.circosCanvas.getContext("2d"), el.circosCanvas.width, el.circosCanvas.height, rec.upgrades, runMid(rec));
     const n = rec.upgrades ? rec.upgrades.length : 0;
-    if (el.circosCap) el.circosCap.textContent = n
+    el.circosPop.style.borderColor = "";
+    if (el.circosCap) el.circosCap.innerHTML = n
       ? `${n} adaptation${n === 1 ? "" : "s"}, clockwise in the order they arrived`
       : "this lineage never adapted";
     el.circosPop.classList.remove("hidden");
+  }
+  // Hovering a COLORED BAND on a run chart: that band is one lineage (an ecotype at an adaptation
+  // level), so show that lineage's own genome — which is the whole point of the colors.
+  function showLineageCircos(rec, band) {
+    if (!el.circosPop || !el.circosCanvas) return;
+    const lin = (rec.lineages || {})[band.key] || (rec.lineages || {})[String(band.key)];
+    // Runs saved before per-lineage genomes existed have no `lineages` map. Rather than draw a lie,
+    // fall back to the run-level log and say so.
+    const ups = lin ? lin.ups : (rec.upgrades || []);
+    const color = levelColor(band.mask, band.tier);
+    renderCircos(el.circosCanvas.getContext("2d"), el.circosCanvas.width, el.circosCanvas.height, ups,
+                 { top: band.count + (band.count === 1 ? " cell" : " cells"), bot: "tier " + band.tier });
+    el.circosPop.style.borderColor = color;
+    if (el.circosCap) el.circosCap.innerHTML =
+      `<b style="color:${color}">■</b> this lineage · ${ups.length} adaptation${ups.length === 1 ? "" : "s"}` +
+      (lin ? ", in the order they arrived" : " <em>(run total — saved before per-lineage genomes)</em>");
+    el.circosPop.classList.remove("hidden");
+  }
+  // Which stacked band is under the cursor? Re-derives exactly what renderEcoChart drew, so the
+  // hit-test can't drift away from the picture.
+  function ecoBandAt(hist, W, H, mx, my) {
+    if (!hist || hist.length < 2) return null;
+    let maxY = 10;
+    for (const s of hist) { let t = 0; for (let i = 0; i < 8; i++) t += s.eco[i]; if (t > maxY) maxY = t; if (s.p > maxY) maxY = s.p; }
+    const n = Math.max(hist.length, 2), pad = H < 70 ? 8 : 14;
+    const lgMax = Math.log10(maxY + 1) || 1;
+    const yAt = chartLog ? (v) => H - (Math.log10(v + 1)/lgMax)*(H-pad) - 2 : (v) => H - (v/maxY)*(H-pad) - 2;
+    const i = clamp(Math.round(mx/W*(n-1)), 0, hist.length - 1);
+    const bks = hist.map(sampleBuckets);
+    const keySet = new Set(); for (const b of bks) for (const k in b) keySet.add(+k);
+    const keys = [...keySet].sort((a, b) => a - b);   // same stable order the renderer stacks in
+    let cum = 0;
+    for (const key of keys) {
+      const cnt = bks[i][key] || 0;
+      if (cnt > 0 && my <= yAt(cum) && my >= yAt(cum + cnt))
+        return { key, count: cnt, mask: key >> 6, tier: key & 63 };
+      cum += cnt;
+    }
+    return null;
+  }
+  function bindLineageHover(canvas, getRec) {
+    if (!canvas || isTouch) return;   // no hover on a phone; the cladogram below the chart covers it
+    canvas.addEventListener("mousemove", (e) => {
+      const rec = getRec();
+      if (!rec) { hideCircos(); return; }
+      const r = canvas.getBoundingClientRect();
+      if (!r.width || !r.height) return;
+      const band = ecoBandAt(rec.hist || [], canvas.width, canvas.height,
+                             (e.clientX - r.left)*(canvas.width/r.width),
+                             (e.clientY - r.top)*(canvas.height/r.height));
+      if (!band) { hideCircos(); return; }
+      showLineageCircos(rec, band);
+      positionCircos(e);
+    });
+    canvas.addEventListener("mouseleave", hideCircos);
   }
   function hideCircos() { if (el.circosPop) el.circosPop.classList.add("hidden"); }
   function positionCircos(e) {   // ride alongside the cursor, but never off-screen
@@ -2499,17 +2720,18 @@
   };
   function currentRunLine() {
     return { id: -1, date: -1, name: playerName, score: Math.round(state.score), gen: state.gen, dur: Math.round(state.elapsed), hist: state.fullHist, upgrades: state.upgrades,
-             device: state.device || "desktop" };
+             device: state.device || "desktop", lineages: state.lineages };
   }
   let _detailRec = null, _detailRank = "";
   function openScoreDetail(rankHtml, rec) {
     if (!el.scoreDetail || !el.detailChart) return;
     hideCircos();                             // the hover popup would otherwise hang over the detail view
     _detailRec = rec; _detailRank = rankHtml; // remembered so the log/linear toggle can redraw it
-    if (el.detailCircos) renderCircos(el.detailCircos.getContext("2d"), el.detailCircos.width, el.detailCircos.height, rec.upgrades, rec);
+    if (el.detailCircos) renderCircos(el.detailCircos.getContext("2d"), el.detailCircos.width, el.detailCircos.height, rec.upgrades, runMid(rec));
     annotateRun(el.detailChart.getContext("2d"), el.detailChart.width, el.detailChart.height, rec.hist || [], rec.upgrades, rec.dur);
     if (el.detailSubChart) annotateSub(el.detailSubChart.getContext("2d"), el.detailSubChart.width, el.detailSubChart.height, rec.hist || [], rec.upgrades, rec.dur);
     if (el.detailSubLabel) el.detailSubLabel.textContent = subLabelText();
+    if (el.detailClado) drawClado(el.detailClado, rec);
     if (el.detailStats) el.detailStats.innerHTML = runStatsHtml(rec.hist || [], rec.upgrades);
     if (el.detailTitle) el.detailTitle.innerHTML =
       `${rankHtml}${rec.name ? " · " + escapeHtml(rec.name) : ""} · <b>${rec.score}</b> · generation ${rec.gen} · survived ${fmtDur(rec.dur)}`;
@@ -2717,7 +2939,9 @@
     draw(); syncHud(); drawChart();
     { // hide the HUD + live charts behind any menu (title/over/scores/help), show only during active play
       const menu = [el.title, el.over, el.scores, el.help, el.science].some((s) => s && !s.classList.contains("hidden"));
-      const hide = menu || !(state && state.running);
+      // The demo has no player, so the HUD would report a cell that doesn't exist (0 energy, no genome).
+      // Hide it — the tutorial should read as a film of the sea, not a game with nobody driving.
+      const hide = menu || !(state && state.running) || !!(state && state.demo);
       if (el.chartwrap) el.chartwrap.classList.toggle("hidden", hide);
       if (el.hud) el.hud.classList.toggle("hidden", hide);
       if (el.touch) el.touch.classList.toggle("hidden", hide); // on-screen controls live only during active play
@@ -3291,6 +3515,12 @@
   if (el.analysisSubChart) el.analysisSubChart.addEventListener("click", () => { toggleSubMode(); drawAnalysis(); });
   if (el.detailSubChart) el.detailSubChart.addEventListener("click", () => { toggleSubMode(); if (_detailRec) openScoreDetail(_detailRank, _detailRec); });
   updateSubLegend();
+  // Hover a colored band on either run chart → that lineage's own genome, as a circos ring.
+  bindLineageHover(el.analysisChart, analysisRec);
+  bindLineageHover(el.detailChart, () => _detailRec);
+  if (el.tutorialBtn) el.tutorialBtn.addEventListener("click", watchTutorial);
+  if (el.demoPlay) el.demoPlay.addEventListener("click", start);
+  if (el.demoBack) el.demoBack.addEventListener("click", endTutorial);
 
   const coarse = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
   if (coarse || "ontouchstart" in window) {

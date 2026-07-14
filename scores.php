@@ -59,6 +59,9 @@ if ($method === 'POST') {
     // 'day' was being dropped on the floor: the client has always sent it, but it was never in this
     // whitelist, so the shared board silently lost how many days a run survived.
     'day'      => max(1, min(3650, (int)($rec['day'] ?? 1))),
+    // Per-lineage genomes: bucket key (one colored band on the run chart) -> that lineage's adaptations.
+    // Small by construction (capped at 64 lineages client-side), and needed to draw a band's circos.
+    'lineages' => is_array($rec['lineages'] ?? null) ? array_slice($rec['lineages'], 0, 64, true) : new stdClass(),
   ];
 
   $fp = @fopen($FILE, 'c+');
