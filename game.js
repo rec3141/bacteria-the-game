@@ -46,7 +46,7 @@
     // only your own would hand the grazers a 2x speed advantage). The phone magnifies the world
     // ~1.7x onto a small pane, so the same world-speed reads as far quicker in the hand.
     // Thrust and top speed scale together, so acceleration feel is unchanged — just slower.
-    touchSpeedScale: 0.5,
+    touchSpeedScale: 0.625,
     grid: { cs: 7 },                 // destructible-particle voxel size (px)
     substrate: {
       count: 60, moteEnergy: 7,      // ~2x the old food (~10.5k voxels), spread across a power-law size spectrum
@@ -305,7 +305,10 @@
   // The dwell runs on a TIMER, not on the game loop: a thumb held perfectly still fires no
   // pointer events at all, and the loop can be throttled (background tab), so counting dt
   // would make the latch depend on things the player can't see.
+  // touchVec carries DIRECTION AND MAGNITUDE (|v| ≤ 1): how far you pushed the stick is how hard
+  // the cell swims. The mover reads the magnitude as a thrust multiplier.
   const touchVec = { x: 0, y: 0, active: false };
+  const touchLatchVec = { x: 0, y: 0 }; // the committed run's vector, so the decay can ease it out
   let touchLatched = false;  // a locked-in run survives the finger lifting
   let touchRunT = 0;         // ...but only for this long: it winds down instead of sticking on
   let touchAtMax = false;    // thumb is out at the rim right now
@@ -736,7 +739,10 @@
         setLatched(false);
         parkKnob(0, 0);
       } else {
-        parkKnob(touchVec.x*STICK_MAXR*frac, touchVec.y*STICK_MAXR*frac);
+        // now that the stick is analog, the knob's position IS the speed — so easing it back to
+        // centre has to actually slow the cell, not just look like it. The run coasts to a stop.
+        touchVec.x = touchLatchVec.x*frac; touchVec.y = touchLatchVec.y*frac;
+        parkKnob(touchLatchVec.x*stickMaxR*frac, touchLatchVec.y*stickMaxR*frac);
         if (el.stickBase) el.stickBase.style.setProperty("--lock", frac.toFixed(3));
       }
     }
@@ -805,7 +811,11 @@
       const a = axis();
       if (a.x !== 0 || a.y !== 0) {
         c.tumbling = false; const len = Math.hypot(a.x, a.y); c.angle = Math.atan2(a.y, a.x);
-        const th = CFG.cell.thrust/visc*swimScale(); c.vx += (a.x/len)*th*dt; c.vy += (a.y/len)*th*dt;
+        // |a| is how far the stick is pushed (keyboard always gives a full 1). Thrust scales with
+        // it, and drag makes terminal speed proportional to thrust — so a half-push is half speed.
+        const mag = Math.min(1, len);
+        const th = CFG.cell.thrust/visc*swimScale()*mag;
+        c.vx += (a.x/len)*th*dt; c.vy += (a.y/len)*th*dt;
         c.energy -= CFG.cell.swimCost*dt;
       } else { c.tumbling = true; c.angle += Math.sin(state.elapsed*3 + c.x)*CFG.cell.playerTumbleTurn*dt; }
     } else autonomousMove(c, dt);
@@ -2224,14 +2234,21 @@
   //     at the centre (thumb lands, flicks off) committed no direction at all and the cell
   //     just sat there. The release point is now sampled on pointerup as well.
   let _stickId = null;
-  const STICK_MAXR = 52, STICK_DEAD = 10;     // knob travel / dead-zone, CSS px
-  const STICK_RIM = STICK_MAXR * 0.9;         // "full deflection" — the dwell has to happen out here
+  // Travel is derived from the base's ACTUAL size rather than hardcoded — the stick is clamp()-fluid,
+  // so a fixed 52px radius would mean a different dead-zone and rim on every screen width.
+  let stickMaxR = 52;                          // last measured knob travel, px (used by the decay too)
+  const STICK_TRAVEL = 0.40;                   // knob travel as a fraction of the base's width
+  const STICK_DEADF  = 0.13;                   // dead-zone, same units
+  const STICK_RIMF   = 0.90;                   // "full deflection" — the latch dwell happens out here
   function parkKnob(x, y) {
     if (el.stickKnob) el.stickKnob.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px))`;
   }
   function setLatched(on) {
     touchLatched = on;
-    if (on) touchRunT = CFG.cell.touchRunSecs;   // (re-)latching refills the run
+    if (on) {
+      touchRunT = CFG.cell.touchRunSecs;         // (re-)latching refills the run
+      touchLatchVec.x = touchVec.x; touchLatchVec.y = touchVec.y; // remember how hard it was pushed
+    }
     if (el.stickBase) {
       el.stickBase.classList.toggle("latched", on); // so you can SEE the run is locked
       el.stickBase.style.setProperty("--lock", "1");
@@ -2258,15 +2275,21 @@
       // aim from a pointer's position: past the dead-zone it steers; at the centre it stops
       const aim = (e) => {
         const r = base.getBoundingClientRect(), cx = r.left + r.width/2, cy = r.top + r.height/2;
+        const maxR = r.width * STICK_TRAVEL, dead = r.width * STICK_DEADF;
+        stickMaxR = maxR;
         const dxp = e.clientX - cx, dyp = e.clientY - cy;
-        const d = Math.hypot(dxp, dyp), cl = d > STICK_MAXR ? STICK_MAXR/d : 1;
+        const d = Math.hypot(dxp, dyp), cl = d > maxR ? maxR/d : 1;
         park(dxp*cl, dyp*cl);
-        const atMax = d >= STICK_RIM;
+        const atMax = d >= maxR * STICK_RIMF;
         if (atMax && !touchAtMax) armLatch();       // just arrived at the rim — start the clock
         else if (!atMax && touchAtMax) clearLatchTimer(); // eased off it — the dwell has to start over
         touchAtMax = atMax;
-        if (d > STICK_DEAD) {
-          touchVec.x = dxp/d; touchVec.y = dyp/d;
+        if (d > dead) {
+          // ANALOG: the vector carries how FAR you pushed, not just which way. Magnitude ramps
+          // 0→1 from the dead-zone out to the rim, and the mover turns it into thrust — so a
+          // gentle lean is a slow crawl and a full push is a sprint.
+          const mag = clamp((d - dead) / Math.max(1, maxR - dead), 0, 1);
+          touchVec.x = (dxp/d)*mag; touchVec.y = (dyp/d)*mag;
         } else {                                    // back to the centre = stop, and drop the latch
           touchVec.x = touchVec.y = 0; clearLatchTimer(); setLatched(false);
         }
@@ -2288,7 +2311,8 @@
         clearLatchTimer();                          // a dwell still in progress doesn't count
         _stickId = null; touchVec.active = false; touchAtMax = false;
         if (touchLatched && (touchVec.x || touchVec.y)) {
-          park(touchVec.x*STICK_MAXR, touchVec.y*STICK_MAXR); // knob stays thrown: the run is still on
+          touchLatchVec.x = touchVec.x; touchLatchVec.y = touchVec.y;
+          park(touchVec.x*stickMaxR, touchVec.y*stickMaxR); // knob stays thrown: the run is still on
         } else {                                    // never dwelled at the rim → releasing just stops
           touchVec.x = touchVec.y = 0;
           setLatched(false);
@@ -2363,8 +2387,11 @@
     ZOOM = 1.35 * 1.25; // phone: magnify the world so cells aren't specks, +25% again by request
     // The genes are controls, not HUD, so on a phone they belong in the control deck with the
     // stick and buttons — not floating over the ocean inside #hud (which is pointer-events:none).
+    // They go at the TOP of the deck's right column, above the action buttons, leaving the whole
+    // left side to the thumbstick.
     const grow = document.querySelector("#hud .genome-row");
-    if (grow && el.touch) el.touch.insertBefore(grow, el.touch.firstChild);
+    const right = document.getElementById("deckRight");
+    if (grow && right) right.insertBefore(grow, right.firstChild);
   }
   setupTouch();
 

@@ -261,11 +261,14 @@
     padding: 2px 4px 4px; touch-action: none; -webkit-tap-highlight-color: transparent; }
   body.touch #touch { display: flex; }
   #touch.hidden { display: none !important; }
-  /* Sizes are fluid: fixed px would need ~382px of row and would overflow a 360px-wide
-     phone. clamp() lets the stick and buttons shrink with the viewport instead. */
+  /* Sizes are fluid: fixed px would overflow a 360px-wide phone. clamp() lets the stick and
+     buttons shrink with the viewport instead. The stick gets the whole left side; the genes
+     and the action buttons stack down the right. */
   #deckRow { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   #stickZone { position: relative; flex: 0 0 auto; touch-action: none;
-    width: clamp(100px, 30vw, 132px); height: clamp(100px, 30vw, 132px); }
+    width: clamp(128px, 38vw, 172px); height: clamp(128px, 38vw, 172px); }
+  #deckRight { display: flex; flex-direction: column; align-items: flex-end; justify-content: center;
+    flex: 1 1 auto; min-width: 0; gap: 8px; }
   #stickBase { position: absolute; inset: 0; border-radius: 50%; opacity: .55; transition: opacity .1s;
     background: rgba(255,255,255,.05); border: 1.5px solid rgba(255,255,255,.22); }
   #stickBase.on { opacity: .95; }
@@ -303,11 +306,13 @@
     letter-spacing: .3px; color: #06232a; pointer-events: none; text-shadow: none; }
   .tbtn.big.rolo .rcap { font-size: 12px; }
   .rolo:active .rface { filter: brightness(1.25); }
-  /* the genome row is moved in here by game.js on touch: gene chips double as enzyme buttons */
-  #touch .genome-row { display: flex; }
-  #touch .genome { flex-direction: row; flex-wrap: wrap; justify-content: center; align-items: center;
-    gap: 6px; padding: 7px 8px; width: 100%;
-    background: rgba(6,22,27,.68); border: 1px solid rgba(255,255,255,.1); border-radius: 12px; }
+  /* The genome row is moved into the right column by game.js on touch: gene chips double as
+     enzyme buttons. Compact and right-aligned so they tuck in above the action buttons. */
+  #touch .genome-row { display: flex; width: 100%; justify-content: flex-end; }
+  #touch .genome { flex-direction: row; flex-wrap: wrap; justify-content: flex-end; align-items: center;
+    gap: 4px; padding: 5px 6px; width: 100%;
+    background: rgba(6,22,27,.68); border: 1px solid rgba(255,255,255,.1); border-radius: 10px; }
+  #tbtns { width: 100%; justify-content: flex-end; }
 
   /* fold the live charts away with a swipe during play */
   #chartwrap.collapsed > #chartlegend, #chartwrap.collapsed > #chart,
@@ -395,7 +400,9 @@
   body.touch .topline { margin-left: 30%; flex-wrap: wrap; row-gap: 2px; }
   body.touch .bar { width: 108px; }
   body.touch #helix { display: none; }        /* the decorative helix reads as clutter at this size */
-  body.touch .gene { font-size: 12px; padding: 6px 10px; text-align: center; white-space: nowrap; }
+  /* squeezed: the chips have to share the right column with the buttons now */
+  body.touch .gene { font-size: 10.5px; padding: 4px 7px; text-align: center; white-space: nowrap;
+    line-height: 1.2; border-radius: 6px; }
 </style>
 </head>
 <body>
@@ -569,6 +576,9 @@
   <div id="touch" class="hidden">
     <div id="deckRow">
       <div id="stickZone"><div id="stickBase"><div id="stickKnob"></div></div></div>
+      <!-- right column: the genome/adaptation chips squeeze in above the action buttons,
+           so the thumbstick can have the whole left side -->
+      <div id="deckRight">
       <div id="tbtns">
         <!-- Rolodex buttons: the face is flooded with the colour of what's loaded, and the
              neighbours peek out behind it. Tap to fire, swipe up/down to change. -->
@@ -581,6 +591,7 @@
           <span class="rface"></span><span class="rcap">lin</span>
         </button>
         <button id="tPause" class="tbtn pause" aria-label="Pause">❚❚</button>
+      </div>
       </div>
     </div>
   </div>
