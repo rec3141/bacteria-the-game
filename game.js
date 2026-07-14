@@ -36,6 +36,8 @@
       chemoRange0: 400, chemoRangePer: 130, // chemotaxis sensing range grows with chemoLevel
       chemoTurn0: 1.15, chemoTurnPer: 0.5,  // ...and its steering sharpness too
       fedLinger: 2.2, maxCells: 100000, // effectively uncapped (perf backstop only)
+      touchLatchSecs: 0.5, // phone stick: hold it at FULL deflection this long to lock in a run
+                           // that keeps going after you lift your thumb (tap the centre to stop)
     },
     respirationBase: 0.9,
     grid: { cs: 7 },                 // destructible-particle voxel size (px)
@@ -285,11 +287,22 @@
   // on-screen thumbstick (mobile). Tap/flick a direction and the cell RUNS that way
   // for a few seconds on its own (no need to hold); dragging keeps re-aiming it, and
   // tapping the centre stops. Direction only — the mover normalises magnitude.
+  // The stick LATCHES: push it to full deflection and hold that heading for
+  // CFG.cell.touchLatchSecs, and the run locks in — let go and the cell keeps swimming that
+  // way until you stop it (tap the stick's centre). Below full deflection it's an ordinary
+  // analog stick: you steer only while your thumb is down. Committing on a dwell-at-max is
+  // predictable in a way a flick isn't — a flick's direction depends on exactly when the
+  // browser last sampled your finger, which is not something a player can feel.
+  // The dwell runs on a TIMER, not on the game loop: a thumb held perfectly still fires no
+  // pointer events at all, and the loop can be throttled (background tab), so counting dt
+  // would make the latch depend on things the player can't see.
   const touchVec = { x: 0, y: 0, active: false };
-  const TOUCH_RUN_SECS = 3;
-  let touchRunT = 0; // seconds left on a committed tap-run
+  let touchLatched = false;  // a locked-in run survives the finger lifting
+  let touchAtMax = false;    // thumb is out at the rim right now
+  let _latchTimer = null;
   function axis() {
-    if (touchRunT > 0 && (touchVec.x || touchVec.y)) return { x: touchVec.x, y: touchVec.y };
+    // latched, or thumb currently down and off-centre
+    if ((touchLatched || touchVec.active) && (touchVec.x || touchVec.y)) return { x: touchVec.x, y: touchVec.y };
     let x = 0, y = 0;
     if (keys["a"]||keys["arrowleft"]) x -= 1; if (keys["d"]||keys["arrowright"]) x += 1;
     if (keys["w"]||keys["arrowup"]) y -= 1; if (keys["s"]||keys["arrowdown"]) y += 1;
@@ -686,8 +699,6 @@
   function update(dt) {
     if (!state || !state.running) return;
     state.elapsed += dt; env.update();
-    // a committed tap-run keeps steering the player for TOUCH_RUN_SECS after the finger lifts
-    if (touchRunT > 0 && !touchVec.active) touchRunT = Math.max(0, touchRunT - dt);
     for (const c of cells) if (c.alive) updateCell(c, dt);
     // dividing before lysis lets a cell shed the virus into one daughter and escape clean
     for (const c of cells) if (c.alive && c.energy >= CFG.cell.divideThreshold) divide(c);
@@ -1843,6 +1854,7 @@
     "cell.chemoTurnPer": "Extra steering sharpness gained per further chemotaxis level.",
     "cell.fedLinger": "Seconds a cell stays in its 'well fed' state (shorter runs) after eating.",
     "cell.maxCells": "Hard cap on living cells — a performance backstop, not an ecological limit.",
+    "cell.touchLatchSecs": "Phone thumbstick: how long you must hold it at FULL deflection before the run locks in and keeps going after you lift your thumb. Lower = quicker to commit but easier to trigger by accident.",
     "respirationBase": "Baseline energy per second every cell burns just staying alive. The single biggest lever on how punishing the game is.",
     "grid.cs": "Voxel size of destructible particles (px) — smaller = finer digging but more work per frame. Only affects NEWLY spawned particles.",
     "substrate.count": "How many food particles are kept drifting in the water. Applies as particles respawn.",
@@ -2123,23 +2135,45 @@
   //     at the centre (thumb lands, flicks off) committed no direction at all and the cell
   //     just sat there. The release point is now sampled on pointerup as well.
   let _stickId = null;
+  const STICK_MAXR = 52, STICK_DEAD = 10;     // knob travel / dead-zone, CSS px
+  const STICK_RIM = STICK_MAXR * 0.9;         // "full deflection" — the dwell has to happen out here
+  function setLatched(on) {
+    touchLatched = on;
+    if (el.stickBase) el.stickBase.classList.toggle("latched", on); // so you can SEE the run is locked
+  }
+  function clearLatchTimer() { if (_latchTimer) { clearTimeout(_latchTimer); _latchTimer = null; } }
+  function armLatch() { // thumb just reached the rim — latch if it's STILL there when this fires
+    clearLatchTimer();
+    _latchTimer = setTimeout(() => {
+      _latchTimer = null;
+      if (touchVec.active && touchAtMax) setLatched(true);
+    }, Math.max(0, CFG.cell.touchLatchSecs) * 1000);
+  }
   function releaseStick() { // full stop (used when pausing / opening a menu)
-    _stickId = null; touchVec.active = false; touchVec.x = touchVec.y = 0; touchRunT = 0;
+    _stickId = null; touchVec.active = false; touchVec.x = touchVec.y = 0;
+    touchAtMax = false; clearLatchTimer(); setLatched(false);
     if (el.stickBase) el.stickBase.classList.remove("on");
     if (el.stickKnob) el.stickKnob.style.transform = "translate(-50%,-50%)";
   }
   function setupTouch() {
     const zone = el.stickZone, base = el.stickBase, knob = el.stickKnob;
-    const MAXR = 52, DEAD = 10; // knob travel / dead-zone in CSS px
     if (zone && base && knob) {
-      // aim from a pointer's position: past the dead-zone it arms a run; at the centre it stops
+      const park = (x, y) => { knob.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px))`; };
+      // aim from a pointer's position: past the dead-zone it steers; at the centre it stops
       const aim = (e) => {
         const r = base.getBoundingClientRect(), cx = r.left + r.width/2, cy = r.top + r.height/2;
         const dxp = e.clientX - cx, dyp = e.clientY - cy;
-        const d = Math.hypot(dxp, dyp), cl = d > MAXR ? MAXR/d : 1;
-        knob.style.transform = `translate(calc(-50% + ${dxp*cl}px), calc(-50% + ${dyp*cl}px))`;
-        if (d > DEAD) { touchVec.x = dxp/d; touchVec.y = dyp/d; touchRunT = TOUCH_RUN_SECS; }
-        else { touchVec.x = touchVec.y = 0; touchRunT = 0; } // centre = stop
+        const d = Math.hypot(dxp, dyp), cl = d > STICK_MAXR ? STICK_MAXR/d : 1;
+        park(dxp*cl, dyp*cl);
+        const atMax = d >= STICK_RIM;
+        if (atMax && !touchAtMax) armLatch();       // just arrived at the rim — start the clock
+        else if (!atMax && touchAtMax) clearLatchTimer(); // eased off it — the dwell has to start over
+        touchAtMax = atMax;
+        if (d > STICK_DEAD) {
+          touchVec.x = dxp/d; touchVec.y = dyp/d;
+        } else {                                    // back to the centre = stop, and drop the latch
+          touchVec.x = touchVec.y = 0; clearLatchTimer(); setLatched(false);
+        }
       };
       zone.addEventListener("pointerdown", (e) => {
         if (_stickId !== null) return;             // one finger owns the stick; others are free
@@ -2154,11 +2188,17 @@
       });
       const lift = (e) => {
         if (e.pointerId !== _stickId) return;
-        aim(e);                                    // sample where the finger ACTUALLY left — a fast
-                                                   // flick may never fire a move event at all
-        _stickId = null; touchVec.active = false;  // the aimed run now coasts for TOUCH_RUN_SECS
+        aim(e);                                     // sample where the thumb actually left
+        clearLatchTimer();                          // a dwell still in progress doesn't count
+        _stickId = null; touchVec.active = false; touchAtMax = false;
+        if (touchLatched && (touchVec.x || touchVec.y)) {
+          park(touchVec.x*STICK_MAXR, touchVec.y*STICK_MAXR); // knob stays thrown: the run is still on
+        } else {                                    // never dwelled at the rim → releasing just stops
+          touchVec.x = touchVec.y = 0;
+          setLatched(false);
+          park(0, 0);
+        }
         base.classList.remove("on");
-        knob.style.transform = "translate(-50%,-50%)";
       };
       zone.addEventListener("pointerup", lift);
       zone.addEventListener("pointercancel", lift);

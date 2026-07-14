@@ -25,8 +25,10 @@ REMOTE_HOST="${REMOTE_HOST:-dreamhost}"
 REMOTE_DIR="${REMOTE_DIR:-bacteria.cryomics.org}"
 REMOTE="$REMOTE_HOST:$REMOTE_DIR/"
 SITE_URL="${SITE_URL:-https://bacteria.cryomics.org/}"
+# .htaccess ships too: without it DreamHost caches .js for 30 DAYS, which pins a phone to
+# whichever build it happened to download first. A new docroot must never inherit that.
 FILES=(index.html game.js scores.php README.md Bacteria.swf assets
-       manifest.webmanifest icon.svg)
+       manifest.webmanifest icon.svg .htaccess)
 
 FORCE=0
 [ "${1:-}" = "--force" ] && FORCE=1
@@ -50,7 +52,7 @@ known_blobs() {   # every version of $1 this repo has ever held, plus the one on
   git hash-object "$1" 2>/dev/null
 }
 DRIFT=""
-for f in index.html game.js scores.php README.md manifest.webmanifest icon.svg Bacteria.swf; do
+for f in index.html game.js scores.php README.md manifest.webmanifest icon.svg Bacteria.swf .htaccess; do
   [ -f "$f" ] || continue
   # `|| true` on the REMOTE side: a missing file makes cat exit non-zero, and with
   # `set -o pipefail` that would kill the whole deploy — which is exactly what happens

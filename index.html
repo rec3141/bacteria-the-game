@@ -269,6 +269,10 @@
   #stickBase { position: absolute; inset: 0; border-radius: 50%; opacity: .55; transition: opacity .1s;
     background: rgba(255,255,255,.05); border: 1.5px solid rgba(255,255,255,.22); }
   #stickBase.on { opacity: .95; }
+  /* run locked in: the knob stays thrown and the rim lights up, so it's obvious the cell is
+     still swimming even though your thumb is off the stick */
+  #stickBase.latched { opacity: 1; border-color: var(--accent);
+    box-shadow: 0 0 0 1.5px var(--accent), 0 0 18px -4px var(--accent); }
   #stickKnob { position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; border-radius: 50%;
     transform: translate(-50%, -50%); background: rgba(87,224,192,.42); border: 1.5px solid var(--accent);
     box-shadow: 0 0 14px rgba(87,224,192,.4); }
@@ -423,7 +427,7 @@
             <li><kbd>Tab</kbd> — switch which enzyme/antibiotic is loaded &nbsp;·&nbsp; <kbd>M</kbd> — toggle music</li>
             <li><kbd>Shift</kbd> — <b>switch lineage</b>: hand control to another of your lineages</li>
             <li><kbd>Esc</kbd> — pause &amp; high scores &nbsp;·&nbsp; <b>Help</b> button — this guide</li>
-            <li class="touchonly"><b>On a phone:</b> all the controls sit in the <b>deck below the ocean</b>, so your thumbs never cover it. Flick the <b>thumbstick</b> toward a direction and the cell <b>runs that way for ~3s</b> on its own — no need to hold (tap the centre to stop). <b>release</b> / <b>lineage</b> / <b>❚❚</b> are to its right, and you can hold the stick and tap them <b>at the same time</b>. Tap a gene in the <b>genome row</b> to load that enzyme; swipe the chart (up top) to fold it away.</li>
+            <li class="touchonly"><b>On a phone:</b> all the controls sit in the <b>deck below the ocean</b>, so your thumbs never cover it. Steer with the <b>thumbstick</b>; push it <b>all the way out and hold ~½s</b> to <b>lock in a run</b> — the rim lights up and the cell keeps swimming that way after you let go (tap the stick's <b>centre</b> to stop). <b>release</b> / <b>lineage</b> / <b>❚❚</b> are to its right, and you can hold the stick and tap them <b>at the same time</b>. Tap a gene in the <b>genome row</b> to load that enzyme; swipe the chart (up top) to fold it away.</li>
           </ul>
         </section>
         <section>
@@ -588,6 +592,9 @@
   &nbsp;·&nbsp;
   <a href="https://cryomics.org" target="_blank" rel="noopener">Collins Lab</a>
 </footer>
-<script src="game.js"></script>
+<!-- ?v= busts caches that were poisoned before .htaccess landed: a browser holding a
+     30-day-fresh game.js won't even revalidate, so only a NEW URL can dislodge it.
+     With .htaccess in place, future deploys revalidate on their own and this needn't change. -->
+<script src="game.js?v=2"></script>
 </body>
 </html>
