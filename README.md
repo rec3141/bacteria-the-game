@@ -38,6 +38,7 @@ Play it at **https://bacteria.cryomics.org**
 | `game.js` | the entire engine (one IIFE) |
 | `assets/sounds/` | sound effects (extracted from the original SWF) |
 | `scores.php` | shared-leaderboard backend (GET top runs / POST a run; file-backed JSON) |
+| `score_schema.php` | strict nested leaderboard normalization and byte-budget helpers |
 | `Bacteria.swf` | the original 2014 Flash game, kept for posterity |
 
 ## Running locally

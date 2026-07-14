@@ -17,8 +17,8 @@ assert.doesNotMatch(
   "typing a name must not resubmit the full run",
 );
 
-assert.match(php, /\$nameOnly = \(\(\$rec\['op'\]/, "backend must recognize name-only updates");
-assert.match(php, /\$row\['name'\] = clean_name/, "name-only updates must mutate the name field");
+assert.match(php, /\$nameOnly = score_value\(\$submitted, 'op'/, "backend must recognize name-only updates");
+assert.match(php, /\$row\['name'\] = \$name/, "name-only updates must mutate the name field");
 assert.match(php, /run not found/, "name-only updates must not create partial leaderboard rows");
 
 console.log("Name update contracts OK: debounced, name-only, and serialized.");
