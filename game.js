@@ -94,12 +94,17 @@
              turboSecs: 0.25, turboMult: 2.6, turboCost: 7, turboGoldBonus: 0.12, turboMaxSecs: 1.5 },
     // "A day in the life": a 24h clock at 1h = 1min (24-min day); conditions follow a diel cycle.
     // tod (time-of-day) runs 0→1 over the day, starting at DAWN (6am). Curves below drive it.
-    day: { lengthSec: 240, startHour: 6 },
+    // WHERE and WHEN this run happens. Latitude + day-of-year give the real sun: its declination,
+    // its altitude through the day, and therefore true sunrise/sunset — including midnight sun and
+    // polar night above the Arctic Circle. Scenarios will set these.
+    day: { lengthSec: 240, startHour: 6, latitude: 45, dayOfYear: 172 }, // 172 = the June solstice
     diel: {
       tempBase: 17, tempAmp: 5, tempLag: 0.05,   // warmest early afternoon (temp lags the sun)
       foodFloor: 0.35,                            // night food supply as a fraction of the midday bloom
       grazeNight: 1.0,                            // extra grazing pressure at night (diel vertical migration)
       lightGamma: 1.8,                            // shapes the daylight curve: >1 deepens night, sharpens noon
+      twilight: 0.21,                             // light fades through twilight rather than snapping off at the
+                                                  // horizon; 0.21 ~ 12 deg below it (nautical dusk)
       // The WATER's colour is the clock: lerped from midnight navy to midday teal. It used to be a
       // fixed background with a pale wash painted OVER the world at noon, which filmed over the
       // organisms (washed out) and banded as the low alpha faded (jittery).
@@ -336,12 +341,30 @@
   const TAU = Math.PI*2;
   // diel cycle: drive light/temp/food-supply/grazing from the time of day (tod 0→1 across the day).
   // Daylight over tod 0–0.5 (6am–6pm), night 0.5–1; the sun peaks at tod 0.25 (noon).
-  // Sun elevation, and the light it delivers, as ONE continuous function across the whole 24h — no
-  // day phase and night phase running under different rules. max(0, sin) used to flatten the entire
-  // night to exactly zero: a dead half-cycle where light, food and grazing pressure all stopped
-  // varying. This dips to darkness at midnight and climbs back out smoothly, so every driver keeps
-  // moving around the clock.
-  function sunElev(tod) { return Math.sin(tod*TAU); }               // -1 (midnight) .. +1 (noon)
+  // ---------------------------------------------------------------- solar geometry
+  // The real sun, from latitude and day-of-year. One continuous function across the whole 24h —
+  // no day phase and night phase running under different rules — but now it's the actual sun,
+  // so sunrise and sunset fall out of the geometry instead of being assumed to be 6am and 6pm.
+  // Above the Arctic Circle that gives midnight sun and polar night for free.
+  const DEG = Math.PI/180;
+  // Solar declination (Cooper's approximation): +23.44 deg at the June solstice, -23.44 at December.
+  function solarDeclination(doy) { return 23.44*DEG * Math.sin(TAU * (284 + doy) / 365); }
+  // sin(solar altitude): +1 = straight overhead, 0 = on the horizon, negative = below it.
+  function sunElev(tod) {
+    const lat = CFG.day.latitude*DEG, dec = solarDeclination(CFG.day.dayOfYear);
+    const H = (dayHour(tod) - 12) * 15 * DEG;   // hour angle: 0 at solar noon, +-180 deg at midnight
+    return Math.sin(lat)*Math.sin(dec) + Math.cos(lat)*Math.cos(dec)*Math.cos(H);
+  }
+  // Sunrise / sunset in local hours, from cos(H) = -tan(lat)tan(dec). When |cos H| > 1 the sun never
+  // crosses the horizon at all — that's polar day or polar night, and it's a real answer, not an error.
+  function sunTimes() {
+    const lat = CFG.day.latitude*DEG, dec = solarDeclination(CFG.day.dayOfYear);
+    const cosH = -Math.tan(lat)*Math.tan(dec);
+    if (cosH <= -1) return { polar: "day",   sunrise: null, sunset: null, daylightHours: 24 };
+    if (cosH >=  1) return { polar: "night", sunrise: null, sunset: null, daylightHours: 0 };
+    const H = Math.acos(cosH)/DEG/15;           // half the daylength, in hours
+    return { polar: null, sunrise: 12 - H, sunset: 12 + H, daylightHours: 2*H };
+  }
   // The sea's colour, lerped straight from midnight navy to midday teal. Colouring the WATER (rather
   // than washing a film over the finished frame) is what keeps the organisms at full contrast: at
   // noon the sea is bright and the cells still read sharply against it.
@@ -351,10 +374,16 @@
     return `rgb(${ch(0)},${ch(1)},${ch(2)})`;
   }
   function dielLight(tod) {
-    const s = 0.5 + 0.5*sunElev(tod);                               // 0 .. 1, and 0.5 at dawn/dusk
-    return Math.pow(s, CFG.diel.lightGamma);                        // gamma deepens night, sharpens noon
+    // Light doesn't snap off the moment the sun touches the horizon — it fades out through twilight
+    // as the sun keeps sinking. So the ramp is continuous, and deep night is genuinely dark because
+    // the sun is genuinely down, not because a curve was clamped.
+    const tw = CFG.diel.twilight;
+    const t = clamp((sunElev(tod) + tw) / (1 + tw), 0, 1);
+    return Math.pow(t, CFG.diel.lightGamma);                        // gamma deepens night, sharpens noon
   }
-  function dayHour(tod) { return (CFG.day.startHour + tod*24) % 24; }
+  // floor-mod, not %: the temperature lag evaluates the sun at (tod - lag), which goes negative
+  // just after midnight, and JS's % would hand back a negative hour and wreck the hour angle.
+  function dayHour(tod) { const h = (CFG.day.startHour + tod*24) % 24; return (h + 24) % 24; }
   function updateDiel() {
     // tod is clamped, not wrapped, on purpose: the run IS one day — it ends at elapsed >=
     // day.lengthSec with "You survived the day". So tod never needs to come round again.
@@ -2342,6 +2371,9 @@
     "cycle.turboCost": "Energy a protist spends per turbo burst. It has no other use for energy but staying alive, so this is the real price of a sprint.",
     "cycle.turboGoldBonus": "Seconds added to your turbo burst for each gold phage you catch AS A PROTIST — the grazer's version of an adaptation. Stacks for the rest of the run.",
     "cycle.turboMaxSecs": "Ceiling on the turbo burst, however many gold phages you collect.",
+    "day.latitude": "Latitude of this run, degrees (+N / -S). With day.dayOfYear it gives the real sun: sunrise, sunset, how high it climbs. Past ~66.5 you get midnight sun or polar night depending on the season.",
+    "day.dayOfYear": "Day of the year, 1-365. 172 = June solstice, 355 = December solstice, 80/266 = the equinoxes. Sets the sun's declination, so it decides the season.",
+    "diel.twilight": "How far the sun sinks below the horizon before the light is fully gone. 0.21 is roughly nautical dusk (12 deg). Higher = longer, softer twilight.",
     "diel.lightGamma": "Shapes the daylight curve across the 24h. 1 = a plain sinusoid; higher deepens the night and sharpens midday. The light drives food supply, grazing pressure and the colour of the water.",
     "diel.waterNight": "The sea's colour at midnight (r, g, b). The water itself carries the time of day.",
     "diel.waterDay": "The sea's colour at noon (r, g, b). Push it up to make midday brighter.",
