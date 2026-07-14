@@ -23,7 +23,8 @@
   // stage's real size, so that implicit downscale is gone — and anything tuned in the old design
   // space (the touch zoom, the minimap) has to re-apply it or it comes out magnified twice.
   const DESIGN_W = 800;
-  const TOUCH_ZOOM = 1.35 * 1.25;                     // tuned against the 800px design canvas
+  // Read live from CFG.touch.zoom (not a const any more) so the tuning slider actually moves the view.
+  const touchZoom = () => CFG.touch.zoom;
   const viewScale = () => VIEW_W / DESIGN_W;          // 1 on a full-size canvas, ~0.46 on a phone
   const WORLD_W = 2600, WORLD_H = 2000;
 
@@ -71,6 +72,15 @@
     // ~1.7x onto a small pane, so the same world-speed reads as far quicker in the hand.
     // Thrust and top speed scale together, so acceleration feel is unchanged — just slower.
     touchSpeedScale: 0.625,
+    // TOUCH-ONLY tuning. The phone is not a smaller desktop, it's a different game: a cramped view,
+    // a thumb instead of a keyboard, and players who will give it ninety seconds. These knobs exist
+    // to make it FUN there, not to make it match. Desktop is untouched by all of them.
+    touch: {
+      zoom: 1.2,           // was 1.6875 — the phone showed ~59% of the sea the desktop did, which is
+                           // most of why it felt frantic. 1.2 gives back most of the view.
+      autoEnzyme: 1,       // the cell dissolves what it can reach, on its own (see autoEnzyme)
+      autoEnzymeEvery: 0.45,
+    },
     grid: { cs: 7 },                 // destructible-particle voxel size (px)
     substrate: {
       count: 60, moteEnergy: 7,     // count = the food the sea supports at FULL light; the diel target
@@ -149,7 +159,13 @@
       greenSeed: [5, 9], greenFloor: 27, seedBatch: 3, // reservoir: every greenSeed s, top the sampled lineage up (a few at a time) to ≥greenFloor phages tuned to ITS tier
       hostTolerance: 2,     // kill-the-winner: a phage infects only cells within this many upgrade-tiers of its host
       goldLife: [90, 140],  // gold phage lingers far longer than green — you can chase it down
-                            // (one is always kept on the board, respawning near the player when used)
+      // Gold IS the fun: it's the only thing that changes what you can do. Desktop keeps its scarcity
+      // (1 on the board), but on a phone — where a run is short and a player gives you ninety seconds
+      // — scarcity just means most players never see an adaptation at all. So the phone gets 3, closer
+      // in, and levels up several times faster. This is the biggest single lever on mobile.
+      goldCount: 1, goldCountTouch: 3,
+      goldMinDist: 650, goldMinDistTouch: 300, // how far away a fresh gold is buried
+
       goldGrabTouch: 3,     // ON TOUCH ONLY: multiplies the gold phage's grab radius. Catching it with
                             // a thumb on a small screen is far fiddlier than with a keyboard.
     },
@@ -948,6 +964,38 @@
     if (state.activeEnzyme === AB) { if (releaseAntibiotic(c)) Audio.play("enzyme", 0.55); }
     else if (releaseEnzyme(c, state.activeEnzyme)) Audio.play("enzyme", 0.7);
   }
+  // TOUCH ONLY. On a phone the interesting decision is WHERE TO SWIM, not when to press a button —
+  // and asking a thumb to hold a stick, aim, and tap release at the right instant is why mobile felt
+  // like work. So the cell digests whatever it can reach, by itself, exactly as a real one would.
+  // The release button still works and is still the only way to fire the antibiotic, which is a
+  // choice (who to poison) rather than a chore.
+  function autoEnzyme(c, dt) {
+    c.autoEnzT = (c.autoEnzT || 0) - dt;
+    if (c.autoEnzT > 0) return;
+    if (c.energy < CFG.cell.enzymeCost*2) return;        // never starve yourself digesting
+    const owned = ownedEnzymes(c);
+    if (!owned.length) return;
+    // Measure from the FRONT POLE, which is where releaseEnzyme actually puts the cloud — not from
+    // the cell's centre. Measuring from the centre fires at particles the cell is facing away from,
+    // and the cloud lands in open water and dissolves nothing. So this is also what makes auto-fire
+    // mean "dissolve the particle AHEAD", the same rule the keyboard has.
+    const pol = cellPolesLocal(c);
+    const ex = c.x + pol[0], ey = c.y + pol[1];
+    let best = null, bd = Infinity, bres = null;
+    for (const s of substrates) {
+      if (s.organic <= 0 || s.phase !== "live") continue;
+      const res = owned.find((i) => s.orgByType[i] > 0);          // something in there we can actually digest
+      if (res == null) continue;
+      const bite = CFG.enzyme.maxRadius * (1 + (c.enzLvl[res] - 1)*CFG.cell.exprBoost); // this enzyme's reach
+      const d = Math.sqrt(toroDist2(ex, ey, s.x, s.y)) - s.R;     // pole → the particle's SURFACE
+      if (d > bite*0.95 || d >= bd) continue;
+      bd = d; best = s; bres = res;
+    }
+    if (!best) return;
+    state.activeEnzyme = bres;                            // load the right one, so the HUD tells the truth
+    if (releaseEnzyme(c, bres)) { Audio.play("enzyme", 0.5); c.autoEnzT = CFG.touch.autoEnzymeEvery; }
+    else c.autoEnzT = 0.3;
+  }
   function releaseAntibiotic(c) {
     if (c.antibiotic <= 0 || c.energy < CFG.cell.antibioticCost) return false;
     c.energy -= CFG.cell.antibioticCost;
@@ -1289,6 +1337,7 @@
         c.tvx = (a.x/len)*sp; c.tvy = (a.y/len)*sp;
         c.energy -= CFG.cell.swimCost*dt;
       } else { c.tumbling = true; c.angle += Math.sin(state.elapsed*3 + c.x)*CFG.cell.playerTumbleTurn*dt; }
+      if (isTouch && CFG.touch.autoEnzyme) autoEnzyme(c, dt);   // the phone fires its own enzymes
     } else autonomousMove(c, dt);        // sets tvx/tvy, or drifts a cyst by hand
 
     // Relax onto the target: dv/dt = k(v* - v), solved in CLOSED FORM rather than stepped. With k
@@ -1702,9 +1751,12 @@
         }
       }
     }
-    // always keep one gold phage on the board — respawns the instant one is used,
-    // usually buried inside a distant particle so you have to dig it out
-    if (!phages.some((p) => p.type === "gold") && phages.length < CFG.phage.maxCount) {
+    // keep the board stocked with gold — respawns the instant one is used, usually buried inside a
+    // distant particle so you have to dig it out. On touch there are several, and they're closer in.
+    const goldWant = isTouch ? CFG.phage.goldCountTouch : CFG.phage.goldCount;
+    const goldMin = isTouch ? CFG.phage.goldMinDistTouch : CFG.phage.goldMinDist;
+    const goldHave = phages.reduce((n, p) => n + (p.type === "gold" && !p.dead ? 1 : 0), 0);
+    if (goldHave < goldWant && phages.length < CFG.phage.maxCount) {
       const pc = controlledCell();
       const owned = pc ? ownedEnzymes(pc) : [2]; // resources this cell can dig through
       let gx, gy, host = null, placed = false;
@@ -1713,7 +1765,7 @@
         for (let k = 0; k < 14 && !placed; k++) {
           const p = substrates[(Math.random()*substrates.length)|0];
           if (p.phase !== "live") continue;
-          if (pc && toroDist2(p.x, p.y, pc.x, pc.y) <= 650*650) continue;
+          if (pc && toroDist2(p.x, p.y, pc.x, pc.y) <= goldMin*goldMin) continue;
           if (!owned.some((r) => p.orgByType[r] > 0)) continue;
           const cs = p.cs, half = p.half, inner = [], outer = [];
           for (let gj = 0; gj < p.n; gj++) for (let gi = 0; gi < p.n; gi++) {
@@ -2654,7 +2706,7 @@
       // Re-derive the zoom from the canvas we actually got. Without this the touch zoom (tuned
       // when the canvas was a fixed 800px being CSS-scaled down) composites with the responsive
       // canvas and the world is magnified twice over.
-      if (isTouch) ZOOM = TOUCH_ZOOM * viewScale();
+      if (isTouch) ZOOM = touchZoom() * viewScale();
     }
   }
   let last = 0;
@@ -2860,6 +2912,13 @@
     "phage.hostTolerance": "Kill-the-winner window: how many adaptation tiers from its host a phage can still infect. Lower = upgrading shakes off your pursuers faster.",
     "phage.goldLife": "Seconds the rare GOLD phage (the HGT upgrade) lingers before vanishing.",
     "phage.goldGrabTouch": "TOUCH DEVICES ONLY: multiplies the gold phage's grab radius, because catching it with a thumb is much fiddlier than with a keyboard. 1 = same as desktop. Green phages are unaffected.",
+    "phage.goldCount": "How many gold phages are kept on the board at once (desktop). Gold is the only thing that changes what you can do, so this is really 'how fast can you evolve'. 1 = scarce, a hunt.",
+    "phage.goldCountTouch": "Same, on a phone. Higher than desktop on purpose: mobile runs are short, and at desktop scarcity most phone players never see a single adaptation.",
+    "phage.goldMinDist": "How far from you a fresh gold phage is buried (px). Big = a real expedition.",
+    "phage.goldMinDistTouch": "Same, on a phone — closer in, because the phone shows you far less sea and a distant gold is one you'll never know existed.",
+    "touch.zoom": "TOUCH ONLY: world magnification on a phone. HIGH zoom = fewer world-pixels on screen, so the same swim speed reads as frantic and food appears out of nowhere. This was 1.69 and is most of why mobile felt worse than desktop. Lower = calmer, more sea visible, smaller cells.",
+    "touch.autoEnzyme": "TOUCH ONLY: 1 = your cell dissolves any particle it can reach, by itself. The interesting decision on a phone is where to swim, not when to tap. 0 = fire everything by hand, as on desktop.",
+    "touch.autoEnzymeEvery": "TOUCH ONLY: seconds between auto-fired enzymes. Lower = digs faster and burns more energy.",
   };
   // arrays are documented once at the parent path; ".0"/".1" fall back to it
   function tuneDoc(path) {
@@ -3237,7 +3296,7 @@
   if (coarse || "ontouchstart" in window) {
     document.body.classList.add("touch"); isTouch = true;
     scoreDevice = "touch";   // open the leaderboard on the board you're actually competing on
-    ZOOM = TOUCH_ZOOM * viewScale(); // resizeCanvas re-derives this whenever the canvas changes size
+    ZOOM = touchZoom() * viewScale(); // resizeCanvas re-derives this whenever the canvas changes size
     // The genes are controls, not HUD, so on a phone they belong in the control deck with the
     // stick and buttons — not floating over the ocean inside #hud (which is pointer-events:none).
     // They go at the TOP of the deck's right column, above the action buttons, leaving the whole
