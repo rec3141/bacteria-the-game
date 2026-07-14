@@ -30,7 +30,11 @@
   const CFG = {
     cell: {
       radius: 5, baseHalf: 9, maxHalf: 22, lenBaseEnergy: 55, elongK: 0.11,
-      thrust: 780, maxSpeed: 240, uptake: 14,
+      // Low Reynolds number (see updateCell): speed is thrust/drag, not accumulated momentum.
+      // thrust and dragRate therefore only matter as a RATIO — 21270/60 = 354 px/s of free-swim
+      // speed, which maxSpeed then caps at 240. Raising dragRate alone makes the cell slower AND
+      // crisper; raising both together keeps the speed and just kills the glide.
+      thrust: 21270, dragRate: 60, cystDragRate: 2.2, maxSpeed: 240, uptake: 14,
       startEnergy: 110, maxEnergy: 230, divideThreshold: 175, // energy a cell must bank before it splits.
                            // 200 was too high to be REACHABLE: an autonomous carb-only cell tops out around
                            // 110-170 energy, so it never divided — it just encysted, and a colony left to
@@ -215,6 +219,7 @@
     toast: document.getElementById("toast"),
     help: document.getElementById("help"), helpBtn: document.getElementById("helpBtn"), helpBack: document.getElementById("helpBack"),
     helpBtn2: document.getElementById("helpBtn2"), helpBtn3: document.getElementById("helpBtn3"),
+    dayLen: document.getElementById("dayLen"),   // filled from CFG.day.lengthSec — it's a tunable knob
     science: document.getElementById("science"), sciBody: document.getElementById("sciBody"), sciBack: document.getElementById("sciBack"),
     sciBtn: document.getElementById("sciBtn"), sciBtn2: document.getElementById("sciBtn2"), sciBtn3: document.getElementById("sciBtn3"),
     analysisChart: document.getElementById("analysisChart"), analysisStats: document.getElementById("analysisStats"),
@@ -480,6 +485,11 @@
   function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
   // how fast swimming things move; halved on a phone (read live, so the tuning slider works)
   const swimScale = () => (isTouch ? CFG.touchSpeedScale : 1);
+  // The speed a cell's thrust can actually sustain against drag. At low Reynolds number that IS
+  // the cell's speed — there is no momentum to accumulate — so this is a velocity, not a target to
+  // accelerate toward. `f` scales the thrust: how far the stick is pushed, or a fed cell's amble.
+  const swimSpeed = (f, visc) => Math.min(CFG.cell.thrust*f/(CFG.cell.dragRate*visc),
+                                          CFG.cell.maxSpeed/Math.sqrt(visc)) * swimScale();
   function rand(a, b) { return a + Math.random()*(b-a); }
   function wrapX(v) { return ((v % WORLD_W) + WORLD_W) % WORLD_W; }
   function wrapY(v) { return ((v % WORLD_H) + WORLD_H) % WORLD_H; }
@@ -1129,20 +1139,30 @@
       c.cyst = true;
     }
 
+    // LOW REYNOLDS NUMBER. A bacterium has no useful inertia: viscous drag overwhelms momentum, so
+    // its velocity is whatever its thrust sustains against drag, reached (and lost) almost at once.
+    // It does not coast — a real cell that stops swimming halts within an atom's width. So thrust
+    // sets a TARGET VELOCITY (tvx, tvy) and the cell relaxes onto it; it does not accumulate speed.
+    c.tvx = 0; c.tvy = 0;
     if (c.controlled) {
       const a = axis();
       if (a.x !== 0 || a.y !== 0) {
         c.tumbling = false; const len = Math.hypot(a.x, a.y); c.angle = Math.atan2(a.y, a.x);
-        // |a| is how far the stick is pushed (keyboard always gives a full 1). Thrust scales with
-        // it, and drag makes terminal speed proportional to thrust — so a half-push is half speed.
-        const mag = Math.min(1, len);
-        const th = CFG.cell.thrust/visc*swimScale()*mag;
-        c.vx += (a.x/len)*th*dt; c.vy += (a.y/len)*th*dt;
+        // |a| is how far the stick is pushed (keyboard always gives a full 1), and speed is
+        // proportional to thrust — so a half-push really is half speed.
+        const sp = swimSpeed(Math.min(1, len), visc);
+        c.tvx = (a.x/len)*sp; c.tvy = (a.y/len)*sp;
         c.energy -= CFG.cell.swimCost*dt;
       } else { c.tumbling = true; c.angle += Math.sin(state.elapsed*3 + c.x)*CFG.cell.playerTumbleTurn*dt; }
-    } else autonomousMove(c, dt);
+    } else autonomousMove(c, dt);        // sets tvx/tvy, or drifts a cyst by hand
 
-    const drag = Math.exp(-2.2*visc*dt); c.vx *= drag; c.vy *= drag;
+    // Relax onto the target: dv/dt = k(v* - v), solved in CLOSED FORM rather than stepped. With k
+    // this stiff an Euler step would tie the cell's speed to the frame rate (and blow up at k·dt>2);
+    // the exponential is exact at any dt. A cyst is inert, so it keeps the old lazy drag and drifts.
+    const k = (c.cyst ? CFG.cell.cystDragRate : CFG.cell.dragRate) * visc;
+    const relax = Math.exp(-k*dt);
+    c.vx = c.tvx + (c.vx - c.tvx)*relax;
+    c.vy = c.tvy + (c.vy - c.tvy)*relax;
     const sp = Math.hypot(c.vx, c.vy), vmax = CFG.cell.maxSpeed/Math.sqrt(visc)*swimScale();
     if (sp > vmax) { c.vx = c.vx/sp*vmax; c.vy = c.vy/sp*vmax; }
     c.x = wrapX(c.x + c.vx*dt); c.y = wrapY(c.y + c.vy*dt);
@@ -1205,8 +1225,10 @@
       c.tumbleT -= dt;
       if (c.tumbleT <= 0) { c.tumbling = false; c.runTimer = rand(CFG.cell.runMin, CFG.cell.runMax)*fedF; }
     } else {
-      const th = CFG.cell.thrust/visc*fedF*swimScale();
-      c.vx += Math.cos(c.angle)*th*dt; c.vy += Math.sin(c.angle)*th*dt;
+      // a run: thrust straight ahead. Speed is thrust/drag (see updateCell), so a fed cell's
+      // lower thrust is simply a slower amble — and a tumbling cell, thrusting at nothing, stops.
+      const sp = swimSpeed(fedF, visc);
+      c.tvx = Math.cos(c.angle)*sp; c.tvy = Math.sin(c.angle)*sp;
       c.energy -= CFG.cell.swimCost*fedF*dt;
       // up-gradient → suppress tumbling (longer run); the suppression scales with chemoLevel
       c.runTimer -= upGrad ? dt/(1 + CFG.cell.chemoBias*c.chemoLevel) : dt;
@@ -1372,7 +1394,12 @@
           const boost = pr.turboT > 0 ? CFG.cycle.turboMult : 1;   // Space = a burst of speed
           const spd = CFG.cycle.protistThrust*swimScale()*boost/Math.sqrt(env.viscosity);
           pr.vx = Math.cos(pr.heading)*spd; pr.vy = Math.sin(pr.heading)*spd;
-        } else { pr.vx *= 0.8; pr.vy *= 0.8; }
+        } else {
+          // A protist is a microbe too: it stops when it stops pushing. `*= 0.8` decayed once per
+          // FRAME, so a 120Hz display halted it twice as fast as a 60Hz one — this is per second.
+          const relax = Math.exp(-CFG.cell.dragRate*env.viscosity*dt);
+          pr.vx *= relax; pr.vy *= relax;
+        }
       } else {
         let target = null, td = P.senseRange**2;
         if (hunting) for (const c of cells) { if (!c.alive || c.cyst) continue; const d = toroDist2(pr.x, pr.y, c.x, c.y); if (d < td) { td = d; target = c; } }
@@ -2217,7 +2244,19 @@
   }
   function hideScores() { el.scores.classList.add("hidden"); if (el.scoreDetail) el.scoreDetail.classList.add("hidden"); }
   let helpOpen = false, sciOpen = false;
-  function showHelp() { if (el.help) { el.help.classList.remove("hidden"); helpOpen = true; } }
+  // The day's real-time length is a tunable knob, so the help screen must not hardcode it — it used
+  // to promise "one hour per real minute", which stopped being true the moment day.lengthSec moved.
+  function dayLenStr() {
+    const s = Math.round(CFG.day.lengthSec);
+    if (s < 90) return `${s} seconds`;
+    const m = s/60;
+    return `${Number.isInteger(m) ? m : m.toFixed(1)} minutes`;
+  }
+  function showHelp() {
+    if (!el.help) return;
+    if (el.dayLen) el.dayLen.textContent = dayLenStr();
+    el.help.classList.remove("hidden"); helpOpen = true;
+  }
   function hideHelp() { if (el.help) { el.help.classList.add("hidden"); helpOpen = false; } }
   function showScience() { if (el.science) { el.science.classList.remove("hidden"); sciOpen = true; if (el.sciBody) el.sciBody.scrollTop = 0; } }
   function hideScience() { if (el.science) { el.science.classList.add("hidden"); sciOpen = false; } }
@@ -2444,8 +2483,10 @@
     "cell.maxHalf": "Half-length at full elongation, just before it splits (px).",
     "cell.lenBaseEnergy": "Energy above which a cell starts elongating.",
     "cell.elongK": "Extra half-length gained per unit of energy above lenBaseEnergy.",
-    "cell.thrust": "Swim acceleration while running.",
-    "cell.maxSpeed": "Top swim speed (px/s).",
+    "cell.thrust": "Swim thrust. At low Reynolds number speed is thrust/dragRate, NOT an acceleration — the cell reaches this speed at once and loses it at once. Raise thrust alone and the cell swims faster; raise it with dragRate and the speed is unchanged, only the glide.",
+    "cell.dragRate": "How fast velocity relaxes onto what the thrust sustains (1/s). High = the cell stops dead when you let go, which is what a real bacterium does (viscosity beats inertia at this size). Low = it coasts like a submarine, which is wrong but forgiving. Also sets free-swim speed via thrust/dragRate.",
+    "cell.cystDragRate": "Same, for a dormant cyst. Kept low so a cyst keeps drifting with the water instead of freezing in place.",
+    "cell.maxSpeed": "Hard cap on swim speed (px/s), applied after thrust/dragRate.",
     "cell.uptake": "Nutrient absorbed per second while touching free motes.",
     "cell.startEnergy": "Energy a new cell begins life with.",
     "cell.maxEnergy": "Energy ceiling — a cell can't store more than this.",
