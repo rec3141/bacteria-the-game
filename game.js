@@ -39,8 +39,17 @@
       chemoBias: 0.9,                       // run-length extension per level when heading up-gradient (biased random walk)
       fedLinger: 2.2, maxCells: 100000, // effectively uncapped (perf backstop only)
       genomeUpkeep: 0.05, // extra respiration per adaptation tier — the metabolic cost of a bigger genome (streamlining pressure)
+      touchLatchSecs: 0.25, // phone stick: hold it at FULL deflection this long to lock in a run
+                            // that keeps going after you lift your thumb (tap the centre to stop)
+      touchRunSecs: 2.0,   // ...and the locked run winds down over this long rather than sticking
+                           // on forever — the knob eases back to centre as it runs out
     },
     respirationBase: 0.9,
+    // TOUCH ONLY: scales how fast things SWIM (your cells and the protists, together — halving
+    // only your own would hand the grazers a 2x speed advantage). The phone magnifies the world
+    // ~1.7x onto a small pane, so the same world-speed reads as far quicker in the hand.
+    // Thrust and top speed scale together, so acceleration feel is unchanged — just slower.
+    touchSpeedScale: 0.625,
     grid: { cs: 7 },                 // destructible-particle voxel size (px)
     substrate: {
       count: 38, moteEnergy: 7,      // board particle count (a knob for future levels; food scarcity keeps colonies + the phage bursts they feed manageable)
@@ -50,6 +59,17 @@
       dissolveTime: 9,               // at end of life it erodes voxel-by-voxel over this many seconds
       driftMin: 9, driftMax: 20,     // drift in from offscreen (faster = food rebounds quicker after you strip an area), still eased-in, no popping
       minPerRes: 2,                  // always keep at least this many particles dominant in EACH resource (so every enzyme has food)
+      // Depth shading ("grain"): a voxel is lit by its distance to the particle's SURFACE,
+      // not by noise — so the mass reads as solid, and a face you just carved open brightens
+      // by itself. Deterministic (a pure function of the grid), so it never shimmers.
+      grainStrength: 1,              // 0 = the old flat fill; 1 = full effect (blend factor)
+      grainRim: 1.16,                // brightness multiplier on surface voxels (depth 1)
+      grainFalloff: 0.2,             // brightness lost per voxel step deeper into the mass:
+                                     // reaches the floor ~7 voxels in, so only particles bigger
+                                     // than ~50px radius grow an unreadable core — small ones stay
+                                     // legible, and the mystery scales with the size of the prize
+      grainFloor: 0.1,               // buried core keeps a whisper of its hue, so it still reads as
+                                     // matter you can't see into rather than a hole in the particle
     },
     enzyme: { life: 5.0, maxRadius: 24, growTime: 0.4 },
     toxin: { life: 4.5, maxRadius: 40, growTime: 0.4, dose: 55, potency: 18, radiusPer: 0.34, // anti-protist antibiotic: fixed `dose` hit + lingering `potency`/s (NOT scaled by level); leveling GROWS the radius (radiusPer) so it hits more protists at once
@@ -88,8 +108,14 @@
       hostTolerance: 2,     // kill-the-winner: a phage infects only cells within this many upgrade-tiers of its host
       goldLife: [90, 140],  // gold phage lingers far longer than green — you can chase it down
                             // (one is always kept on the board, respawning near the player when used)
+      goldGrabTouch: 3,     // ON TOUCH ONLY: multiplies the gold phage's grab radius. Catching it with
+                            // a thumb on a small screen is far fiddlier than with a keyboard.
     },
   };
+  // Snapshot the shipped values before anything can touch them — the tuning panel
+  // (` key) reads these for its slider ranges, its reset, and to tell whether a run
+  // was played on modified numbers.
+  const CFG_DEFAULTS = JSON.parse(JSON.stringify(CFG));
 
   // Resource classes: each exoenzyme dissolves only its matching resource. Voxels
   // are colour-coded by resource so a particle reads as its biochemical makeup.
@@ -124,8 +150,14 @@
     genome: document.getElementById("genome"), helix: document.getElementById("helix"),
     title: document.getElementById("title"), over: document.getElementById("over"), chartwrap: document.getElementById("chartwrap"), hud: document.getElementById("hud"),
     stage: document.getElementById("stage"), game: document.getElementById("game"),
-    touch: document.getElementById("touch"), moveZone: document.getElementById("moveZone"),
+    touch: document.getElementById("touch"),
     tLin: document.getElementById("tLin"), tPause: document.getElementById("tPause"),
+    admin: document.getElementById("admin"), adminBody: document.getElementById("adminBody"),
+    adminDoc: document.getElementById("adminDoc"),
+    adminSearch: document.getElementById("adminSearch"), adminCount: document.getElementById("adminCount"),
+    adminName: document.getElementById("adminName"), adminSave: document.getElementById("adminSave"),
+    adminLoad: document.getElementById("adminLoad"), adminReset: document.getElementById("adminReset"),
+    adminFile: document.getElementById("adminFile"), adminStatus: document.getElementById("adminStatus"),
     overTitle: document.getElementById("overTitle"), overMsg: document.getElementById("overMsg"),
     startBtn: document.getElementById("startBtn"), restartBtn: document.getElementById("restartBtn"),
     updateBtn: document.getElementById("updateBtn"),
@@ -307,7 +339,14 @@
   // ------------------------------------------------------------------- input
   const keys = {};
   addEventListener("keydown", (e) => {
-    if (e.key === "Escape") { if (sciOpen) { hideScience(); return; } if (helpOpen) { hideHelp(); return; } togglePause(); return; }
+    // Typing in a field (leaderboard name, tuning inputs) must not also drive the
+    // cell — otherwise "m" mutes the music and Space fires an enzyme mid-word.
+    const t = e.target;
+    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+    // match e.code too: on non-US layouts the key left of "1" doesn't emit a backtick
+    if (e.key === "`" || e.code === "Backquote") { e.preventDefault(); toggleAdmin(); return; } // live-tuning panel
+    if (adminOpen && e.key === "/" && el.adminSearch) { e.preventDefault(); el.adminSearch.focus(); el.adminSearch.select(); return; }
+    if (e.key === "Escape") { if (adminOpen) { toggleAdmin(false); return; } if (sciOpen) { hideScience(); return; } if (helpOpen) { hideHelp(); return; } togglePause(); return; }
     if (e.key.toLowerCase() === "m") { cycleAudio(); return; } // cycle: all on → music off → effects off → muted
     if (helpOpen || sciOpen || paused) return; // swallow gameplay input while a menu is up
     if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," ","Tab"].includes(e.key)) e.preventDefault();
@@ -317,10 +356,29 @@
     if (!e.repeat && e.key === "Shift") switchControl();  // switch which lineage you're steering
   });
   addEventListener("keyup", (e) => { keys[e.key.toLowerCase()] = false; });
-  // on-screen thumbstick (mobile); direction only — the mover normalises magnitude
+  // on-screen thumbstick (mobile). Tap/flick a direction and the cell RUNS that way
+  // for a few seconds on its own (no need to hold); dragging keeps re-aiming it, and
+  // tapping the centre stops. Direction only — the mover normalises magnitude.
+  // The stick LATCHES: push it to full deflection and hold that heading for
+  // CFG.cell.touchLatchSecs, and the run locks in — let go and the cell keeps swimming that
+  // way until you stop it (tap the stick's centre). Below full deflection it's an ordinary
+  // analog stick: you steer only while your thumb is down. Committing on a dwell-at-max is
+  // predictable in a way a flick isn't — a flick's direction depends on exactly when the
+  // browser last sampled your finger, which is not something a player can feel.
+  // The dwell runs on a TIMER, not on the game loop: a thumb held perfectly still fires no
+  // pointer events at all, and the loop can be throttled (background tab), so counting dt
+  // would make the latch depend on things the player can't see.
+  // touchVec carries DIRECTION AND MAGNITUDE (|v| ≤ 1): how far you pushed the stick is how hard
+  // the cell swims. The mover reads the magnitude as a thrust multiplier.
   const touchVec = { x: 0, y: 0, active: false };
+  const touchLatchVec = { x: 0, y: 0 }; // the committed run's vector, so the decay can ease it out
+  let touchLatched = false;  // a locked-in run survives the finger lifting
+  let touchRunT = 0;         // ...but only for this long: it winds down instead of sticking on
+  let touchAtMax = false;    // thumb is out at the rim right now
+  let _latchTimer = null;
   function axis() {
-    if (touchVec.active) return { x: touchVec.x, y: touchVec.y };
+    // latched, or thumb currently down and off-centre
+    if ((touchLatched || touchVec.active) && (touchVec.x || touchVec.y)) return { x: touchVec.x, y: touchVec.y };
     let x = 0, y = 0;
     if (keys["a"]||keys["arrowleft"]) x -= 1; if (keys["d"]||keys["arrowright"]) x += 1;
     if (keys["w"]||keys["arrowup"]) y -= 1; if (keys["s"]||keys["arrowdown"]) y += 1;
@@ -329,6 +387,8 @@
 
   // --------------------------------------------------------- helpers (torus)
   function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+  // how fast swimming things move; halved on a phone (read live, so the tuning slider works)
+  const swimScale = () => (isTouch ? CFG.touchSpeedScale : 1);
   function rand(a, b) { return a + Math.random()*(b-a); }
   function wrapX(v) { return ((v % WORLD_W) + WORLD_W) % WORLD_W; }
   function wrapY(v) { return ((v % WORLD_H) + WORLD_H) % WORLD_H; }
@@ -347,6 +407,7 @@
   let state = null, cells = [], substrates = [], enzymes = [], toxins = [], nutrients = [],
       predators = [], phages = [], particles = [], flagPhase = 0, cam = { x: 0, y: 0 }, paused = false;
   let ZOOM = 1; // world magnification — bumped on touch devices so cells aren't tiny on a small screen
+  let isTouch = false; // coarse-pointer device → mobile control + HUD layout (minimap top-left, etc.)
   let chartLog = false; // generation-history charts: log vs. linear y-axis (toggled by clicking a chart)
   let subMode = 0;      // lower chart: 0 = food available, 1 = cause of mortality (toggled by clicking it)
 
@@ -631,12 +692,18 @@
     }
     return true;
   }
-  function cycleEnzyme() {
+  // a deployable's colour + short label — same colours the gene chips use, so the phone's
+  // release button and the genome row can never disagree about what "carb" looks like
+  const TOXIN_UI = "#f05ad0";
+  const deployColor = (id) => (id === AB ? TOXIN_UI : RESOURCES[id].color);
+  const deployCap   = (id) => (id === AB ? "anti" : ["lip", "pro", "carb"][id]);
+  function cycleEnzyme(dir) {                // dir -1 steps back; default forward
     if (!state || !state.running) return;
     const c = controlledCell(); if (!c) return;
     const owned = ownedDeployables(c); if (owned.length < 2) return; // nothing else to load
-    const cur = owned.indexOf(state.activeEnzyme);
-    state.activeEnzyme = owned[(cur + 1) % owned.length];
+    const step = dir === -1 ? -1 : 1;
+    let cur = owned.indexOf(state.activeEnzyme); if (cur < 0) cur = 0;
+    state.activeEnzyme = owned[(cur + step + owned.length) % owned.length];
     Audio.play("eat", 0.3);
   }
   // directly load a specific deployable by tapping its gene (id 0-2 enzymes, 3 antibiotic); ignored if not owned
@@ -649,24 +716,36 @@
   }
   // hand control to a DIFFERENT lineage — cycle through the distinct generations (ecotype+tier) present,
   // so you can shepherd several populations at different adaptation tiers (diversity = virus resilience).
-  function switchControl() {
-    if (!state || !state.running) return;
-    if (state.role === "protist") { // as a grazer, hop between protists
-      const i = predators.findIndex((p) => p.controlled);
-      if (i >= 0 && predators.length > 1) { predators[i].controlled = false; predators[(i + 1) % predators.length].controlled = true; Audio.play("hit", 0.5); }
-      return;
-    }
-    const cur = controlledCell(); if (!cur) return;
-    const reps = new Map(); // one healthy representative per generation bucket in the living colony
+  // the distinct lineages alive right now, one healthy representative each, in a stable order.
+  // Shared by switchControl and the lineage button, so the button shows exactly what a swipe
+  // would hand you.
+  function lineageReps() {
+    const reps = new Map();
     for (const c of cells) { if (!c.alive || c.cyst) continue;
       const k = ecoMask(c)*64 + upgradeTier(c), r = reps.get(k);
       if (!r || c.energy > r.energy) reps.set(k, c);
     }
+    return { reps, ks: [...reps.keys()].sort((a, b) => a - b) };
+  }
+  const lineageKeyColor = (k) => levelColor(Math.floor(k/64), k % 64); // key → the colour it's drawn in
+  function switchControl(dir) {              // dir -1 steps back through the lineages; default forward
+    if (!state || !state.running) return;
+    const step = dir === -1 ? -1 : 1;
+    if (state.role === "protist") {          // as a grazer, hop between protists instead
+      const i = predators.findIndex((p) => p.controlled);
+      if (i >= 0 && predators.length > 1) {
+        predators[i].controlled = false;
+        predators[(i + step + predators.length) % predators.length].controlled = true;
+        Audio.play("hit", 0.5);
+      }
+      return;
+    }
+    const cur = controlledCell(); if (!cur) return;
+    const { reps, ks } = lineageReps();
     let target = null;
     if (reps.size >= 2) {                    // cycle to the next distinct lineage
-      const ks = [...reps.keys()].sort((a, b) => a - b);
       let i = ks.indexOf(ecoMask(cur)*64 + upgradeTier(cur)); if (i < 0) i = 0;
-      target = reps.get(ks[(i + 1) % ks.length]);
+      target = reps.get(ks[(i + step + ks.length) % ks.length]);
     } else {                                 // only one lineage — jump to the farthest other cell (a separate cluster)
       let bd = -1; for (const c of cells) { if (c === cur || !c.alive || c.cyst) continue;
         const d = toroDist2(c.x, c.y, cur.x, cur.y); if (d > bd) { bd = d; target = c; } }
@@ -769,10 +848,12 @@
     state.running = false;
     recordGame();
     const cal = `<b>${Math.round(state.score).toLocaleString()}</b> calories`;
+    // a run played with the tuning panel open isn't comparable to anyone else's — say so
+    const tuned = cfgTuned() ? `<br><span style="font-size:12px;opacity:.7;color:#ffd24a">tuned run — kept local, not sent to the shared leaderboard</span>` : "";
     el.overTitle.textContent = dayComplete ? "You survived the day! 🌅" : "Run ended";
-    el.overMsg.innerHTML = dayComplete
+    el.overMsg.innerHTML = (dayComplete
       ? `A full day in the life — your lineage reached <b>generation ${state.gen}</b> and consumed ${cal}.`
-      : `Your lineage reached <b>generation ${state.gen}</b> and consumed ${cal}.`;
+      : `Your lineage reached <b>generation ${state.gen}</b> and consumed ${cal}.`) + tuned;
     drawAnalysis();
     if (el.nameInput) el.nameInput.value = playerName; // prefill with the remembered name
     Audio.play(dayComplete ? "spawn" : "death", dayComplete ? 0.7 : 0.9);
@@ -793,6 +874,24 @@
     if (!state || !state.running) return;
     state.elapsed += dt; updateDiel();               // advance the day; drive light/temp/food/grazing
     if (state.elapsed >= CFG.day.lengthSec) { gameOver(true); return; } // the day is over — you made it (or the run ends)
+    // A locked run winds down instead of sticking on: the knob eases back to centre and the
+    // rim's glow fades, so you can watch it run out rather than being stuck swimming. Held
+    // thumb pauses the countdown — that's you steering, not coasting.
+    if (touchLatched && !touchVec.active) {
+      touchRunT -= dt;
+      const frac = clamp(touchRunT / Math.max(0.01, CFG.cell.touchRunSecs), 0, 1);
+      if (touchRunT <= 0) {
+        touchVec.x = touchVec.y = 0;
+        setLatched(false);
+        parkKnob(0, 0);
+      } else {
+        // now that the stick is analog, the knob's position IS the speed — so easing it back to
+        // centre has to actually slow the cell, not just look like it. The run coasts to a stop.
+        touchVec.x = touchLatchVec.x*frac; touchVec.y = touchLatchVec.y*frac;
+        parkKnob(touchLatchVec.x*stickMaxR*frac, touchLatchVec.y*stickMaxR*frac);
+        if (el.stickBase) el.stickBase.style.setProperty("--lock", frac.toFixed(3));
+      }
+    }
     for (const c of cells) if (c.alive) updateCell(c, dt);
     // dividing before lysis lets a cell shed the virus into one daughter and escape clean
     for (const c of cells) if (c.alive && c.energy >= CFG.cell.divideThreshold) divide(c);
@@ -871,13 +970,17 @@
       const a = axis();
       if (a.x !== 0 || a.y !== 0) {
         c.tumbling = false; const len = Math.hypot(a.x, a.y); c.angle = Math.atan2(a.y, a.x);
-        const th = CFG.cell.thrust/visc; c.vx += (a.x/len)*th*dt; c.vy += (a.y/len)*th*dt;
+        // |a| is how far the stick is pushed (keyboard always gives a full 1). Thrust scales with
+        // it, and drag makes terminal speed proportional to thrust — so a half-push is half speed.
+        const mag = Math.min(1, len);
+        const th = CFG.cell.thrust/visc*swimScale()*mag;
+        c.vx += (a.x/len)*th*dt; c.vy += (a.y/len)*th*dt;
         c.energy -= CFG.cell.swimCost*dt;
       } else { c.tumbling = true; c.angle += Math.sin(state.elapsed*3 + c.x)*CFG.cell.playerTumbleTurn*dt; }
     } else autonomousMove(c, dt);
 
     const drag = Math.exp(-2.2*visc*dt); c.vx *= drag; c.vy *= drag;
-    const sp = Math.hypot(c.vx, c.vy), vmax = CFG.cell.maxSpeed/Math.sqrt(visc);
+    const sp = Math.hypot(c.vx, c.vy), vmax = CFG.cell.maxSpeed/Math.sqrt(visc)*swimScale();
     if (sp > vmax) { c.vx = c.vx/sp*vmax; c.vy = c.vy/sp*vmax; }
     c.x = wrapX(c.x + c.vx*dt); c.y = wrapY(c.y + c.vy*dt);
 
@@ -939,7 +1042,7 @@
       c.tumbleT -= dt;
       if (c.tumbleT <= 0) { c.tumbling = false; c.runTimer = rand(CFG.cell.runMin, CFG.cell.runMax)*fedF; }
     } else {
-      const th = CFG.cell.thrust/visc*fedF;
+      const th = CFG.cell.thrust/visc*fedF*swimScale();
       c.vx += Math.cos(c.angle)*th*dt; c.vy += Math.sin(c.angle)*th*dt;
       c.energy -= CFG.cell.swimCost*fedF*dt;
       // up-gradient → suppress tumbling (longer run); the suppression scales with chemoLevel
@@ -1033,15 +1136,31 @@
     p.dissolveRate = Math.max(1, order.length / CFG.substrate.dissolveTime);
     p.phase = "dissolving";
   }
-  function driftInOffscreen(p) { // place a particle just offscreen, drifting into view
-    const a = rand(0, 6.28), dist = Math.hypot(VIEW_W, VIEW_H)/2 + p.half + 80, spd = rand(CFG.substrate.driftMin, CFG.substrate.driftMax);
-    p.x = wrapX(cam.x + Math.cos(a)*dist); p.y = wrapY(cam.y + Math.sin(a)*dist);
-    p.vx = -Math.cos(a)*spd; p.vy = -Math.sin(a)*spd;
+  // A point anywhere in the world you cannot currently see — for bringing things in from
+  // offscreen without popping them into view.
+  //
+  // It samples the WHOLE world and rejects the visible box, rather than picking a point on
+  // a ring around the camera. That distinction is the whole fix: a camera-centred ring ties
+  // the ecology to the viewport, so a player who stops moving respawns every particle onto
+  // one fixed annulus around themselves. The colony grows where the food is, and the map
+  // turns into a donut of bacteria with a starved hole where the player sits. Food has to be
+  // distributed by the WORLD, not by where you happen to be looking.
+  function offscreenPoint(margin) {
+    const hw = (VIEW_W/2)/ZOOM + margin, hh = (VIEW_H/2)/ZOOM + margin;
+    for (let i = 0; i < 40; i++) {
+      const x = rand(0, WORLD_W), y = rand(0, WORLD_H);
+      if (Math.abs(dx(x, cam.x)) > hw || Math.abs(dy(y, cam.y)) > hh) return { x, y };
+    }
+    return { x: rand(0, WORLD_W), y: rand(0, WORLD_H) }; // view somehow covers the world — just place it
   }
+  // drop a particle out there, keeping the random drift makeSubstrate already gave it, so it
+  // eases into view instead of popping in
+  function driftInOffscreen(p) { const q = offscreenPoint(p.half + 60); p.x = q.x; p.y = q.y; }
   function recycleSubstrate(p) {
     // don't strand an embedded gold phage — carry it off so a fresh one respawns in a new particle
     for (const ph of phages) if (ph.type === "gold" && toroDist2(ph.x, ph.y, p.x, p.y) < p.R*p.R) ph.dead = true;
     Object.assign(p, makeSubstrate(pickBalancedKind(p))); // keep every resource above its floor as particles cycle
+    // reborn somewhere offscreen — anywhere in the sea, not on a ring around you
     driftInOffscreen(p);
   }
   function spawnDriftingSubstrate() { const p = makeSubstrate(pickBalancedKind()); driftInOffscreen(p); return p; }
@@ -1086,7 +1205,7 @@
         const a = axis();
         if (a.x !== 0 || a.y !== 0) {
           pr.heading = Math.atan2(a.y, a.x);
-          const spd = CFG.cycle.protistThrust/Math.sqrt(env.viscosity);
+          const spd = CFG.cycle.protistThrust*swimScale()/Math.sqrt(env.viscosity);
           pr.vx = Math.cos(pr.heading)*spd; pr.vy = Math.sin(pr.heading)*spd;
         } else { pr.vx *= 0.8; pr.vy *= 0.8; }
       } else {
@@ -1096,7 +1215,7 @@
         if (hunting && !target) for (const c of cells) { if (!c.alive || !c.cyst) continue; const d = toroDist2(pr.x, pr.y, c.x, c.y); if (d < td) { td = d; target = c; } }
         if (target) pr.heading = Math.atan2(dy(target.y, pr.y), dx(target.x, pr.x));
         else { pr.wobble += dt; pr.heading += Math.sin(pr.wobble*1.7)*dt*2; }
-        const base = target ? P.chaseSpeed : P.wanderSpeed;
+        const base = (target ? P.chaseSpeed : P.wanderSpeed)*swimScale();
         const spd = (hunting ? base : base*0.5)/Math.sqrt(env.viscosity);
         pr.vx = Math.cos(pr.heading)*spd; pr.vy = Math.sin(pr.heading)*spd;
       }
@@ -1181,12 +1300,16 @@
         ph.x = wrapX(ph.x + ph.vx*dt); ph.y = wrapY(ph.y + ph.vy*dt);
         ph.life -= dt; if (ph.life <= 0) { ph.dead = true; continue; }
       }
-      // adsorb to the first cell it contacts
-      const infectDist = CFG.cell.radius + ph.r + CFG.phage.infectHalo;
+      // adsorb to the first cell it contacts. On a phone the GOLD phage gets a much bigger grab
+      // radius: it's the one thing you actively chase, and threading a 14px capture window with a
+      // thumb on a 4-inch screen is a different sport. Green phages keep their normal reach —
+      // catching the gold should get easier on mobile, not catching a plague.
+      const reach = (ph.type === "gold" && isTouch) ? CFG.phage.goldGrabTouch : 1;
+      const infectDist = (CFG.cell.radius + ph.r + CFG.phage.infectHalo) * reach;
       for (const c of cells) {
         if (!c.alive || c.cyst) continue;            // cysts are impervious to viruses
         if (ph.type === "gold" && !c.controlled) continue; // only YOU can grab the gold phage — daughters can't steal your adaptation
-        const hl = cellHalfLen(c) + ph.r + CFG.phage.infectHalo + 2;
+        const hl = cellHalfLen(c) + infectDist + 2;
         if (toroDist2(ph.x, ph.y, c.x, c.y) > hl*hl) continue;
         if (cellDistTo(c, ph.x, ph.y) > infectDist) continue;
         if (ph.type === "green") {
@@ -1244,9 +1367,9 @@
         let matching = 0; for (const p of phages) if (p.type === "green" && hostMatch(p.host, tier)) matching++;
         const need = Math.min(CFG.phage.seedBatch, CFG.phage.greenFloor - matching);
         for (let k = 0; k < need && phages.length < CFG.phage.maxCount; k++) {
-          const a = rand(0, 6.28), d = Math.hypot(VIEW_W, VIEW_H)/2 + rand(80, 400);
+          const q = offscreenPoint(40); // offscreen, but spread over the sea — a ring around the camera would shell the player in viruses
           const host = Math.max(0, tier + ((Math.random()*3)|0) - 1);
-          phages.push(makePhage("green", cam.x + Math.cos(a)*d, cam.y + Math.sin(a)*d, host));
+          phages.push(makePhage("green", q.x, q.y, host));
         }
       }
     }
@@ -1335,14 +1458,68 @@
     const g = p.cache.getContext("2d");
     g.clearRect(0, 0, size, size);
     const cs = p.cs;
+    const G = CFG.substrate, grain = G.grainStrength > 0;
+    const depth = grain ? surfaceDepth(p) : null;
+    const lut = grain ? grainLut() : null;
     for (let gj = 0; gj < p.n; gj++) for (let gi = 0; gi < p.n; gi++) {
       const idx = gj*p.n + gi, v = p.grid[idx]; if (v <= 0) continue;
-      g.fillStyle = RESOURCES[p.gtype[idx]].color; // colour = resource class
+      const res = p.gtype[idx];
+      // colour = resource class, shaded by how deeply buried the voxel is
+      g.fillStyle = grain ? lut[res][Math.min(depth[idx], GRAIN_MAXD)] : RESOURCES[res].color;
       g.globalAlpha = 0.6 + 0.4*v;
       g.fillRect(gi*cs, gj*cs, cs+0.5, cs+0.5);
     }
     g.globalAlpha = 1;
     p.dirty = false;
+  }
+  // How many voxel steps from this voxel to the nearest empty cell (off-grid counts as
+  // empty). Two-pass city-block distance transform — O(n²), and it only runs when the
+  // particle is re-cached (i.e. when something carved it), which is exactly when the
+  // surface moved. Reuses one buffer per particle so carving doesn't churn the heap.
+  const GRAIN_MAXD = 14; // deeper than this is all core; clamps the LUT
+  function surfaceDepth(p) {
+    const n = p.n, N = n*n;
+    let d = p.depthBuf;
+    if (!d || d.length !== N) d = p.depthBuf = new Int16Array(N);
+    const INF = 30000;
+    for (let k = 0; k < N; k++) d[k] = p.grid[k] > 0 ? INF : 0;
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {   // forward: up + left
+      const k = j*n + i; if (d[k] === 0) continue;
+      const up = j > 0 ? d[k-n] : 0, left = i > 0 ? d[k-1] : 0;
+      const m = (up < left ? up : left) + 1;
+      if (m < d[k]) d[k] = m;
+    }
+    for (let j = n-1; j >= 0; j--) for (let i = n-1; i >= 0; i--) { // backward: down + right
+      const k = j*n + i; if (d[k] === 0) continue;
+      const dn = j < n-1 ? d[k+n] : 0, rt = i < n-1 ? d[k+1] : 0;
+      const m = (dn < rt ? dn : rt) + 1;
+      if (m < d[k]) d[k] = m;
+    }
+    return d;
+  }
+  // depth → colour, precomputed: 3 resources × 15 depths. Rebuilt only when a grain knob
+  // moves, so tuning it live costs nothing per voxel.
+  const RES_RGB = RESOURCES.map((r) => {
+    const v = parseInt(r.color.slice(1), 16);
+    return [v >> 16 & 255, v >> 8 & 255, v & 255];
+  });
+  let _grainLut = null, _grainKey = "";
+  function grainLut() {
+    const G = CFG.substrate;
+    const key = `${G.grainStrength}|${G.grainRim}|${G.grainFalloff}|${G.grainFloor}`;
+    if (_grainLut && _grainKey === key) return _grainLut;
+    const byte = (x) => (x < 0 ? 0 : x > 255 ? 255 : Math.round(x));
+    _grainKey = key;
+    _grainLut = RES_RGB.map((rgb) => {
+      const row = [];
+      for (let d = 0; d <= GRAIN_MAXD; d++) {
+        const lit = clamp(G.grainRim - G.grainFalloff*(Math.max(1, d) - 1), G.grainFloor, 6);
+        const f = 1 + (lit - 1)*G.grainStrength;   // strength 0 → factor 1 → the old flat fill
+        row.push(`rgb(${byte(rgb[0]*f)},${byte(rgb[1]*f)},${byte(rgb[2]*f)})`);
+      }
+      return row;
+    });
+    return _grainLut;
   }
   function drawSubstrate(p) {
     const cx = sx(p.x), cy = sy(p.y);
@@ -1484,9 +1661,21 @@
   }
 
   function drawMinimap() {
-    const mw = 150, mh = mw*WORLD_H/WORLD_W, mx = VIEW_W - mw - 12, my = VIEW_H - mh - 12;
+    // Desktop: small, bottom-right, showing everything including the colony.
+    // Phone: BIGGER, top-left, and deliberately sparser — the colony dots are dropped and the
+    // marks that remain (you, protists, gold phage) are drawn at double size. A dot swarm that
+    // reads fine on a monitor is unreadable mush at a third of the size in your hand, so the
+    // phone map answers only the two questions worth answering at a glance: what's hunting me,
+    // and where's the gold.
+    const mw = isTouch ? 220 : 150, mh = mw*WORLD_H/WORLD_W;
+    const mx = isTouch ? 12 : VIEW_W - mw - 12, my = isTouch ? 12 : VIEW_H - mh - 12;
+    const ps = isTouch ? 2 : 1;   // mark scale
     ctx.save();
-    ctx.globalAlpha = 0.85; ctx.fillStyle = "rgba(4,20,26,0.7)"; ctx.strokeStyle = "rgba(120,220,200,0.4)";
+    // The frame is translucent on desktop, but at phone size a particle drifting behind a
+    // 220px map bleeds straight through it and swamps the marks. Nearly opaque there.
+    ctx.globalAlpha = isTouch ? 1 : 0.85;
+    ctx.fillStyle = isTouch ? "rgba(4,20,26,0.94)" : "rgba(4,20,26,0.7)";
+    ctx.strokeStyle = "rgba(120,220,200,0.4)";
     ctx.lineWidth = 1; ctx.fillRect(mx, my, mw, mh); ctx.strokeRect(mx, my, mw, mh);
     const kx = mw/WORLD_W, ky = mh/WORLD_H;
     // CENTRED on the player: everything is drawn relative to your cell (toroidal wrap via dx/dy),
@@ -1495,18 +1684,19 @@
     const MX = pc ? (ex) => cx0 + dx(ex, pc.x)*kx : (ex) => mx + ex*kx;
     const MY = pc ? (ey) => cy0 + dy(ey, pc.y)*ky : (ey) => my + ey*ky;
     ctx.beginPath(); ctx.rect(mx, my, mw, mh); ctx.clip(); // keep marks inside the frame
-    // particles are omitted — the map shows only the living things (you, colony, predators, gold phage)
-    // colony dots coloured by generation (same palette as the chart); cysts hidden (too many, too cluttered)
-    for (const c of cells) if (!c.controlled && !c.cyst) {
-      ctx.fillStyle = levelColor(ecoMask(c), upgradeTier(c));
-      ctx.fillRect(MX(c.x) - 1, MY(c.y) - 1, 2, 2);
+    // particles are omitted — the map shows only the living things
+    if (!isTouch) { // colony dots coloured by generation (same palette as the chart); cysts hidden
+      for (const c of cells) if (!c.controlled && !c.cyst) {
+        ctx.fillStyle = levelColor(ecoMask(c), upgradeTier(c));
+        ctx.fillRect(MX(c.x) - 1, MY(c.y) - 1, 2, 2);
+      }
     }
     ctx.fillStyle = "#ff7a6b";
-    for (const pr of predators) { ctx.beginPath(); ctx.arc(MX(pr.x), MY(pr.y), 2.5, 0, 6.28); ctx.fill(); }
+    for (const pr of predators) { ctx.beginPath(); ctx.arc(MX(pr.x), MY(pr.y), 2.5*ps, 0, 6.28); ctx.fill(); }
     // gold phage — a bright STAR so it stands out from round dots
-    for (const ph of phages) if (ph.type === "gold") drawMiniStar(MX(ph.x), MY(ph.y), 5.5, 2.4, "#ffd24a");
+    for (const ph of phages) if (ph.type === "gold") drawMiniStar(MX(ph.x), MY(ph.y), 5.5*ps, 2.4*ps, "#ffd24a");
     // your cell — a white-ringed teal DIAMOND, dead centre
-    if (pc) drawMiniDiamond(cx0, cy0, 4.5, "#8dffdc");
+    if (pc) drawMiniDiamond(cx0, cy0, 4.5*ps, "#8dffdc");
     ctx.restore();
   }
   function drawMiniDiamond(x, y, r, fill) {
@@ -1701,7 +1891,8 @@
   function recordGame() {
     if (!state) return;
     const id = Date.now();
-    const rec = { id, score: Math.round(state.score), gen: state.gen, date: id, dur: Math.round(state.elapsed), hist: state.fullHist, upgrades: state.upgrades, name: playerName };
+    const rec = { id, score: Math.round(state.score), gen: state.gen, date: id, dur: Math.round(state.elapsed), hist: state.fullHist, upgrades: state.upgrades, name: playerName,
+                  tuned: cfgTuned() || undefined }; // undefined → omitted by JSON.stringify, so untuned runs are unchanged on the wire
     justFinishedTs = id; lastRec = rec;
     try {
       const arr = loadScores(); arr.push(rec); arr.sort((a, b) => b.score - a.score);
@@ -1711,6 +1902,10 @@
   }
   function submitScore(rec) { // POST a run to the shared leaderboard; ignored gracefully if offline / no backend
     if (typeof fetch !== "function" || !rec) return;
+    // A run played on tuned constants (` panel) isn't comparable to anyone else's,
+    // so it stays in this browser's local list. Guarded here rather than at the call
+    // sites so the later name-edit re-submit can't sneak it onto the shared board.
+    if (rec.tuned) return;
     try {
       fetch(API_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(rec) })
         .then((r) => (r.ok ? r.json() : null))
@@ -1835,7 +2030,7 @@
   function showScience() { if (el.science) { el.science.classList.remove("hidden"); sciOpen = true; if (el.sciBody) el.sciBody.scrollTop = 0; } }
   function hideScience() { if (el.science) { el.science.classList.add("hidden"); sciOpen = false; } }
   function toggleHelp() { helpOpen ? hideHelp() : showHelp(); }
-  function pauseGame() { if (!state || !state.running || paused) return; paused = true; resetTouch(); showScores(); }
+  function pauseGame() { if (!state || !state.running || paused) return; paused = true; releaseStick(); showScores(); }
   function resumeGame() { paused = false; hideScores(); }
   function endGame() { if (!state || !state.running) return; paused = false; hideScores(); gameOver(); }
   let _toastTimer = null;
@@ -1860,6 +2055,35 @@
   }
 
   // ------------------------------------------------------------------ hud sync
+  // Paint one rolodex button: the face is what's loaded, prev/next peek out behind it so you
+  // can see what a swipe would bring up. Nulls hide the neighbours (nothing else to cycle to).
+  function paintRolo(btn, face, cap, prev, next) {
+    if (!btn) return;
+    const f = btn.querySelector(".rface"), p = btn.querySelector(".rprev"),
+          n = btn.querySelector(".rnext"), t = btn.querySelector(".rcap");
+    if (f) { f.style.background = face; f.style.boxShadow = `0 2px 12px rgba(0,0,0,.5), 0 0 16px -4px ${face}`; }
+    if (t) t.textContent = cap;
+    if (p) { p.style.background = prev || "transparent"; p.style.visibility = prev ? "visible" : "hidden"; }
+    if (n) { n.style.background = next || "transparent"; n.style.visibility = next ? "visible" : "hidden"; }
+  }
+  function syncRolodex(c) {
+    if (!isTouch || !el.tEnz) return;        // the deck only exists on a phone
+    const owned = c ? ownedDeployables(c) : [2];
+    let i = owned.indexOf(state.activeEnzyme); if (i < 0) i = 0;
+    const many = owned.length > 1;
+    paintRolo(el.tEnz, deployColor(owned[i]), deployCap(owned[i]),
+      many ? deployColor(owned[(i - 1 + owned.length) % owned.length]) : null,
+      many ? deployColor(owned[(i + 1) % owned.length]) : null);
+
+    if (el.tLin && c) {
+      const { ks } = lineageReps();
+      let j = ks.indexOf(ecoMask(c)*64 + upgradeTier(c)); if (j < 0) j = 0;
+      const multi = ks.length > 1;
+      paintRolo(el.tLin, levelColor(ecoMask(c), upgradeTier(c)), "lin",
+        multi ? lineageKeyColor(ks[(j - 1 + ks.length) % ks.length]) : null,
+        multi ? lineageKeyColor(ks[(j + 1) % ks.length]) : null);
+    }
+  }
   function syncHud() {
     if (!state) return;
     const protist = state.role === "protist";
@@ -1877,7 +2101,7 @@
     if (protist) return;
     const c = controlledCell();
     drawHelix(c); // DNA double-helix backbone under the genome, drawn in the current lineage's colour
-    if (el.tLin && c) el.tLin.style.background = levelColor(ecoMask(c), upgradeTier(c)); // lineage button = a dot in the current lineage colour
+    syncRolodex(c);
     const pc = controlledCell();
     const amp = (n) => n >= 1 ? ` <span class="amp">×${n}</span>` : ""; // expression as gene amplification (×N); shown from ×1 so the chip width doesn't jump
     for (let i = 0; i < 3; i++) if (el.enz[i]) {
@@ -1940,49 +2164,494 @@
   if (el.detailBack) el.detailBack.addEventListener("click", closeScoreDetail);
   if (el.nameInput) el.nameInput.addEventListener("input", (e) => setPlayerName(e.target.value));
 
-  // --------------------------------------------------------- touch controls
-  // Single-finger play: press & hold anywhere on the field and the cell swims toward
-  // your finger (relative to the cell at screen centre); a quick tap fires the enzyme.
-  // Pause + lineage sit up top; the genome bar (bottom) loads enzymes. Touch events
-  // for the widest device support.
-  function resetTouch() { touchVec.active = false; touchVec.x = touchVec.y = 0; }
-  function setupTouch() {
-    const zone = el.moveZone;
-    if (zone) {
-      let id = null, moved = false, sx0 = 0, sy0 = 0;
-      const MOVE = 14; // px from the touchdown point before it counts as a drag (vs. a tap)
-      // direction is measured from where the finger first landed — a floating origin,
-      // so you can steer from anywhere on the field, not just relative to screen centre.
-      const aim = (t) => {
-        const dxp = t.clientX - sx0, dyp = t.clientY - sy0, d = Math.hypot(dxp, dyp);
-        touchVec.active = true;
-        if (d > MOVE) { touchVec.x = dxp/d; touchVec.y = dyp/d; } else { touchVec.x = touchVec.y = 0; }
-      };
-      const find = (l) => { for (const t of l) if (t.identifier === id) return t; return null; };
-      zone.addEventListener("touchstart", (e) => {
-        if (id !== null) return; const t = e.changedTouches[0];
-        id = t.identifier; sx0 = t.clientX; sy0 = t.clientY; moved = false;
-        touchVec.active = true; touchVec.x = touchVec.y = 0; e.preventDefault();
-      }, { passive: false });
-      zone.addEventListener("touchmove", (e) => {
-        const t = find(e.changedTouches); if (!t) return;
-        if (Math.hypot(t.clientX - sx0, t.clientY - sy0) > MOVE) moved = true;
-        aim(t); e.preventDefault();
-      }, { passive: false });
-      const end = (e) => {
-        if (!find(e.changedTouches)) return;
-        if (!moved && !paused && !helpOpen && !sciOpen && state && state.running) playerEnzyme(); // no drag = tap = fire enzyme
-        id = null; moved = false; resetTouch();
-      };
-      zone.addEventListener("touchend", end); zone.addEventListener("touchcancel", end);
+  // --------------------------------------------------------- admin / tuning panel
+  // ` opens a live-tuning panel: one slider per numeric leaf of CFG. Sliders are
+  // LOG-scaled — each spans a decade either side of the shipped default — because
+  // the constants range over five orders of magnitude (cystMetab 0.035 … maxCells
+  // 1e5), and a linear slider would make every small one untunable. The sim is NOT
+  // paused, so edits are visible immediately; values that are only read when
+  // something spawns (particle counts, grid.cs, protist lifespan) therefore apply
+  // to newly spawned entities rather than retroactively to those already alive.
+  const TUNE_DECADES = 1;      // slider spans default/10 … default*10
+  const TUNE_STEPS = 1000;     // slider resolution
+  let adminOpen = false, adminBuilt = false;
+  const adminRows = [];        // { leaf, set, row, hay } per generated row
+  const adminGroups = [];      // { head, rows } so a group's heading hides when the filter empties it
+
+  // Hover text for every knob. Keyed by dotted path; a range like phage.burst is
+  // documented once and both ends (.0/.1) inherit it. Anything missing here still
+  // gets a row — it just falls back to showing only its default.
+  const TUNE_DOCS = {
+    "cell.radius": "Cell body radius (px) — also its collision size.",
+    "cell.baseHalf": "Half-length of a freshly divided cell (px).",
+    "cell.maxHalf": "Half-length at full elongation, just before it splits (px).",
+    "cell.lenBaseEnergy": "Energy above which a cell starts elongating.",
+    "cell.elongK": "Extra half-length gained per unit of energy above lenBaseEnergy.",
+    "cell.thrust": "Swim acceleration while running.",
+    "cell.maxSpeed": "Top swim speed (px/s).",
+    "cell.uptake": "Nutrient absorbed per second while touching free motes.",
+    "cell.startEnergy": "Energy a new cell begins life with.",
+    "cell.maxEnergy": "Energy ceiling — a cell can't store more than this.",
+    "cell.divideThreshold": "Energy at which a cell divides in two.",
+    "cell.swimCost": "Energy per second burned while swimming.",
+    "cell.enzymeCost": "Energy spent per enzyme release.",
+    "cell.antibioticCost": "Energy spent per antibiotic release.",
+    "cell.invulnTime": "Seconds of immunity to grazing/infection right after dividing.",
+    "cell.runMin": "Shortest run an autonomous cell takes before tumbling (s).",
+    "cell.runMax": "Longest run an autonomous cell takes before tumbling (s).",
+    "cell.tumbleDur": "Seconds a cell spends tumbling (reorienting).",
+    "cell.tumbleTurn": "How sharply an autonomous cell turns while tumbling (rad/s).",
+    "cell.playerTumbleTurn": "How fast YOUR cell drifts off-heading when you let go of the controls.",
+    "cell.enzymeCooldown": "Seconds between an autonomous cell's enzyme releases (picked at random in this range).",
+    "cell.cystBelow": "Energy below which an autonomous cell gives up and encysts (goes dormant).",
+    "cell.cystWake": "Energy a cyst must accumulate before it revives.",
+    "cell.cystMetab": "Energy per second burned while dormant — near zero, which is why cysts outlast famine.",
+    "cell.cystReviveEnergy": "Energy handed to a cyst when you take control of it.",
+    "cell.crisprEnergy": "Energy gained when a CRISPR cell destroys a virus it's immune to.",
+    "cell.cystDiffuse": "How fast cysts drift passively with the water (brownian).",
+    "cell.exprBoost": "Enzyme-radius gain per expression level (the stacking gold-phage upgrade).",
+    "cell.chemoRange0": "Chemotaxis sensing range at the first level (px).",
+    "cell.chemoRangePer": "Extra sensing range gained per further chemotaxis level.",
+    "cell.chemoBias": "How much heading up-gradient stretches a run, per chemotaxis level — the bias in the biased random walk.",
+    "cell.genomeUpkeep": "Extra respiration per adaptation tier — what a bigger genome costs to carry (the pressure to streamline).",
+    "cell.fedLinger": "Seconds a cell stays in its 'well fed' state (shorter runs) after eating.",
+    "cell.maxCells": "Hard cap on living cells — a performance backstop, not an ecological limit.",
+    "cell.touchLatchSecs": "Phone thumbstick: how long you must hold it at FULL deflection before the run locks in and keeps going after you lift your thumb. Lower = quicker to commit but easier to trigger by accident.",
+    "cell.touchRunSecs": "How long a locked-in run lasts before it winds down on its own (the knob eases back to centre as it runs out). Stops the stick getting stuck on. Touching it again pauses the countdown; re-latching refills it.",
+    "respirationBase": "Baseline energy per second every cell burns just staying alive. The single biggest lever on how punishing the game is.",
+    "touchSpeedScale": "TOUCH ONLY: how fast swimming things move — your cells AND the protists together, so predator/prey stays in proportion. The phone magnifies the world onto a small screen, which makes the same world-speed read as much faster. 1 = desktop speed. NOTE: energy costs are per SECOND, so slower swimming means a trip to food costs more energy.",
+    "grid.cs": "Voxel size of destructible particles (px) — smaller = finer digging but more work per frame. Only affects NEWLY spawned particles.",
+    "substrate.count": "How many food particles are kept drifting in the water. Applies as particles respawn.",
+    "substrate.moteEnergy": "Energy in each nutrient mote freed by dissolving a voxel.",
+    "substrate.sizeMin": "Smallest particle radius (px).",
+    "substrate.sizeMax": "Largest particle radius (px).",
+    "substrate.sizeExp": "Power-law exponent of the size spectrum: higher = far more small particles than large ones.",
+    "substrate.carveRate": "Density an enzyme removes per second, per voxel it covers — how fast you dig.",
+    "substrate.lifeMin": "Shortest particle lifespan (s).",
+    "substrate.lifeMax": "Longest particle lifespan (s).",
+    "substrate.dissolveTime": "Seconds a dying particle takes to erode away voxel by voxel.",
+    "substrate.driftMin": "Slowest particle drift (px/s).",
+    "substrate.driftMax": "Fastest particle drift (px/s).",
+    "substrate.minPerRes": "Minimum particles dominated by EACH resource, so every enzyme always has something to eat.",
+    "substrate.grainStrength": "Depth shading: how strongly a voxel is lit by its distance to the particle's surface. Set to 0 for the old flat blocks (type 0 in the box — the slider is log-scaled and can't reach it).",
+    "substrate.grainRim": "Brightness of surface voxels. Above 1 makes the particle's skin catch the light; freshly carved faces brighten as they become the new surface.",
+    "substrate.grainFalloff": "How much brightness is lost per voxel step deeper into the mass. Higher = a harder, more dramatic gradient from skin to core.",
+    "substrate.grainFloor": "Darkest the buried core is allowed to get, so a big particle's middle doesn't go to black.",
+    "enzyme.life": "Seconds an enzyme cloud persists.",
+    "enzyme.maxRadius": "Enzyme cloud radius at full growth (px) — your effective digging reach.",
+    "enzyme.growTime": "Seconds the enzyme cloud takes to reach full size.",
+    "predator.immigratePerPrey": "Protist immigration target per bacterium alive — grazers arrive as their prey booms.",
+    "predator.immigrateCap": "Ceiling on the protist population that immigration will chase.",
+    "predator.immigrateMax": "Most protists that can arrive in a single immigration step (how fast they catch a boom).",
+    "predator.respawnFloor": "Shortest protist respawn interval (s) — it halves on each extinction, down to this.",
+    "predator.virusEnergy": "Energy a protist gains from grazing a free virion — a small meal, and a brake on phage blooms.",
+    "day.lengthSec": "Real seconds in one in-game day. The run ends when the day does.",
+    "day.startHour": "Hour of the in-game day the run opens on (6 = dawn).",
+    "diel.tempBase": "Mean water temperature across the day (°C).",
+    "diel.tempAmp": "Half the day's temperature swing (°C) — how far it climbs above the mean.",
+    "diel.tempLag": "How far the day's warmest moment trails the sun (fraction of a day).",
+    "diel.foodFloor": "Night-time food production, as a fraction of the midday bloom.",
+    "diel.grazeNight": "Extra grazing pressure at night, when the grazers rise to feed.",
+    "cycle.reseedBacteria": "Bacteria that immigrate when you flip back from grazer to bacterium.",
+    "cycle.reseedProtists": "Protists seeded when the grazers are wiped out.",
+    "cycle.protistThrust": "Swim speed of the protist you steer after a role swap.",
+    "cycle.protistEatScore": "Calories scored per bacterium eaten while you're the protist.",
+    "toxin.life": "Seconds the antibiotic cloud lingers.",
+    "toxin.maxRadius": "Antibiotic cloud radius at full growth (px).",
+    "toxin.growTime": "Seconds the antibiotic cloud takes to reach full size.",
+    "toxin.dose": "Instant damage dealt to a protist the moment the cloud touches it.",
+    "toxin.potency": "Further damage per second to protists sitting inside the cloud.",
+    "toxin.crossDist": "Cross-reactivity: bacteria at least this genetic distance from the releaser are harmed by its antibiotic too.",
+    "toxin.crossFactor": "How hard that cross-reactive dose lands on those distant lineages (1 = the full dose).",
+    "toxin.radiusPer": "Cloud radius gained per antibiotic level — leveling widens the cloud rather than strengthening it.",
+    "nutrient.life": "Seconds a freed nutrient mote floats before decaying.",
+    "nutrient.radius": "Pickup radius of a nutrient mote (px).",
+    "nutrient.maxCount": "Cap on free-floating nutrient motes.",
+    "predator.count": "Target number of protist grazers. Applies as protists spawn, not retroactively.",
+    "predator.radius": "Protist size (px).",
+    "predator.wanderSpeed": "Protist speed while searching for prey.",
+    "predator.chaseSpeed": "Protist speed while actively chasing a cell.",
+    "predator.senseRange": "How far a protist can detect your cells (px).",
+    "predator.satiatedTime": "Seconds a protist rests, not hunting, after a meal.",
+    "predator.startEnergy": "Energy a new protist starts with.",
+    "predator.mealEnergy": "Energy a protist gains per bacterium eaten.",
+    "predator.metabolism": "Energy per second a protist burns — raise it to starve the grazers out.",
+    "predator.maturity": "Seconds before a protist is old enough to reproduce.",
+    "predator.lifespan": "Age range at which a protist dies of old age (s).",
+    "predator.reproEnergy": "Energy a protist must reach to divide.",
+    "predator.reproCooldown": "Minimum seconds between a protist's divisions.",
+    "predator.safetyMax": "Hard cap on protists — a performance backstop, never ecologically binding.",
+    "predator.minCount": "Population floor: below this, a new protist drifts in from offscreen.",
+    "predator.immigrateEvery": "Seconds between immigration checks when the protist population has crashed.",
+    "predator.cystMealFactor": "Fraction of a normal meal's energy a protist gets from eating a cyst.",
+    "predator.cystEatChance": "Chance a bumped cyst is actually eaten rather than resisting.",
+    "predator.killMotes": "Food motes released when an ANTIBIOTIC kills a protist (dying of old age releases nothing).",
+    "phage.greenCount": "Free phages kept drifting in the water.",
+    "phage.radius": "Phage size (px).",
+    "phage.seedBatch": "Most virions added per top-up when a lineage's tier is under-seeded.",
+    "phage.hostTolerance": "Kill-the-winner: a phage infects only cells within this many upgrade tiers of its host.",
+    "phage.goldLife": "Seconds a gold phage lingers — far longer than green, so you can chase it down.",
+    "phage.goldGrabTouch": "TOUCH ONLY: multiplies the gold phage's grab radius, since a fingertip is coarser than a cursor.",
+    "phage.life": "Seconds a free-floating phage survives before decaying.",
+    "phage.maxCount": "Cap on phages — a performance backstop, deliberately high so epidemics can get nasty.",
+    "phage.diffuse": "How fast phages diffuse through the water.",
+    "phage.infectHalo": "Extra reach beyond the cell body at which a phage can adsorb (px).",
+    "phage.burst": "How many new phages burst out when an infected cell lyses.",
+    "phage.latent": "Seconds from infection to lysis — the latent period.",
+    "phage.greenSeed": "Seconds between reservoir top-ups, which keep phages tuned to a sampled lineage.",
+    "phage.greenFloor": "Minimum phages kept matched to the sampled lineage's tier at each top-up.",
+    "phage.hostTolerance": "Kill-the-winner window: how many adaptation tiers from its host a phage can still infect. Lower = upgrading shakes off your pursuers faster.",
+    "phage.goldLife": "Seconds the rare GOLD phage (the HGT upgrade) lingers before vanishing.",
+    "phage.goldGrabTouch": "TOUCH DEVICES ONLY: multiplies the gold phage's grab radius, because catching it with a thumb is much fiddlier than with a keyboard. 1 = same as desktop. Green phages are unaffected.",
+  };
+  // arrays are documented once at the parent path; ".0"/".1" fall back to it
+  function tuneDoc(path) {
+    const dotted = path.join(".");
+    if (TUNE_DOCS[dotted]) return TUNE_DOCS[dotted];
+    const parent = TUNE_DOCS[path.slice(0, -1).join(".")];
+    if (!parent) return "";
+    const end = path[path.length - 1] === "0" ? "Low end" : "High end";
+    return `${parent}\n(${end} of the range.)`;
+  }
+
+  // every numeric leaf of CFG, including array entries (["phage","burst",0] etc.)
+  function cfgLeaves(obj = CFG, path = []) {
+    const out = [];
+    for (const k of Object.keys(obj)) {
+      const v = obj[k];
+      if (typeof v === "number") out.push({ path: [...path, k] });
+      else if (v && typeof v === "object") out.push(...cfgLeaves(v, [...path, k]));
     }
-    const gated = (fn) => (e) => { if (e) e.preventDefault(); if (!paused && !helpOpen && !sciOpen && state && state.running) fn(); };
-    if (el.tLin) el.tLin.addEventListener("click", gated(switchControl));
-    if (el.tPause) el.tPause.addEventListener("click", () => togglePause());
-    // tap a gene on the genome bar to load that enzyme/antibiotic (works on desktop too)
-    el.enz.forEach((g, i) => g && g.addEventListener("click", () => selectEnzyme(i)));
-    if (el.enzTox) el.enzTox.addEventListener("click", () => selectEnzyme(3));
-    setupChartToggle();
+    return out;
+  }
+  const cfgGet = (o, p) => p.reduce((x, k) => (x == null ? undefined : x[k]), o);
+  function cfgSet(p, v) { let o = CFG; for (let i = 0; i < p.length - 1; i++) o = o[p[i]]; o[p[p.length - 1]] = v; }
+  const cfgDefault = (p) => cfgGet(CFG_DEFAULTS, p);
+  const cfgTuned = () => cfgLeaves().some((L) => cfgGet(CFG, L.path) !== cfgDefault(L.path));
+
+  // log mapping: pos 0…TUNE_STEPS ↔ value in [def/10, def*10], with the default at
+  // the midpoint. A default of 0 has no decade to span, so those fall back to linear.
+  function tuneScale(def) {
+    if (def > 0) {
+      const lo = Math.log(def) - TUNE_DECADES * Math.LN10, hi = Math.log(def) + TUNE_DECADES * Math.LN10;
+      return { val: (t) => Math.exp(lo + (hi - lo) * t / TUNE_STEPS),
+               pos: (v) => (v > 0 ? clamp(Math.round((Math.log(v) - lo) / (hi - lo) * TUNE_STEPS), 0, TUNE_STEPS) : 0) };
+    }
+    const lo = def - 1, hi = def + 1;
+    return { val: (t) => lo + (hi - lo) * t / TUNE_STEPS,
+             pos: (v) => clamp(Math.round((v - lo) / (hi - lo) * TUNE_STEPS), 0, TUNE_STEPS) };
+  }
+  function fmtTune(v) {
+    const a = Math.abs(v);
+    return a >= 100 ? v.toFixed(0) : a >= 10 ? v.toFixed(1) : a >= 1 ? v.toFixed(2) : v.toFixed(4);
+  }
+  function adminStatus(msg, warn) {
+    if (!el.adminStatus) return;
+    el.adminStatus.textContent = msg;
+    el.adminStatus.classList.toggle("warn", !!warn);
+  }
+  const DOC_IDLE = `<span class="idle">Hover a knob to see what it does.</span>`;
+  function showDoc(dotted, doc, def) {
+    if (!el.adminDoc) return;
+    el.adminDoc.innerHTML = `<b>${escapeHtml(dotted)}</b> <span class="adef">· default ${fmtTune(def)}</span><br>${escapeHtml(doc).replace(/\n/g, "<br>")}`;
+  }
+  function clearDoc() { if (el.adminDoc) el.adminDoc.innerHTML = DOC_IDLE; }
+  function tunedNotice() {
+    if (cfgTuned()) adminStatus("modified — this run is a tuning experiment, so it won't be sent to the shared leaderboard", true);
+    else adminStatus("all values at their defaults");
+  }
+  function buildAdmin() {
+    if (adminBuilt || !el.adminBody) return;
+    adminBuilt = true;
+    const groups = new Map();
+    for (const leaf of cfgLeaves()) {
+      const g = leaf.path.length > 1 ? leaf.path[0] : "general"; // respirationBase is top-level
+      if (!groups.has(g)) groups.set(g, []);
+      groups.get(g).push(leaf);
+    }
+    for (const [g, leaves] of groups) {
+      const head = document.createElement("div");
+      head.className = "agroup"; head.textContent = g;
+      el.adminBody.appendChild(head);
+      const groupRows = [];
+      adminGroups.push({ head, rows: groupRows });
+      for (const leaf of leaves) {
+        const def = cfgDefault(leaf.path), sc = tuneScale(def);
+        const row = document.createElement("div"); row.className = "arow";
+        const name = document.createElement("label"); name.className = "aname";
+        name.textContent = leaf.path.slice(g === "general" ? 0 : 1).join(".");
+        const doc = tuneDoc(leaf.path);
+        // on the ROW, so hovering the slider or the number box explains it too
+        row.title = (doc ? doc + "\n\n" : "") + `default ${fmtTune(def)} — double-click the name to reset`;
+        row.addEventListener("mouseenter", () => showDoc(leaf.path.join("."), doc, def));
+        const slider = document.createElement("input");
+        slider.type = "range"; slider.min = 0; slider.max = TUNE_STEPS; slider.step = 1;
+        const num = document.createElement("input");
+        num.type = "number"; num.className = "anum"; num.step = "any";
+        // `src` says which widget the value came from, so we don't fight the one being dragged
+        const repaints = leaf.path[0] === "substrate" && leaf.path[1].startsWith("grain");
+        const set = (v, src) => {
+          if (!isFinite(v)) return;
+          cfgSet(leaf.path, v);
+          if (src !== "slider") slider.value = sc.pos(v);
+          if (src !== "num") num.value = fmtTune(v);
+          row.classList.toggle("changed", v !== def);
+          // a particle only re-caches when something carves it, so a shading tweak would
+          // otherwise not show until your next bite — force the repaint to see it live
+          if (repaints) for (const p of substrates) p.dirty = true;
+          tunedNotice();
+        };
+        slider.addEventListener("input", () => set(sc.val(+slider.value), "slider"));
+        num.addEventListener("change", () => set(parseFloat(num.value), "num")); // typed value may exceed the slider's decade — that's fine, it just pins the slider
+        name.addEventListener("dblclick", () => set(def));
+        row.append(name, slider, num);
+        el.adminBody.appendChild(row);
+        // searched text = group + dotted path + label + description, so "protist" finds
+        // the predator group AND toxin.dose, which only mentions protists in its prose
+        const entry = { leaf, set, row, hay: `${g} ${leaf.path.join(".")} ${name.textContent} ${doc}`.toLowerCase() };
+        adminRows.push(entry);
+        groupRows.push(entry);
+      }
+    }
+    el.adminEmpty = document.createElement("div");
+    el.adminEmpty.className = "aempty hidden";
+    el.adminEmpty.textContent = "no knobs match that filter";
+    el.adminBody.appendChild(el.adminEmpty);
+    el.adminBody.addEventListener("mouseleave", clearDoc);
+    clearDoc();
+    filterAdmin();
+    tunedNotice();
+  }
+  // filter on every whitespace-separated token (all must match), so "phage life" narrows
+  function filterAdmin() {
+    const q = (el.adminSearch && el.adminSearch.value || "").toLowerCase().trim();
+    const tokens = q.split(/\s+/).filter(Boolean);
+    let shown = 0;
+    for (const g of adminGroups) {
+      let any = false;
+      for (const r of g.rows) {
+        const hit = tokens.every((t) => r.hay.includes(t));
+        r.row.classList.toggle("hidden", !hit);
+        if (hit) { any = true; shown++; }
+      }
+      g.head.classList.toggle("hidden", !any);
+    }
+    if (el.adminEmpty) el.adminEmpty.classList.toggle("hidden", shown > 0);
+    if (el.adminCount) el.adminCount.textContent = tokens.length ? `${shown} of ${adminRows.length} knobs` : `${adminRows.length} knobs`;
+  }
+  function syncAdmin() { for (const r of adminRows) r.set(cfgGet(CFG, r.leaf.path)); }
+  function toggleAdmin(show) {
+    buildAdmin();
+    adminOpen = show === undefined ? !adminOpen : !!show;
+    if (el.admin) el.admin.classList.toggle("hidden", !adminOpen);
+    if (adminOpen) syncAdmin();
+  }
+  function adminPreset() {
+    const changed = {};
+    for (const L of cfgLeaves()) {
+      const v = cfgGet(CFG, L.path), d = cfgDefault(L.path);
+      if (v !== d) changed[L.path.join(".")] = { default: d, value: v };
+    }
+    const raw = (el.adminName && el.adminName.value || "").trim();
+    const name = (raw.replace(/[^\w .-]+/g, "-").replace(/\s+/g, "-").slice(0, 60)) || "preset";
+    // `cfg` is the whole tree (paste it back / Load it); `changed` is the readable
+    // summary of what this experiment actually altered.
+    return { name, saved: new Date().toISOString(), changedCount: Object.keys(changed).length, changed, cfg: CFG };
+  }
+  function adminSave() {
+    const data = adminPreset(), json = JSON.stringify(data, null, 2);
+    console.log("[tuning] " + data.name, data); // also dumped to the console for a quick copy
+    try {
+      const url = URL.createObjectURL(new Blob([json], { type: "application/json" }));
+      const a = document.createElement("a");
+      a.href = url; a.download = data.name + ".json";
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+      adminStatus(`saved ${data.name}.json — ${data.changedCount} value${data.changedCount === 1 ? "" : "s"} changed from default`);
+    } catch (e) { adminStatus("could not save the file — the JSON is in the console", true); }
+  }
+  function adminApply(obj) {
+    const src = obj && obj.cfg ? obj.cfg : obj; // accept a saved preset or a bare CFG tree
+    if (!src || typeof src !== "object") { adminStatus("that file isn't a tuning preset", true); return; }
+    let n = 0;
+    for (const r of adminRows) {
+      const v = cfgGet(src, r.leaf.path);
+      if (typeof v === "number" && isFinite(v)) { r.set(v); n++; }
+    }
+    adminStatus(`loaded ${n} value${n === 1 ? "" : "s"}${obj && obj.name ? ` from "${obj.name}"` : ""}`);
+    if (obj && obj.name && el.adminName) el.adminName.value = obj.name;
+  }
+  if (el.adminSearch) el.adminSearch.addEventListener("input", filterAdmin);
+  // Focus is NOT stolen when the panel opens — the sim keeps running, so WASD must
+  // keep steering. "/" jumps to the filter when you actually want it.
+  if (el.admin) el.admin.addEventListener("keydown", (e) => {
+    // the window handler ignores keys typed in inputs, so ` / Esc are handled here
+    if (e.key === "`" || e.code === "Backquote") { e.preventDefault(); toggleAdmin(false); return; }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      if (el.adminSearch && e.target === el.adminSearch && el.adminSearch.value) { el.adminSearch.value = ""; filterAdmin(); }
+      else { toggleAdmin(false); }
+    }
+  });
+  if (el.adminSave) el.adminSave.addEventListener("click", adminSave);
+  if (el.adminReset) el.adminReset.addEventListener("click", () => {
+    for (const r of adminRows) r.set(cfgDefault(r.leaf.path));
+    adminStatus("all values reset to defaults");
+  });
+  if (el.adminLoad && el.adminFile) {
+    el.adminLoad.addEventListener("click", () => el.adminFile.click());
+    el.adminFile.addEventListener("change", () => {
+      const f = el.adminFile.files && el.adminFile.files[0];
+      if (!f) return;
+      f.text().then((txt) => adminApply(JSON.parse(txt)))
+              .catch(() => adminStatus("could not read that file as JSON", true));
+      el.adminFile.value = ""; // let the same file be re-loaded
+    });
+  }
+
+  // --------------------------------------------------------- touch controls
+  // The controls live in a deck BELOW the ocean (see #touch in index.html), so a thumb
+  // never covers the thing you're looking at.
+  //
+  // Everything here is POINTER events, not touch+click. Two reasons, both bugs on a real
+  // phone with the old code:
+  //   - `click` needs a clean press-release with no other finger down, so you could not
+  //     hold the stick and tap `release` at the same time. Pointer events carry a pointerId
+  //     and each finger is tracked independently, so both work at once.
+  //   - the stick only took its direction from MOVE events, so a quick flick that started
+  //     at the centre (thumb lands, flicks off) committed no direction at all and the cell
+  //     just sat there. The release point is now sampled on pointerup as well.
+  let _stickId = null;
+  // Travel is derived from the base's ACTUAL size rather than hardcoded — the stick is clamp()-fluid,
+  // so a fixed 52px radius would mean a different dead-zone and rim on every screen width.
+  let stickMaxR = 52;                          // last measured knob travel, px (used by the decay too)
+  const STICK_TRAVEL = 0.40;                   // knob travel as a fraction of the base's width
+  const STICK_DEADF  = 0.13;                   // dead-zone, same units
+  const STICK_RIMF   = 0.90;                   // "full deflection" — the latch dwell happens out here
+  function parkKnob(x, y) {
+    if (el.stickKnob) el.stickKnob.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px))`;
+  }
+  function setLatched(on) {
+    touchLatched = on;
+    if (on) {
+      touchRunT = CFG.cell.touchRunSecs;         // (re-)latching refills the run
+      touchLatchVec.x = touchVec.x; touchLatchVec.y = touchVec.y; // remember how hard it was pushed
+    }
+    if (el.stickBase) {
+      el.stickBase.classList.toggle("latched", on); // so you can SEE the run is locked
+      el.stickBase.style.setProperty("--lock", "1");
+    }
+  }
+  function clearLatchTimer() { if (_latchTimer) { clearTimeout(_latchTimer); _latchTimer = null; } }
+  function armLatch() { // thumb just reached the rim — latch if it's STILL there when this fires
+    clearLatchTimer();
+    _latchTimer = setTimeout(() => {
+      _latchTimer = null;
+      if (touchVec.active && touchAtMax) setLatched(true);
+    }, Math.max(0, CFG.cell.touchLatchSecs) * 1000);
+  }
+  function releaseStick() { // full stop (used when pausing / opening a menu)
+    _stickId = null; touchVec.active = false; touchVec.x = touchVec.y = 0;
+    touchAtMax = false; touchRunT = 0; clearLatchTimer(); setLatched(false);
+    if (el.stickBase) el.stickBase.classList.remove("on");
+    parkKnob(0, 0);
+  }
+  function setupTouch() {
+    const zone = el.stickZone, base = el.stickBase, knob = el.stickKnob;
+    if (zone && base && knob) {
+      const park = parkKnob;
+      // aim from a pointer's position: past the dead-zone it steers; at the centre it stops
+      const aim = (e) => {
+        const r = base.getBoundingClientRect(), cx = r.left + r.width/2, cy = r.top + r.height/2;
+        const maxR = r.width * STICK_TRAVEL, dead = r.width * STICK_DEADF;
+        stickMaxR = maxR;
+        const dxp = e.clientX - cx, dyp = e.clientY - cy;
+        const d = Math.hypot(dxp, dyp), cl = d > maxR ? maxR/d : 1;
+        park(dxp*cl, dyp*cl);
+        const atMax = d >= maxR * STICK_RIMF;
+        if (atMax && !touchAtMax) armLatch();       // just arrived at the rim — start the clock
+        else if (!atMax && touchAtMax) clearLatchTimer(); // eased off it — the dwell has to start over
+        touchAtMax = atMax;
+        if (d > dead) {
+          // ANALOG: the vector carries how FAR you pushed, not just which way. Magnitude ramps
+          // 0→1 from the dead-zone out to the rim, and the mover turns it into thrust — so a
+          // gentle lean is a slow crawl and a full push is a sprint.
+          const mag = clamp((d - dead) / Math.max(1, maxR - dead), 0, 1);
+          touchVec.x = (dxp/d)*mag; touchVec.y = (dyp/d)*mag;
+        } else {                                    // back to the centre = stop, and drop the latch
+          touchVec.x = touchVec.y = 0; clearLatchTimer(); setLatched(false);
+        }
+      };
+      zone.addEventListener("pointerdown", (e) => {
+        if (_stickId !== null) return;             // one finger owns the stick; others are free
+        _stickId = e.pointerId;
+        if (zone.setPointerCapture) zone.setPointerCapture(e.pointerId); // keep it ours if the thumb slides off
+        touchVec.active = true; base.classList.add("on");
+        aim(e); e.preventDefault();
+      });
+      zone.addEventListener("pointermove", (e) => {
+        if (e.pointerId !== _stickId) return;
+        aim(e); e.preventDefault();
+      });
+      const lift = (e) => {
+        if (e.pointerId !== _stickId) return;
+        aim(e);                                     // sample where the thumb actually left
+        clearLatchTimer();                          // a dwell still in progress doesn't count
+        _stickId = null; touchVec.active = false; touchAtMax = false;
+        if (touchLatched && (touchVec.x || touchVec.y)) {
+          touchLatchVec.x = touchVec.x; touchLatchVec.y = touchVec.y;
+          park(touchVec.x*stickMaxR, touchVec.y*stickMaxR); // knob stays thrown: the run is still on
+        } else {                                    // never dwelled at the rim → releasing just stops
+          touchVec.x = touchVec.y = 0;
+          setLatched(false);
+          park(0, 0);
+        }
+        base.classList.remove("on");
+      };
+      zone.addEventListener("pointerup", lift);
+      zone.addEventListener("pointercancel", lift);
+    }
+    const live = () => !(paused || helpOpen || sciOpen || !state || !state.running);
+    // Buttons act on pointerDOWN: immediate, no synthetic-click delay, and — the point —
+    // unaffected by another finger already holding the stick.
+    const act = (elm, fn, gate) => elm && elm.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      if (gate && !live()) return;
+      fn();
+    });
+    act(el.tPause, togglePause, false); // must also work while paused, to un-pause
+    // tap a gene to load that enzyme/antibiotic (pointerdown covers mouse clicks too)
+    el.enz.forEach((g, i) => act(g, () => selectEnzyme(i), false));
+    act(el.enzTox, () => selectEnzyme(3), false);
+
+    // Rolodex buttons: TAP does the thing, SWIPE up/down cycles what's loaded. Telling the two
+    // apart means we can only commit on pointerUP — you can't know a press was a swipe until the
+    // finger leaves. Still no click delay, and still multi-touch safe (each pointerId is its own).
+    const SWIPE = 14; // px of vertical travel before a press counts as a swipe rather than a tap
+    const swipeBtn = (btn, onTap, onSwipe) => {
+      if (!btn) return;
+      let pid = null, y0 = 0;
+      btn.addEventListener("pointerdown", (e) => {
+        if (pid !== null) return;
+        pid = e.pointerId; y0 = e.clientY;
+        if (btn.setPointerCapture) btn.setPointerCapture(e.pointerId);
+        e.preventDefault();
+      });
+      btn.addEventListener("pointermove", (e) => { if (e.pointerId === pid) e.preventDefault(); });
+      btn.addEventListener("pointerup", (e) => {
+        if (e.pointerId !== pid) return;
+        const dy = e.clientY - y0;
+        pid = null; e.preventDefault();
+        if (!live()) return;
+        // the NEXT card peeks out below the face, so dragging UP pulls it into place
+        if (Math.abs(dy) > SWIPE) onSwipe(dy < 0 ? 1 : -1);
+        else onTap();
+      });
+      btn.addEventListener("pointercancel", (e) => { if (e.pointerId === pid) pid = null; });
+    };
+    swipeBtn(el.tEnz, playerEnzyme, (dir) => cycleEnzyme(dir));
+    swipeBtn(el.tLin, () => switchControl(1), (dir) => switchControl(dir));
+    setupChartToggle(); // tap OR vertical swipe folds the charts away
   }
   // tap OR swipe anywhere on the chart panel to fold it away / bring it back (mobile)
   function setupChartToggle() {
@@ -2008,7 +2677,17 @@
   updateSubLegend();
 
   const coarse = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
-  if (coarse || "ontouchstart" in window) { document.body.classList.add("touch"); ZOOM = 1.35; }
+  if (coarse || "ontouchstart" in window) {
+    document.body.classList.add("touch"); isTouch = true;
+    ZOOM = 1.35 * 1.25; // phone: magnify the world so cells aren't specks, +25% again by request
+    // The genes are controls, not HUD, so on a phone they belong in the control deck with the
+    // stick and buttons — not floating over the ocean inside #hud (which is pointer-events:none).
+    // They go at the TOP of the deck's right column, above the action buttons, leaving the whole
+    // left side to the thumbstick.
+    const grow = document.querySelector("#hud .genome-row");
+    const right = document.getElementById("deckRight");
+    if (grow && right) right.insertBefore(grow, right.firstChild);
+  }
   setupTouch();
 
   // ------------------------------------------------------ self-update (PWA)

@@ -71,7 +71,10 @@
     color: rgba(210,228,222,.42); opacity: .62; transition: opacity .12s, box-shadow .12s, color .12s; }
   .gene:not(.owned) { border-style: dashed; opacity: .42; }        /* a silent / not-yet-acquired locus */
   .gene.owned { opacity: 1; color: var(--gc); border-color: var(--gc); box-shadow: inset 0 0 14px -7px var(--gc); }
-  .gene.active { font-weight: bold; box-shadow: 0 0 0 1.5px var(--gc), 0 0 11px -2px var(--gc); } /* Space will release this one */
+  /* the loaded gene (Space/tap releases this one): colour-filled background, not just a ring, for at-a-glance visibility */
+  .gene.active { font-weight: bold; color: #eefbf6;
+    background: color-mix(in srgb, var(--gc) 34%, rgba(6,22,27,.9));
+    box-shadow: 0 0 0 1.5px var(--gc), 0 0 12px -2px var(--gc); }
   .gene .amp { font-weight: bold; opacity: .9; } /* expression amplification (×N), full size */
 
   /* Ecotype-vs-time chart */
@@ -276,22 +279,65 @@
   #hud, #touch { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
     -webkit-tap-highlight-color: transparent; }
 
-  /* On-screen touch controls (mobile) — only shown when the device has a coarse pointer */
-  #touch { position: absolute; inset: 0; display: none; pointer-events: none; z-index: 4;
-    -webkit-tap-highlight-color: transparent; touch-action: none; }
-  body.touch #touch { display: block; }
+  /* On-screen touch controls (mobile) — a DECK below the play area, only on a coarse pointer.
+     The stage doesn't fill a phone screen (it's a fixed 800×680 aspect), so the controls live
+     in the space underneath instead of covering the ocean with your thumbs. */
+  #touch { display: none; width: min(800px, 100%); flex-direction: column; gap: 8px;
+    padding: 2px 4px 4px; touch-action: none; -webkit-tap-highlight-color: transparent; }
+  body.touch #touch { display: flex; }
   #touch.hidden { display: none !important; }
-  /* whole play field is the movement surface (hold → swim toward finger, tap → enzyme);
-     excludes the top strip (pause/lineage) and the bottom strip (genome bar). */
-  #moveZone { position: absolute; left: 0; right: 0; top: 0; bottom: 76px;
-    pointer-events: auto; touch-action: none; }
-  .tbtn { pointer-events: auto; touch-action: none; user-select: none; -webkit-user-select: none;
+  /* Sizes are fluid: fixed px would overflow a 360px-wide phone. clamp() lets the stick and
+     buttons shrink with the viewport instead. The stick gets the whole left side; the genes
+     and the action buttons stack down the right. */
+  #deckRow { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  #stickZone { position: relative; flex: 0 0 auto; touch-action: none;
+    width: clamp(128px, 38vw, 172px); height: clamp(128px, 38vw, 172px); }
+  #deckRight { display: flex; flex-direction: column; align-items: flex-end; justify-content: center;
+    flex: 1 1 auto; min-width: 0; gap: 8px; }
+  #stickBase { position: absolute; inset: 0; border-radius: 50%; opacity: .55; transition: opacity .1s;
+    background: rgba(255,255,255,.05); border: 1.5px solid rgba(255,255,255,.22); }
+  #stickBase.on { opacity: .95; }
+  /* Run locked in: the rim lights up and the knob stays thrown, so it's obvious the cell is
+     still swimming with your thumb off the stick. --lock is driven from game.js and falls
+     from 1 to 0 as the run winds down, so the glow visibly runs out instead of sticking on. */
+  #stickBase.latched { border-color: var(--accent);
+    box-shadow: 0 0 0 1.5px var(--accent), 0 0 18px -4px var(--accent);
+    opacity: calc(.5 + .5 * var(--lock, 1)); }
+  #stickKnob { position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; border-radius: 50%;
+    transform: translate(-50%, -50%); background: rgba(87,224,192,.42); border: 1.5px solid var(--accent);
+    box-shadow: 0 0 14px rgba(87,224,192,.4); }
+  #tbtns { display: flex; flex-direction: row; align-items: center; gap: clamp(6px, 2vw, 10px); }
+  .tbtn { touch-action: none; user-select: none; -webkit-user-select: none; flex: 0 0 auto;
     background: rgba(9,28,34,.74); color: var(--ink); border: 1.5px solid rgba(87,224,192,.55);
-    border-radius: 50%; width: 44px; height: 44px; padding: 0; font: inherit; font-size: 13px; font-weight: bold;
+    border-radius: 50%; padding: 0; font: inherit; font-size: 11px; font-weight: bold;
+    width: clamp(52px, 15vw, 62px); height: clamp(52px, 15vw, 62px);
     display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 12px rgba(0,0,0,.45); }
-  .tbtn:active { transform: scale(.9); box-shadow: 0 1px 6px rgba(0,0,0,.45); }
-  #tPause { position: absolute; top: 12px; right: 12px; }
-  #tLin { position: absolute; top: 12px; right: 64px; border-width: 2px; } /* filled with the current lineage colour in JS */
+  .tbtn:active { background: rgba(87,224,192,.3); transform: scale(.93); box-shadow: 0 1px 6px rgba(0,0,0,.45); }
+  .tbtn.big { width: clamp(66px, 20vw, 84px); height: clamp(66px, 20vw, 84px);
+    font-size: 13px; border-color: var(--accent); color: var(--accent); border-width: 2px; }
+  .tbtn.pause { width: clamp(44px, 12vw, 50px); height: clamp(44px, 12vw, 50px); font-size: 12px; }
+  /* Rolodex button: the loaded thing floods the face; the ones either side of it in the
+     cycle peek out above and below like cards in a stack, so you can see what a swipe
+     would bring up. Colours are set from game.js (same source as the gene chips). */
+  .tbtn.rolo { position: relative; background: transparent; border: none; box-shadow: none;
+    overflow: visible; }
+  .rolo .rface, .rolo .rprev, .rolo .rnext { position: absolute; inset: 0; border-radius: 50%; }
+  .rolo .rprev, .rolo .rnext { z-index: 1; opacity: .5; }
+  .rolo .rprev { transform: translateY(-27%) scale(.84); }
+  .rolo .rnext { transform: translateY(27%) scale(.84); }
+  .rolo .rface { z-index: 2; border: 2px solid rgba(255,255,255,.42);
+    box-shadow: 0 2px 12px rgba(0,0,0,.5), inset 0 -6px 14px -8px rgba(0,0,0,.55); }
+  .rolo .rcap { position: relative; z-index: 3; font-size: 10.5px; font-weight: bold;
+    letter-spacing: .3px; color: #06232a; pointer-events: none; text-shadow: none; }
+  .tbtn.big.rolo .rcap { font-size: 12px; }
+  .rolo:active .rface { filter: brightness(1.25); }
+  /* The genome row is moved into the right column by game.js on touch: gene chips double as
+     enzyme buttons. Compact and right-aligned so they tuck in above the action buttons. */
+  #touch .genome-row { display: flex; width: 100%; justify-content: flex-end; }
+  #touch .genome { flex-direction: row; flex-wrap: wrap; justify-content: flex-end; align-items: center;
+    gap: 4px; padding: 5px 6px; width: 100%;
+    background: rgba(6,22,27,.68); border: 1px solid rgba(255,255,255,.1); border-radius: 10px; }
+  #tbtns { width: 100%; justify-content: flex-end; }
 
   /* fold the live charts away with a swipe during play */
   #chartwrap.collapsed > #chartlegend, #chartwrap.collapsed > #chart,
@@ -302,6 +348,53 @@
 
   .touchonly { display: none; }
   body.touch .touchonly { display: list-item; }
+
+  /* Admin / tuning panel (` to toggle) — a dev tool, so it's deliberately plain
+     and sits over the page without pausing the sim, so edits are seen live. */
+  #admin { position: fixed; top: 0; right: 0; bottom: 0; width: 340px; z-index: 100;
+    display: flex; flex-direction: column; background: rgba(4,17,21,.94);
+    border-left: 1px solid rgba(87,224,192,.35); box-shadow: -8px 0 30px rgba(0,0,0,.5);
+    font-size: 12px; backdrop-filter: blur(3px); }
+  #admin.hidden { display: none !important; }
+  #adminHead { padding: 9px 12px; border-bottom: 1px solid rgba(255,255,255,.1);
+    display: flex; flex-direction: column; gap: 2px; }
+  #adminHead b { color: var(--accent); letter-spacing: 1.5px; font-size: 12px; }
+  #adminHead .ahint { font-size: 10.5px; opacity: .5; }
+  #adminSearch { margin-top: 5px; width: 100%; background: rgba(255,255,255,.06);
+    border: 1px solid rgba(255,255,255,.18); color: #eafff8; border-radius: 6px;
+    padding: 5px 8px; font: inherit; font-size: 12px; outline: none; }
+  #adminSearch:focus { border-color: var(--accent); }
+  #adminCount { font-size: 10px; opacity: .45; font-variant-numeric: tabular-nums; }
+  .aempty { margin: 18px 4px; font-size: 11.5px; opacity: .5; font-style: italic; }
+  #adminBody { flex: 1; overflow-y: auto; padding: 6px 12px 10px; overscroll-behavior: contain; }
+  .agroup { margin: 12px 0 5px; font-size: 10.5px; text-transform: uppercase; letter-spacing: 1.2px;
+    color: var(--accent); opacity: .8; border-bottom: 1px solid rgba(87,224,192,.18); padding-bottom: 2px; }
+  .arow { display: grid; grid-template-columns: 116px 1fr 58px; align-items: center; gap: 6px; padding: 2px 0; }
+  .aname { font-size: 11px; opacity: .78; cursor: pointer; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; user-select: none; }
+  .arow.changed .aname { color: #ffd24a; opacity: 1; font-weight: bold; }
+  .arow input[type=range] { width: 100%; accent-color: var(--accent); height: 14px; }
+  .anum { width: 100%; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.16);
+    color: #eafff8; border-radius: 5px; padding: 2px 4px; font: inherit; font-size: 11px;
+    font-variant-numeric: tabular-nums; outline: none; }
+  .anum:focus { border-color: var(--accent); }
+  .arow.changed .anum { border-color: #ffd24a; color: #ffe9a8; }
+  /* Hover strip: the native title tooltip is slow and covers neighbouring rows,
+     so the hovered knob's description also lands here, instantly and in place. */
+  #adminDoc { flex: 0 0 auto; min-height: 52px; padding: 7px 12px; font-size: 11px; line-height: 1.4;
+    border-top: 1px solid rgba(255,255,255,.1); background: rgba(87,224,192,.05); color: var(--muted); }
+  #adminDoc b { color: var(--accent); font-weight: bold; }
+  #adminDoc .adef { opacity: .55; }
+  #adminDoc .idle { opacity: .45; font-style: italic; }
+  #adminFoot { padding: 9px 12px; border-top: 1px solid rgba(255,255,255,.1);
+    display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  #adminName { flex: 1 1 100%; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.18);
+    color: #eafff8; border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 12px; outline: none; }
+  #adminName:focus { border-color: var(--accent); }
+  #adminFoot button { padding: 5px 11px; border-radius: 7px; font-size: 11.5px; box-shadow: none; }
+  #adminFoot button.ghost { padding: 4px 10px; border-width: 1px; }
+  #adminStatus { flex: 1 1 100%; font-size: 10.5px; opacity: .62; min-height: 13px; line-height: 1.35; }
+  #adminStatus.warn { color: #ffd24a; opacity: .95; }
 
   @media (max-width: 840px), (max-height: 560px) {   /* phones/tablets: use the whole screen, don't clip the chart */
     #wrap { padding: 6px; gap: 6px; justify-content: flex-start; }
@@ -319,13 +412,25 @@
     #analysisWrap { padding: 6px 8px; }
     #helpBody, #sciBody, #scoresList { max-height: 62vh; }
   }
-  /* On a phone the DNA/genome bar drops to the bottom, in easy thumb reach, and its
-     genes double as enzyme-select buttons; the decorative helix is dropped for clarity. */
-  body.touch #hud .genome-row { position: absolute; left: 6px; right: 6px; bottom: 6px; margin: 0; justify-content: center; }
-  body.touch .genome { justify-content: center; flex-wrap: wrap; gap: 6px; padding: 7px 8px;
-    background: rgba(6,22,27,.68); border: 1px solid rgba(255,255,255,.1); border-radius: 12px; }
-  body.touch #helix { display: none; }
-  body.touch .gene { font-size: 12px; padding: 5px 11px; }
+  /* On a phone the live charts move ABOVE the play area (flex reorder) and shrink a little.
+     Order down the page is then: charts · ocean · control deck. */
+  body.touch #chartwrap { order: -1; }
+  body.touch #chart { height: 74px; }
+  body.touch #subchart { height: 48px; }
+  body.touch #wrap { gap: 6px; justify-content: center; }
+  /* body is overflow:hidden, so anything that doesn't fit is CUT OFF rather than scrollable.
+     Bound the ocean by viewport height as well as width, so the control deck below it always
+     has room on a short phone. Only binds when the screen is short; tall phones are unaffected. */
+  body.touch #stage { width: min(800px, 100%, 50vh); }
+  /* Nothing is drawn over the ocean any more, so the HUD keeps its natural top-left line;
+     only the minimap shares the stage (and game.js keeps that in a free corner). */
+  /* the phone minimap is 220 of the canvas's 800px (27.5%), top-left — start the stats clear of it */
+  body.touch .topline { margin-left: 30%; flex-wrap: wrap; row-gap: 2px; }
+  body.touch .bar { width: 108px; }
+  body.touch #helix { display: none; }        /* the decorative helix reads as clutter at this size */
+  /* squeezed: the chips have to share the right column with the buttons now */
+  body.touch .gene { font-size: 10.5px; padding: 4px 7px; text-align: center; white-space: nowrap;
+    line-height: 1.2; border-radius: 6px; }
 </style>
 </head>
 <body>
@@ -352,11 +457,6 @@
       </div>
     </div>
     <div id="toast"></div>
-    <div id="touch" class="hidden">
-      <div id="moveZone"></div>
-      <button id="tLin" class="tbtn topbtn" aria-label="Switch lineage"></button>
-      <button id="tPause" class="tbtn topbtn pause" aria-label="Pause">❚❚</button>
-    </div>
     <div id="title" class="screen">
       <div class="titlecard">
         <h1>Bacteria!</h1>
@@ -382,7 +482,7 @@
             <li><kbd>Tab</kbd> — switch which enzyme/antibiotic is loaded &nbsp;·&nbsp; <kbd>M</kbd> — cycle sound (music / effects / off)</li>
             <li><kbd>Shift</kbd> — <b>switch lineage</b>: hand control to another of your lineages</li>
             <li><kbd>Esc</kbd> — pause &amp; high scores &nbsp;·&nbsp; <b>Help</b> button — this guide</li>
-            <li class="touchonly"><b>On a phone:</b> touch anywhere and <b>drag</b> the direction you want to swim; a quick <b>tap</b> (no drag) fires the enzyme. Top-right: <b>❚❚</b> pause and a coloured dot to <b>switch lineage</b>. Tap a gene on the bottom <b>genome bar</b> to load an enzyme; tap or swipe the chart to fold it away.</li>
+            <li class="touchonly"><b>On a phone:</b> all the controls sit in the <b>deck below the ocean</b>, so your thumbs never cover it. Steer with the <b>thumbstick</b>; push it <b>all the way out and hold a beat</b> (¼s) to <b>lock in a run</b> — the rim lights up and the cell keeps swimming that way after you let go. The lock <b>winds down over a couple of seconds</b> (watch the knob ease back to centre), so it never sticks on; tap the stick's <b>centre</b> to stop it early. The two round buttons to its right are <b>coloured by what's loaded</b>: the big one is your enzyme (or <span style="color:#f05ad0">antibiotic</span>), the small one your current <b>lineage</b>, with their neighbours peeking out behind like cards in a stack. <b>Tap to fire / switch, swipe up or down to change</b> — and you can hold the stick and tap them <b>at the same time</b>. Tapping a gene in the <b>genome row</b> still loads it directly; swipe the chart (up top) to fold it away.</li>
           </ul>
         </section>
         <section>
@@ -509,6 +609,31 @@
     </div>
   </div>
 
+  <!-- Touch controls: a deck BELOW the play area, not an overlay on top of it, so a thumb
+       never covers the ocean. game.js moves the genome/gene row in here on touch devices. -->
+  <div id="touch" class="hidden">
+    <div id="deckRow">
+      <div id="stickZone"><div id="stickBase"><div id="stickKnob"></div></div></div>
+      <!-- right column: the genome/adaptation chips squeeze in above the action buttons,
+           so the thumbstick can have the whole left side -->
+      <div id="deckRight">
+      <div id="tbtns">
+        <!-- Rolodex buttons: the face is flooded with the colour of what's loaded, and the
+             neighbours peek out behind it. Tap to fire, swipe up/down to change. -->
+        <button id="tEnz" class="tbtn big rolo" aria-label="Release loaded enzyme — swipe up or down to change it">
+          <span class="rprev"></span><span class="rnext"></span>
+          <span class="rface"></span><span class="rcap">carb</span>
+        </button>
+        <button id="tLin" class="tbtn rolo" aria-label="Switch lineage — swipe up or down to cycle">
+          <span class="rprev"></span><span class="rnext"></span>
+          <span class="rface"></span><span class="rcap">lin</span>
+        </button>
+        <button id="tPause" class="tbtn pause" aria-label="Pause">❚❚</button>
+      </div>
+      </div>
+    </div>
+  </div>
+
   <div id="chartwrap">
     <div id="chartlegend"></div>
     <canvas id="chart" width="800" height="96"></canvas>
@@ -516,7 +641,28 @@
     <canvas id="subchart" width="800" height="64"></canvas>
   </div>
 </div>
-<footer id="pagefoot">
+<!-- Tuning panel: rows are generated from CFG in game.js, so only the frame is here. -->
+<div id="admin" class="hidden">
+  <div id="adminHead">
+    <b>TUNING</b>
+    <span class="ahint">` to close · / to search · sliders are log-scaled (×÷10 around default) · double-click a name to reset it</span>
+    <input id="adminSearch" placeholder="filter knobs — name or description…" autocomplete="off" spellcheck="false">
+    <span id="adminCount"></span>
+  </div>
+  <div id="adminBody"></div>
+  <div id="adminDoc"></div>
+  <div id="adminFoot">
+    <input id="adminName" placeholder="preset name (e.g. high-predation)" autocomplete="off" spellcheck="false" maxlength="60">
+    <button id="adminSave">Save JSON</button>
+    <button id="adminLoad" class="ghost">Load</button>
+    <button id="adminReset" class="ghost">Reset all</button>
+    <input id="adminFile" type="file" accept="application/json,.json" class="hidden">
+    <div id="adminStatus"></div>
+  </div>
+</div>
+<!-- Source + attribution links, hidden for now. Kept in the markup rather than deleted:
+     drop the "hidden" class to bring them back exactly as they were. -->
+<footer id="pagefoot" class="hidden">
   <a href="https://github.com/rec3141/bacteria-the-game" target="_blank" rel="noopener">source on GitHub</a>
   &nbsp;·&nbsp;
   <a href="https://cryomics.org" target="_blank" rel="noopener">Collins Lab</a>
