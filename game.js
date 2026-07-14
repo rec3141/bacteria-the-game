@@ -1328,6 +1328,7 @@
     // STOCK IT. Opening into an empty ocean with four cells in it is an anticlimax — the whole point
     // of the reveal is that there's more out there than the dish could hold. Fill the world with a
     // living community: a diverse bacterial population, grazers hunting it, and a viral reservoir.
+    phages = phages.filter((p) => p.type !== "gold");   // no gold follows you out of the dish
     immigrateBacteria(CFG.demo.openCells);
     for (let i = 0; i < CFG.demo.openProtists; i++) {
       const a = rand(0, TAU), d = rand(400, 1000);
@@ -2698,8 +2699,12 @@
     // CENTERED on the player: everything is drawn relative to your cell (toroidal wrap via dx/dy),
     // so you stay in the middle and the world scrolls under you — much easier to navigate the wrap.
     const pc = controlledEntity(), cx0 = mx + mw/2, cy0 = my + mh/2; // cell OR protist — the map follows whoever you are
-    const MX = pc ? (ex) => cx0 + dx(ex, pc.x)*kx : (ex) => mx + ex*kx;
-    const MY = pc ? (ey) => cy0 + dy(ey, pc.y)*ky : (ey) => my + ey*ky;
+    // Anchor on the CAMERA, not on the cell. In play the camera is glued to your cell, so this is the
+    // same picture — but the attract sim has no controlled cell, and the map used to fall back to raw
+    // world coordinates and sit still while the camera drifted somewhere else entirely.
+    const anchor = pc || cam;
+    const MX = (ex) => cx0 + dx(ex, anchor.x)*kx;
+    const MY = (ey) => cy0 + dy(ey, anchor.y)*ky;
     ctx.beginPath(); ctx.rect(mx, my, mw, mh); ctx.clip(); // keep marks inside the frame
     // particles are omitted — the map shows only the living things
     if (!isTouch) { // colony dots colored by generation (same palette as the chart); cysts hidden
@@ -2711,7 +2716,7 @@
     ctx.fillStyle = "#ff7a6b";
     for (const pr of predators) { ctx.beginPath(); ctx.arc(MX(pr.x), MY(pr.y), 2.5*ps, 0, 6.28); ctx.fill(); }
     // gold phage — a bright STAR so it stands out from round dots
-    for (const ph of phages) if (ph.type === "gold") drawMiniStar(MX(ph.x), MY(ph.y), 5.5*ps, 2.4*ps, "#ffd24a");
+    for (const ph of phages) if (ph.type === "gold" && !ph.dead) drawMiniStar(MX(ph.x), MY(ph.y), 5.5*ps, 2.4*ps, "#ffd24a");
     // your cell — a white-ringed teal DIAMOND, dead center
     if (pc) drawMiniDiamond(cx0, cy0, 4.5*ps, "#8dffdc");
     ctx.restore();
