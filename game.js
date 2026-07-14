@@ -86,7 +86,7 @@
     nutrient: { life: 16, radius: 3.2, maxCount: 600 },
     // trophic role-swap: when your whole population dies you flip to the other trophic level
     // instead of a game-over — bacteria extinct → you become a protist (grazer); protists extinct → back to a bacterium.
-    cycle: { reseedBacteria: 16, reseedProtists: 4, protistThrust: 240, protistEatScore: 3,
+    cycle: { reseedBacteria: 16, reseedProtists: 4, protistThrust: 240, protistEatScore: 30,
              preyFloor: 20, preyEvery: 5,     // as a grazer, bacteria keep drifting in to hunt
              // TURBO (Space / the release button while you're a protist): a short sprint bought
              // with energy. Grabbing a gold phage as a grazer lengthens the burst — that's the
@@ -94,21 +94,25 @@
              turboSecs: 0.25, turboMult: 2.6, turboCost: 7, turboGoldBonus: 0.12, turboMaxSecs: 1.5 },
     // "A day in the life": a 24h clock at 1h = 1min (24-min day); conditions follow a diel cycle.
     // tod (time-of-day) runs 0→1 over the day, starting at DAWN (6am). Curves below drive it.
-    day: { lengthSec: 1440, startHour: 6 },
+    day: { lengthSec: 240, startHour: 6 },
     diel: {
       tempBase: 17, tempAmp: 5, tempLag: 0.05,   // warmest early afternoon (temp lags the sun)
       foodFloor: 0.35,                            // night food supply as a fraction of the midday bloom
       grazeNight: 1.0,                            // extra grazing pressure at night (diel vertical migration)
       lightGamma: 1.8,                            // shapes the daylight curve: >1 deepens night, sharpens noon
-      nightTint: 0.52, dayTint: 0.10,             // how far the sea darkens by midnight / brightens by noon
+      // The WATER's colour is the clock: lerped from midnight navy to midday teal. It used to be a
+      // fixed background with a pale wash painted OVER the world at noon, which filmed over the
+      // organisms (washed out) and banded as the low alpha faded (jittery).
+      waterNight: [2, 9, 22], waterDay: [18, 78, 92],
+      goldTint: 0.16,                             // warm glow when the sun is low (dawn/dusk)
       q10: 2.0, q10RefC: 20,                      // metabolism ×q10 per +10 °C above the reference temp
     },
     predator: {
       count: 4, radius: 22, wanderSpeed: 50, chaseSpeed: 85, senseRange: 170, satiatedTime: 4.5,
-      startEnergy: 100, mealEnergy: 58, metabolism: 1.44, // eats cells for energy, drains over time (raised 25% to curb the boom from doubled food)
+      startEnergy: 100, mealEnergy: 58, metabolism: 4, // eats cells for energy, drains over time (raised 25% to curb the boom from doubled food)
       maturity: 8,                                       // no senescence — a grazer dies of STARVATION
                                                          // (or antibiotics), never of old age
-      reproEnergy: 160, reproCooldown: 11,               // reproduction, gated only by feeding — faster so grazers can chase a bacterial boom
+      reproEnergy: 320, reproCooldown: 11,               // reproduction, gated only by feeding — faster so grazers can chase a bacterial boom
       safetyMax: 600,                                    // perf backstop only — never binds ecologically
       minCount: 2, immigrateEvery: 8,                    // starting immigration/respawn interval (halves on each protist extinction)
       immigratePerPrey: 0.04, immigrateCap: 150, immigrateMax: 14, // grazers immigrate toward a target that rises with bacterial abundance; more per step so they can catch a boom
@@ -338,12 +342,22 @@
   // varying. This dips to darkness at midnight and climbs back out smoothly, so every driver keeps
   // moving around the clock.
   function sunElev(tod) { return Math.sin(tod*TAU); }               // -1 (midnight) .. +1 (noon)
+  // The sea's colour, lerped straight from midnight navy to midday teal. Colouring the WATER (rather
+  // than washing a film over the finished frame) is what keeps the organisms at full contrast: at
+  // noon the sea is bright and the cells still read sharply against it.
+  function waterColor(light) {
+    const N = CFG.diel.waterNight, D = CFG.diel.waterDay, t = clamp(light, 0, 1);
+    const ch = (i) => Math.round(N[i] + (D[i] - N[i])*t);
+    return `rgb(${ch(0)},${ch(1)},${ch(2)})`;
+  }
   function dielLight(tod) {
     const s = 0.5 + 0.5*sunElev(tod);                               // 0 .. 1, and 0.5 at dawn/dusk
     return Math.pow(s, CFG.diel.lightGamma);                        // gamma deepens night, sharpens noon
   }
   function dayHour(tod) { return (CFG.day.startHour + tod*24) % 24; }
   function updateDiel() {
+    // tod is clamped, not wrapped, on purpose: the run IS one day — it ends at elapsed >=
+    // day.lengthSec with "You survived the day". So tod never needs to come round again.
     const D = CFG.diel, tod = clamp(state.elapsed / CFG.day.lengthSec, 0, 1);
     const light = dielLight(tod);
     state.tod = tod; state.light = light;
@@ -1498,7 +1512,11 @@
   const onScreen = (x, y, m) => x > -m && x < VIEW_W + m && y > -m && y < VIEW_H + m;
 
   function draw() {
-    ctx.clearRect(0, 0, VIEW_W, VIEW_H);
+    // The sea itself carries the time of day: deep navy at midnight, bright teal at noon. Colouring
+    // the WATER (rather than washing a translucent film over the finished frame, as this used to)
+    // keeps the organisms at full contrast — noon is brighter without everything going milky.
+    ctx.fillStyle = waterColor(state && state.light != null ? state.light : 0.6);
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
     drawWater(); // ambient background stays unscaled so the corners never go empty
     ctx.save();
     if (ZOOM !== 1) { ctx.translate(VIEW_W/2, VIEW_H/2); ctx.scale(ZOOM, ZOOM); ctx.translate(-VIEW_W/2, -VIEW_H/2); }
@@ -1516,13 +1534,12 @@
   }
   function drawDayNight() {
     if (!state) return;
-    const D = CFG.diel, light = state.light || 0, night = 1 - light;
-    // Two washes that cross-fade continuously with the sun: the sea deepens to navy toward midnight
-    // and brightens toward noon, so the water itself tells you the time of day.
-    if (night > 0.01) { ctx.fillStyle = `rgba(4,10,34,${(D.nightTint*night).toFixed(3)})`; ctx.fillRect(0, 0, VIEW_W, VIEW_H); }
-    if (light > 0.01) { ctx.fillStyle = `rgba(186,240,255,${(D.dayTint*light).toFixed(3)})`; ctx.fillRect(0, 0, VIEW_W, VIEW_H); }
-    const gold = clamp((0.4 - light)/0.4, 0, 1) * clamp(light*5, 0, 1); // warm glow when the sun is low (dawn/dusk)
-    if (gold > 0.01) { ctx.fillStyle = `rgba(255,150,60,${(0.18*gold).toFixed(3)})`; ctx.fillRect(0, 0, VIEW_W, VIEW_H); }
+    const D = CFG.diel, light = state.light || 0;
+    // The darkening/brightening lives in the water colour itself now (see waterColor), so nothing is
+    // painted over the world except this: a warm glow while the sun is low. It peaks at dawn and dusk
+    // and is gone by mid-morning, so it never dulls the daytime picture.
+    const gold = clamp((0.4 - light)/0.4, 0, 1) * clamp(light*5, 0, 1);
+    if (gold > 0.01) { ctx.fillStyle = `rgba(255,150,60,${(D.goldTint*gold).toFixed(3)})`; ctx.fillRect(0, 0, VIEW_W, VIEW_H); }
   }
 
   let waterDots = makeWaterDots();
@@ -2326,8 +2343,9 @@
     "cycle.turboGoldBonus": "Seconds added to your turbo burst for each gold phage you catch AS A PROTIST — the grazer's version of an adaptation. Stacks for the rest of the run.",
     "cycle.turboMaxSecs": "Ceiling on the turbo burst, however many gold phages you collect.",
     "diel.lightGamma": "Shapes the daylight curve across the 24h. 1 = a plain sinusoid; higher deepens the night and sharpens midday. The light drives food supply, grazing pressure and the colour of the water.",
-    "diel.nightTint": "How dark the sea goes at midnight.",
-    "diel.dayTint": "How much the sea brightens at noon.",
+    "diel.waterNight": "The sea's colour at midnight (r, g, b). The water itself carries the time of day.",
+    "diel.waterDay": "The sea's colour at noon (r, g, b). Push it up to make midday brighter.",
+    "diel.goldTint": "Strength of the warm glow while the sun is low (dawn/dusk).",
     "diel.q10": "Q10: metabolic rate multiplies by this for every +10 degC. 2 = the textbook value (rate doubles). 1 = temperature has no effect. Applies to bacteria AND protists.",
     "diel.q10RefC": "Reference temperature for Q10 — metabolism runs at its base rate here.",
     "respirationBase": "Baseline energy per second every cell burns just staying alive. The single biggest lever on how punishing the game is.",
