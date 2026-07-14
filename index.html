@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Bacteria! — the video game</title>
 <meta name="description" content="A playable model of marine microbial ecology: forage, evolve, divide, and endure as a single bacterium in a drop of the sea." />
 <meta name="theme-color" content="#04141a" />
@@ -22,6 +22,10 @@
     --muted: #9fc3ba;
     --accent: #57e0c0;
     --warn: #ff7a6b;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-right: env(safe-area-inset-right, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-left: env(safe-area-inset-left, 0px);
   }
   * { box-sizing: border-box; }
   html, body {
@@ -33,7 +37,9 @@
   }
   #wrap {
     display: flex; flex-direction: column; align-items: center;
-    justify-content: center; height: 100%; gap: 10px; padding: 10px;
+    justify-content: center; height: 100vh; height: 100dvh; gap: 10px;
+    padding: max(10px, var(--safe-top)) max(10px, var(--safe-right))
+             max(10px, var(--safe-bottom)) max(10px, var(--safe-left));
   }
   #stage {
     position: relative;
@@ -157,7 +163,8 @@
   button.ghost:active { transform: translateY(2px); box-shadow: none; }
   #updateBtn { background: #ffd24a; color: #2a1e04; box-shadow: 0 4px 0 #b8912a; font-size: 14px; }
   #updateBtn:active { box-shadow: 0 1px 0 #b8912a; }
-  #pagefoot { position: fixed; bottom: 5px; left: 0; right: 0; text-align: center;
+  #pagefoot { position: fixed; bottom: max(5px, var(--safe-bottom));
+    left: var(--safe-left); right: var(--safe-right); text-align: center;
     font-size: 11px; color: var(--muted); opacity: .55; pointer-events: none; }
   #pagefoot a { color: inherit; text-decoration: none; pointer-events: auto; }
   #pagefoot a:hover { color: var(--accent); text-decoration: underline; }
@@ -438,7 +445,8 @@
 
   /* Admin / tuning panel (` to toggle) — a dev tool, so it's deliberately plain
      and sits over the page without pausing the sim, so edits are seen live. */
-  #admin { position: fixed; top: 0; right: 0; bottom: 0; width: 340px; z-index: 100;
+  #admin { position: fixed; top: var(--safe-top); right: var(--safe-right);
+    bottom: var(--safe-bottom); width: 340px; z-index: 100;
     display: flex; flex-direction: column; background: rgba(4,17,21,.94);
     border-left: 1px solid rgba(87,224,192,.35); box-shadow: -8px 0 30px rgba(0,0,0,.5);
     font-size: 12px; backdrop-filter: blur(3px); }
@@ -484,23 +492,29 @@
   #adminStatus.warn { color: #ffd24a; opacity: .95; }
 
   @media (max-width: 840px), (max-height: 560px) {   /* phones/tablets: use the whole screen, don't clip the chart */
-    #wrap { padding: 6px; gap: 6px; justify-content: flex-start; }
+    #wrap { gap: 6px; justify-content: flex-start;
+      padding: max(6px, var(--safe-top)) max(6px, var(--safe-right))
+               max(6px, var(--safe-bottom)) max(6px, var(--safe-left)); }
     /* the game fills the leftover vertical space; folding the chart hands its room
        straight to the play field instead of leaving a blank gap. */
     #stage { width: 100%; aspect-ratio: auto; flex: 1 1 auto; min-height: 0; }
     #chartwrap { flex: 0 0 auto; }
     /* Menus break out of the short game stage to fill the viewport, so their
        content fits the tall phone screen instead of scrolling in a tiny box. */
-    .screen { position: fixed; z-index: 50; gap: 10px; padding: 14px; }
+    .screen { position: fixed; z-index: 50; gap: 10px;
+      padding: max(14px, var(--safe-top)) max(14px, var(--safe-right))
+               max(14px, var(--safe-bottom)) max(14px, var(--safe-left)); }
+    #scores { padding-top: max(24px, var(--safe-top)); }
+    #help, #science { padding-top: max(22px, var(--safe-top)); }
     /* the menus go position:fixed here, which would bury the attract caption inside the stage —
        lift it out to the viewport too, above the title's backdrop */
-    #demoCap { position: fixed; z-index: 55; bottom: 10px; }
+    #demoCap { position: fixed; z-index: 55; bottom: max(10px, var(--safe-bottom)); }
     #help, #science { z-index: 60; } /* stay above the screen they were opened from */
     .screen h1 { font-size: 30px; }
     #title .lede { font-size: 13px; line-height: 1.45; }
     #analysisChart { height: 128px; } #analysisSubChart { height: 50px; }
     #analysisWrap { padding: 6px 8px; }
-    #helpBody, #sciBody, #scoresList { max-height: 62vh; }
+    #helpBody, #sciBody, #scoresList { max-height: 62vh; max-height: 62dvh; }
   }
   /* On a phone the live charts move ABOVE the play area (flex reorder) and shrink a little.
      Order down the page is then: charts · ocean · control deck. */
@@ -511,7 +525,7 @@
   /* body is overflow:hidden, so anything that doesn't fit is CUT OFF rather than scrollable.
      Bound the ocean by viewport height as well as width, so the control deck below it always
      has room on a short phone. Only binds when the screen is short; tall phones are unaffected. */
-  body.touch #stage { width: min(800px, 100%, 50vh); }
+  body.touch #stage { width: min(800px, 100%, 50vh); width: min(800px, 100%, 50dvh); }
   /* Nothing is drawn over the ocean any more, so the HUD keeps its natural top-left line;
      only the minimap shares the stage (and game.js keeps that in a free corner). */
   /* the phone minimap is 220 of the canvas's 800px (27.5%), top-left — start the stats clear of it */
