@@ -1351,10 +1351,31 @@
     // a run played with the tuning panel open isn't comparable to anyone else's — say so
     const tuned = cfgTuned() ? `<br><span style="font-size:12px;opacity:.7;color:#ffd24a">tuned run — kept local, not sent to the shared leaderboard</span>` : "";
     const dayN = state.day || 1;
-    el.overTitle.textContent = dayComplete ? `You survived day ${dayN} 🌅` : "Run ended";
-    el.overMsg.innerHTML = (dayComplete
-      ? `${dayN === 1 ? "A full day" : `${dayN} full days`} in the life of a bacterium. Your lineage reached <b>generation ${state.gen}</b> and consumed ${cal}.`
-      : `Your lineage reached <b>generation ${state.gen}</b> and consumed ${cal}.`) + tuned;
+    const days = dayN === 1 ? "A full day" : `${dayN} full days`;
+    // If your bacteria died out, you did NOT spend the day as a bacterium — you spent it as the thing
+    // that was eating you. Saying "a full day in the life of a bacterium" over a run whose lineage
+    // went extinct at 09:40 is the screen telling the player a story that didn't happen.
+    const swaps = state.roleSwaps || [];
+    const ext = swaps.find((s) => s.to === "protist");
+    const gen = `<b>generation ${state.gen}</b>`;
+    let msg;
+    if (state.role === "protist" && ext) {
+      const when = `<b>${clockAt(ext.t)}</b>`;
+      msg = dayComplete
+        ? `${days} — but not as a bacterium. Your kind went extinct at ${when}, and you saw the day out a trophic level up, grazing the cells that outlived you. Your lineage peaked at ${gen}; you ate ${cal} in all.`
+        : `Your bacteria went extinct at ${when} and you finished as a <b>protist</b>, grazing the survivors. Your lineage peaked at ${gen}; you ate ${cal} in all.`;
+    } else if (ext) {                       // extinct, then the grazers died too and you came back
+      msg = (dayComplete ? `${days} in the life. ` : "") +
+        `Your kind went extinct at <b>${clockAt(ext.t)}</b> — and came back, when the grazers died out in their turn. Your lineage reached ${gen} and consumed ${cal}.`;
+    } else {
+      msg = dayComplete
+        ? `${days} in the life of a bacterium. Your lineage reached ${gen} and consumed ${cal}.`
+        : `Your lineage reached ${gen} and consumed ${cal}.`;
+    }
+    el.overTitle.textContent = dayComplete
+      ? (state.role === "protist" ? `You survived day ${dayN} — as a protist 🌅` : `You survived day ${dayN} 🌅`)
+      : "Run ended";
+    el.overMsg.innerHTML = msg + tuned;
     // you can only carry on from a day you SURVIVED — not from a run that ended
     if (el.continueBtn) el.continueBtn.classList.toggle("hidden", !dayComplete);
     drawAnalysis();
@@ -2778,16 +2799,37 @@
       for (const c of n.children) ys.push(yOf.get(c));
       yOf.set(n, ys.length ? (Math.min(...ys) + Math.max(...ys))/2 : padT);
     })(root);
+    // COLOUR HAS TO TRACK THE CHART. The leaves already carry their lineage's colour (the same
+    // levelColor the stacked bands use), but the BRANCHES were drawn in the colour of the GENE that
+    // split them — a second, unrelated colour system — so nothing traced from a band on the chart
+    // down into the tree. Now each branch is drawn in the colour of the lineage it leads to: pick a
+    // subtree's representative as its biggest leaf, so a band's colour runs unbroken from the root
+    // out to it. The gene keeps the LABEL (in the gene's own colour), which is what it's for.
+    const repOf = new Map();
+    (function rep(n) {
+      let bestKey = null, bestPeak = -1;
+      for (const k of n.leaves) if ((peak[k] || 0) > bestPeak) { bestPeak = peak[k] || 0; bestKey = k; }
+      for (const c of n.children) {
+        rep(c);
+        const ck = repOf.get(c);
+        if (ck != null && (peak[ck] || 0) > bestPeak) { bestPeak = peak[ck] || 0; bestKey = ck; }
+      }
+      repOf.set(n, bestKey);
+    })(root);
+    const lineColor = (n) => {
+      const k = repOf.get(n);
+      return k == null ? "rgba(255,255,255,.3)" : levelColor(k >> 6, k & 63);
+    };
     // DIAGONAL branches: a straight line from parent to child, so the tree reads as descent with
     // divergence rather than as a plumbing diagram.
-    g.lineWidth = 1.6; g.font = "9.5px 'Trebuchet MS', sans-serif"; g.textAlign = "center";
+    g.lineWidth = 2; g.font = "9.5px 'Trebuchet MS', sans-serif"; g.textAlign = "center";
     (function draw(n) {
       const x0 = xAt(n.depth), y0 = yOf.get(n);
       for (const c of n.children) {
         const x1 = xAt(c.depth), y1 = yOf.get(c);
-        g.strokeStyle = c.color || "rgba(255,255,255,.3)";
+        g.strokeStyle = lineColor(c);                   // the LINEAGE's colour — same as its band
         g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
-        g.fillStyle = c.color || "#9fc3ba";
+        g.fillStyle = c.color || "#9fc3ba";             // the GENE's colour, for the label only
         g.save();                                       // label rides ON the branch, along its slope
         g.translate((x0 + x1)/2, (y0 + y1)/2);
         g.rotate(Math.atan2(y1 - y0, x1 - x0));
@@ -2805,11 +2847,11 @@
     g.textAlign = "left"; g.font = "10.5px 'Trebuchet MS', sans-serif";
     for (const r of rows) {
       const xn = xAt(r.node.depth), y = r.y;
-      if (Math.abs(y - yOf.get(r.node)) > 0.5) {          // stub across to its own row
-        g.strokeStyle = "rgba(255,255,255,.25)"; g.lineWidth = 1;
+      const mask = r.key >> 6, tier = r.key & 63, col = levelColor(mask, tier);
+      if (Math.abs(y - yOf.get(r.node)) > 0.5) {          // stub across to its own row — in ITS colour
+        g.strokeStyle = col; g.lineWidth = 1.5;
         g.beginPath(); g.moveTo(xn, yOf.get(r.node)); g.lineTo(xn, y); g.stroke();
       }
-      const mask = r.key >> 6, tier = r.key & 63, col = levelColor(mask, tier);
       g.fillStyle = col; g.fillRect(xn + 6, y - 5, 10, 10);   // the same color as its band on the chart above
       g.fillStyle = "rgba(215,245,238,.85)";
       // "peak 12" was ambiguous — peak WHAT? It's the most cells this lineage ever had at one moment.
@@ -2900,10 +2942,17 @@
     p.style.top  = clamp(e.clientY - h/2, 6, vh - h - 6) + "px";
   }
   function fmtDur(s) { const m = Math.floor(s/60); return m + ":" + String(s % 60).padStart(2, "0"); }
-  function clockStr() { // in-game 24h clock (1 real-min = 1 game-hour)
+  function clockStr() { // in-game 24h clock — one full turn every day.lengthSec
     const h = dayHour(state.tod || 0), hh = Math.floor(h), mm = Math.floor((h - hh)*60);
     const day = (state.day || 1) > 1 ? `d${state.day} ` : "";   // only once a run has outlived its first day
     return day + ((state.light || 0) > 0.05 ? "☀ " : "☾ ") + String(hh).padStart(2, "0") + ":" + String(mm).padStart(2, "0");
+  }
+  // the sea's clock at an arbitrary elapsed time — "your kind went extinct at 09:40" reads far better
+  // than "at 154 seconds", and the whole game is told on the day's clock anyway
+  function clockAt(sec) {
+    const h = dayHour(((sec || 0)/CFG.day.lengthSec) % 1), hh = Math.floor(h), mm = Math.floor((h - hh)*60);
+    const dayN = Math.floor((sec || 0)/CFG.day.lengthSec) + 1;
+    return (dayN > 1 ? `day ${dayN}, ` : "") + String(hh).padStart(2, "0") + ":" + String(mm).padStart(2, "0");
   }
   function fmtDate(ms) { const d = new Date(ms);
     return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }); }
