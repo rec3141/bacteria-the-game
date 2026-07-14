@@ -31,7 +31,11 @@
     cell: {
       radius: 5, baseHalf: 9, maxHalf: 22, lenBaseEnergy: 55, elongK: 0.11,
       thrust: 780, maxSpeed: 240, uptake: 14,
-      startEnergy: 110, maxEnergy: 230, divideThreshold: 200, // costlier duplication — must bank more energy before splitting (slows the boom)
+      startEnergy: 110, maxEnergy: 230, divideThreshold: 175, // energy a cell must bank before it splits.
+                           // 200 was too high to be REACHABLE: an autonomous carb-only cell tops out around
+                           // 110-170 energy, so it never divided — it just encysted, and a colony left to
+                           // itself stalled and died. Measured in a no-predator/no-virus sanctuary over 150s:
+                           // 200 -> 49 cells (37 divisions), 175 -> 120 (108), 155 -> 178 (166).
       swimCost: 1.2, enzymeCost: 4, antibioticCost: 6, invulnTime: 2.2,
       runMin: 1.8, runMax: 3.4, tumbleDur: 0.4, tumbleTurn: 7.0, playerTumbleTurn: 2.2,
       enzymeCooldown: [2.5, 4.5],
