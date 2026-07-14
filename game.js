@@ -221,6 +221,8 @@
     help: document.getElementById("help"), helpBtn: document.getElementById("helpBtn"), helpBack: document.getElementById("helpBack"),
     helpBtn2: document.getElementById("helpBtn2"), helpBtn3: document.getElementById("helpBtn3"),
     dayLen: document.getElementById("dayLen"),   // filled from CFG.day.lengthSec — it's a tunable knob
+    circosPop: document.getElementById("circosPop"), circosCanvas: document.getElementById("circosCanvas"),
+    circosCap: document.getElementById("circosCap"), detailCircos: document.getElementById("detailCircos"),
     science: document.getElementById("science"), sciBody: document.getElementById("sciBody"), sciBack: document.getElementById("sciBack"),
     sciBtn: document.getElementById("sciBtn"), sciBtn2: document.getElementById("sciBtn2"), sciBtn3: document.getElementById("sciBtn3"),
     analysisChart: document.getElementById("analysisChart"), analysisStats: document.getElementById("analysisStats"),
@@ -2182,10 +2184,90 @@
       if (scoreSort.key === kk) scoreSort.dir = -scoreSort.dir; else scoreSort = { key: kk, dir: kk === "name" ? 1 : -1 };
       renderScoreList();
     }));
-    el.scoresList.querySelectorAll("tr.srow").forEach((tr) => tr.addEventListener("click", () => {
+    el.scoresList.querySelectorAll("tr.srow").forEach((tr) => {
       const rec = arr.find((r) => String(recId(r)) === tr.getAttribute("data-id"));
-      if (rec) openScoreDetail("#" + (arr.indexOf(rec) + 1), rec);
-    }));
+      if (!rec) return;
+      tr.addEventListener("click", () => openScoreDetail("#" + (arr.indexOf(rec) + 1), rec));
+      // Hover → that run's genome, drawn as a circos ring. Touch has no hover, so a phone gets the
+      // same plot by tapping the row (it's in the detail view too) — nothing is desktop-only.
+      if (isTouch) return;
+      tr.addEventListener("mouseenter", (e) => { showCircos(rec); positionCircos(e); });
+      tr.addEventListener("mousemove", positionCircos);
+      tr.addEventListener("mouseleave", hideCircos);
+    });
+  }
+  // ------------------------------------------------------------------ circos
+  // A run's genome as a ring: one sector per adaptation, clockwise from 12 o'clock IN THE ORDER IT
+  // ARRIVED — state.upgrades is already an acquisition-ordered log, so it needs no extra bookkeeping.
+  // A solid sector is a brand-new gene (`acquired`); a shorter, dimmer one is an expression bump of a
+  // gene already held. Chords tie the sectors of one locus together, so Lipase 1 → 2 → 3 reads as a
+  // single gene amplifying rather than three unrelated events — which is the whole point of drawing
+  // it round rather than as another timeline.
+  const locusOf = (u) => (String(u.abbr || "").match(/^[A-Za-z]+/) || [""])[0];  // "L2"→"L", "Ab1"→"Ab"
+  function renderCircos(g, W, H, upgrades, rec) {
+    g.clearRect(0, 0, W, H);
+    const ups = (upgrades || []).filter((u) => u && u.abbr);
+    const cx = W/2, cy = H/2, R = Math.min(W, H)/2 - 22, rIn = R*0.72;
+    g.strokeStyle = "rgba(255,255,255,.10)"; g.lineWidth = 1;
+    g.beginPath(); g.arc(cx, cy, R, 0, TAU); g.stroke();
+    g.beginPath(); g.arc(cx, cy, rIn, 0, TAU); g.stroke();
+    g.textAlign = "center"; g.textBaseline = "middle";
+    if (!ups.length) {
+      g.fillStyle = "rgba(215,245,238,.45)"; g.font = "italic 11px 'Trebuchet MS', sans-serif";
+      g.fillText("no adaptations", cx, cy);
+      return;
+    }
+    const n = ups.length, step = TAU/n, gap = Math.min(step*0.18, 0.06);
+    const ang = (i) => -Math.PI/2 + i*step + step/2;              // a sector's midpoint
+    // chords first, so the sectors overlap them rather than the other way round
+    const byLocus = {};
+    ups.forEach((u, i) => { const k = locusOf(u); (byLocus[k] = byLocus[k] || []).push(i); });
+    for (const k in byLocus) {
+      const idx = byLocus[k];
+      if (idx.length < 2) continue;                                // a lone gene has nothing to link to
+      g.strokeStyle = ups[idx[0]].color; g.globalAlpha = 0.3; g.lineWidth = 1.6;
+      for (let j = 0; j < idx.length - 1; j++) {
+        const a = ang(idx[j]), b = ang(idx[j+1]);
+        g.beginPath();
+        g.moveTo(cx + Math.cos(a)*rIn, cy + Math.sin(a)*rIn);
+        g.quadraticCurveTo(cx, cy, cx + Math.cos(b)*rIn, cy + Math.sin(b)*rIn);  // bow through the middle
+        g.stroke();
+      }
+      g.globalAlpha = 1;
+    }
+    ups.forEach((u, i) => {
+      const a0 = -Math.PI/2 + i*step + gap/2, a1 = a0 + step - gap;
+      const isNew = !!u.acquired;
+      const r0 = isNew ? rIn : R*0.85;                             // a bump is a stub; a new gene spans the ring
+      g.beginPath(); g.arc(cx, cy, R, a0, a1); g.arc(cx, cy, r0, a1, a0, true); g.closePath();
+      g.fillStyle = u.color; g.globalAlpha = isNew ? 0.95 : 0.5; g.fill(); g.globalAlpha = 1;
+      if (isNew) { g.strokeStyle = "rgba(255,255,255,.5)"; g.lineWidth = 1; g.stroke(); }
+      const a = ang(i);
+      g.fillStyle = u.color; g.globalAlpha = isNew ? 1 : 0.75;
+      g.font = (isNew ? "bold " : "") + "9.5px 'Trebuchet MS', sans-serif";
+      g.fillText(u.abbr, cx + Math.cos(a)*(R + 11), cy + Math.sin(a)*(R + 11));
+      g.globalAlpha = 1;
+    });
+    g.fillStyle = "#eafff8"; g.font = "bold 15px 'Trebuchet MS', sans-serif";
+    g.fillText("gen " + (rec && rec.gen != null ? rec.gen : "—"), cx, cy - 8);
+    g.fillStyle = "rgba(215,245,238,.6)"; g.font = "10.5px 'Trebuchet MS', sans-serif";
+    g.fillText(Math.round((rec && rec.score) || 0).toLocaleString() + " cal", cx, cy + 9);
+  }
+  function showCircos(rec) {
+    if (!el.circosPop || !el.circosCanvas) return;
+    renderCircos(el.circosCanvas.getContext("2d"), el.circosCanvas.width, el.circosCanvas.height, rec.upgrades, rec);
+    const n = rec.upgrades ? rec.upgrades.length : 0;
+    if (el.circosCap) el.circosCap.textContent = n
+      ? `${n} adaptation${n === 1 ? "" : "s"}, clockwise in the order they arrived`
+      : "this lineage never adapted";
+    el.circosPop.classList.remove("hidden");
+  }
+  function hideCircos() { if (el.circosPop) el.circosPop.classList.add("hidden"); }
+  function positionCircos(e) {   // ride alongside the cursor, but never off-screen
+    if (!el.circosPop) return;
+    const p = el.circosPop, w = p.offsetWidth || 246, h = p.offsetHeight || 268;
+    p.style.left = clamp(e.clientX + 18, 6, (window.innerWidth || 900) - w - 6) + "px";
+    p.style.top  = clamp(e.clientY - h/2, 6, (window.innerHeight || 700) - h - 6) + "px";
   }
   function fmtDur(s) { const m = Math.floor(s/60); return m + ":" + String(s % 60).padStart(2, "0"); }
   function clockStr() { // in-game 24h clock (1 real-min = 1 game-hour)
@@ -2211,7 +2293,9 @@
   let _detailRec = null, _detailRank = "";
   function openScoreDetail(rankHtml, rec) {
     if (!el.scoreDetail || !el.detailChart) return;
+    hideCircos();                             // the hover popup would otherwise hang over the detail view
     _detailRec = rec; _detailRank = rankHtml; // remembered so the log/linear toggle can redraw it
+    if (el.detailCircos) renderCircos(el.detailCircos.getContext("2d"), el.detailCircos.width, el.detailCircos.height, rec.upgrades, rec);
     annotateRun(el.detailChart.getContext("2d"), el.detailChart.width, el.detailChart.height, rec.hist || [], rec.upgrades, rec.dur);
     if (el.detailSubChart) annotateSub(el.detailSubChart.getContext("2d"), el.detailSubChart.width, el.detailSubChart.height, rec.hist || [], rec.upgrades, rec.dur);
     if (el.detailSubLabel) el.detailSubLabel.textContent = subLabelText();
@@ -2243,7 +2327,7 @@
     fetchScores();           // …then refresh from the shared leaderboard when it responds
     el.scores.classList.remove("hidden");
   }
-  function hideScores() { el.scores.classList.add("hidden"); if (el.scoreDetail) el.scoreDetail.classList.add("hidden"); }
+  function hideScores() { hideCircos(); el.scores.classList.add("hidden"); if (el.scoreDetail) el.scoreDetail.classList.add("hidden"); }
   let helpOpen = false, sciOpen = false;
   // The day's real-time length is a tunable knob, so the help screen must not hardcode it — it used
   // to promise "one hour per real minute", which stopped being true the moment day.lengthSec moved.

@@ -256,6 +256,18 @@
   #helpBody ul { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.7; opacity: .9; }
   .c-lip { color: #efd98a; } .c-pro { color: #ef8b3c; } .c-carb { color: #6fa8ff; }
   .c-gold { color: #ffd24a; } .c-vir { color: #8bf06a; } .c-cyst { color: #9aa6a0; } .c-prot { color: #ff9ec0; }
+  /* Circos genome popup (hover a run on the leaderboard) */
+  /* opaque, not translucent: the ring's middle is empty, and the leaderboard behind it
+     showed straight through the gap and muddied the plot */
+  #circosPop { position: fixed; z-index: 200; pointer-events: none;
+    background: #08222a; border: 1px solid rgba(87,224,192,.45); border-radius: 12px;
+    padding: 8px 8px 6px; box-shadow: 0 10px 34px rgba(0,0,0,.6); }
+  #circosPop.hidden { display: none !important; }
+  #circosPop canvas { display: block; background: transparent; }
+  #circosCap { max-width: 230px; text-align: center; font-size: 10.5px; line-height: 1.35;
+    color: var(--muted); margin-top: 3px; }
+  #detailCircos { display: block; margin: 2px auto 0; background: transparent; }
+
   /* Science overlay */
   #science { z-index: 20; justify-content: flex-start; padding-top: 22px; gap: 10px; background: #04141a; }
   #sciBody { width: 700px; max-width: 94%; max-height: 400px; overflow-y: auto; text-align: left; padding: 2px 14px 2px 2px; }
@@ -612,6 +624,8 @@
         <canvas id="detailChart" width="900" height="240"></canvas>
         <div class="alabel sublabel" id="detailSubLabel">Food available (lipid · protein · carb)</div>
         <canvas id="detailSubChart" width="900" height="110"></canvas>
+        <div class="alabel sublabel">Genome — adaptations clockwise in the order they arrived</div>
+        <canvas id="detailCircos" width="280" height="280"></canvas>
         <div id="detailStats"></div>
         <button id="detailBack" class="ghost">← Back to list</button>
       </div>
@@ -658,6 +672,12 @@
     <div id="subchartlegend"></div>
     <canvas id="subchart" width="800" height="64"></canvas>
   </div>
+</div>
+<!-- Hover a run on the high-score board and its genome is drawn here, as a circos ring. Lives outside
+     #stage so it can follow the cursor across the whole viewport without being clipped. -->
+<div id="circosPop" class="hidden">
+  <canvas id="circosCanvas" width="230" height="230"></canvas>
+  <div id="circosCap"></div>
 </div>
 <!-- Tuning panel: rows are generated from CFG in game.js, so only the frame is here. -->
 <div id="admin" class="hidden">
