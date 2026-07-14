@@ -62,6 +62,8 @@ if ($method === 'POST') {
     // Per-lineage genomes: bucket key (one colored band on the run chart) -> that lineage's adaptations.
     // Small by construction (capped at 64 lineages client-side), and needed to draw a band's circos.
     'lineages' => is_array($rec['lineages'] ?? null) ? array_slice($rec['lineages'], 0, 64, true) : new stdClass(),
+    // Where the run flipped trophic level (bacteria <-> protist). Drawn as a divider on the run chart.
+    'roleSwaps' => is_array($rec['roleSwaps'] ?? null) ? array_slice($rec['roleSwaps'], 0, 32) : [],
   ];
 
   $fp = @fopen($FILE, 'c+');

@@ -241,9 +241,11 @@
     circosCap: document.getElementById("circosCap"), detailCircos: document.getElementById("detailCircos"),
     demoCap: document.getElementById("demoCap"),   // attract-mode caption, over the ocean
     scoreTabs: document.getElementById("scoreTabs"),   // desktop / mobile leaderboard switch
+    themeMeta: document.querySelector('meta[name="theme-color"]'),
     analysisClado: document.getElementById("analysisClado"), detailClado: document.getElementById("detailClado"),
     tutorialBtn: document.getElementById("tutorialBtn"), demoExit: document.getElementById("demoExit"),
     demoPlay: document.getElementById("demoPlay"), demoBack: document.getElementById("demoBack"),
+    menuBtn: document.getElementById("menuBtn"), menuBtn2: document.getElementById("menuBtn2"),
     science: document.getElementById("science"), sciBody: document.getElementById("sciBody"), sciBack: document.getElementById("sciBack"),
     sciBtn: document.getElementById("sciBtn"), sciBtn2: document.getElementById("sciBtn2"), sciBtn3: document.getElementById("sciBtn3"),
     analysisChart: document.getElementById("analysisChart"), analysisStats: document.getElementById("analysisStats"),
@@ -740,6 +742,19 @@
     return hit ? { x: px, y: py } : null;
   }
 
+  // Resolve the rod against every solid particle: three probes — both poles and the centre.
+  // (The gaps BETWEEN probes are why a very long cell can still clip a one-voxel wall; substepping
+  // stops the tunnelling, not the sampling. Worth more probes on a long cell if that ever shows.)
+  function collideRod(c) {
+    const pl = cellPolesLocal(c);
+    const pts = [[c.x + pl[0], c.y + pl[1]], [c.x, c.y], [c.x + pl[2], c.y + pl[3]]];
+    for (const [px, py] of pts) {
+      const probe = { x: px, y: py, vx: c.vx, vy: c.vy };
+      collideCircle(probe, CFG.cell.radius);
+      c.x = wrapX(c.x + (probe.x - px)); c.y = wrapY(c.y + (probe.y - py));
+      c.vx = probe.vx; c.vy = probe.vy;
+    }
+  }
   // resolve a moving circle against all particles: shift out and kill inward velocity
   function collideCircle(obj, radius) {
     for (const p of substrates) {
@@ -795,6 +810,8 @@
       tod: tod0, light: dielLight(tod0), foodTarget: seedFood, graze: 1, foodT: 0, // diel state (updateDiel refreshes each frame)
       chartT: 0, history: [], fullT: 0, fullHist: [], fullInterval: 1, upgrades: [],
       lineages: {},   // bucket key (ecotype+tier, i.e. one colored band) → that lineage's genome
+      roleSwaps: [],  // when you flipped trophic level — the biggest event a run can have
+      dead: [],       // seed bank: genomes of everything that has died, for cysts to revive from
 
       // Stamped ONCE, at the start of the run, not per day: continuing into day 2 re-submits the
       // same run id, and a run must not be able to change which board it belongs to halfway through.
@@ -879,6 +896,18 @@
     if (el.demoExit) el.demoExit.classList.add("hidden");
     if (el.title) el.title.classList.remove("hidden");
   }
+  // Once you'd started a run there was NO WAY BACK to the title — so no way to reach the tutorial,
+  // or the attract loop, without reloading the page. Every screen you can be stuck on now has a door.
+  function toTitle() {
+    paused = false;
+    if (el.demoExit) el.demoExit.classList.add("hidden");
+    if (el.over) el.over.classList.add("hidden");
+    if (el.scores) el.scores.classList.add("hidden");
+    if (el.scoreDetail) el.scoreDetail.classList.add("hidden");
+    hideCircos();
+    startDemo();                              // the sea goes back to playing itself behind the menu
+    if (el.title) el.title.classList.remove("hidden");
+  }
   function nextDemoBeat() {
     if (!demo) return;
     demo.i++; demo.t = 0;
@@ -934,18 +963,43 @@
   }
   function controlledEntity() { return state && state.role === "protist" ? controlledProtist() : controlledCell(); }
   // ---- trophic role-swap: flip the player between bacterium and protist on extinction ----
+  // THE SEED BANK. Every cell that dies leaves its genome behind, and that pool is what the sea
+  // restocks from. It matters most after a protist takeover: the bacteria that drift back in should
+  // be the ones that ALREADY EVOLVED in this run — waking out of cysts, as they really would —
+  // rather than a fresh set of invented strains that erase the run's evolutionary history the moment
+  // your lineage dies. Sampling the pool uniformly means common ecotypes come back often and rare
+  // ones rarely: the distribution of the dead is the distribution of the revived.
+  function rememberGenome(c) {
+    if (!state || c.cyst === undefined) return;
+    state.dead = state.dead || [];
+    state.dead.push({ enzLvl: c.enzLvl.slice(), chemotaxis: !!c.chemotaxis, chemoLevel: c.chemoLevel || 0,
+                      crispr: !!c.crispr, antibiotic: c.antibiotic || 0, ups: (c.ups || []).slice(0, 32) });
+    if (state.dead.length > 400) state.dead.shift();   // a rolling bank, not an ever-growing one
+  }
+  function reviveGenome(c) {                            // returns false if the bank is empty
+    const bank = (state && state.dead) || [];
+    if (!bank.length) return false;
+    const g = bank[(Math.random()*bank.length)|0];
+    c.enzLvl = g.enzLvl.slice(); c.chemotaxis = g.chemotaxis; c.chemoLevel = g.chemoLevel;
+    c.crispr = g.crispr; c.antibiotic = g.antibiotic; c.ups = (g.ups || []).slice();
+    return true;
+  }
   function immigrateBacteria(n) { // a diversity of bacteria drift in from offscreen (varied genomes)
     for (let i = 0; i < n && cells.length < CFG.cell.maxCells; i++) {
       const a = rand(0, 6.28), d = Math.hypot(VIEW_W, VIEW_H)/2 + rand(60, 380);
       const c = makeCell(cam.x + Math.cos(a)*d, cam.y + Math.sin(a)*d, CFG.cell.startEnergy, rand(0, 6.28), 1);
-      if (Math.random() < 0.55) c.enzLvl[0] = 1 + (Math.random() < 0.3 ? 1 : 0);
-      if (Math.random() < 0.55) c.enzLvl[1] = 1 + (Math.random() < 0.3 ? 1 : 0);
-      c.enzLvl[2] = 1 + (Math.random() < 0.35 ? 1 : 0);
-      if (Math.random() < 0.40) { c.chemotaxis = true; c.chemoLevel = 1 + (Math.random() < 0.3 ? 1 : 0); }
-      if (Math.random() < 0.22) c.crispr = true;
-      if (Math.random() < 0.30) c.antibiotic = 1;
+      // Prefer to REVIVE something this run already evolved (a cyst waking up). Only if nothing has
+      // died yet — the opening minutes — do we invent a genome from scratch.
+      if (!reviveGenome(c)) {
+        if (Math.random() < 0.55) c.enzLvl[0] = 1 + (Math.random() < 0.3 ? 1 : 0);
+        if (Math.random() < 0.55) c.enzLvl[1] = 1 + (Math.random() < 0.3 ? 1 : 0);
+        c.enzLvl[2] = 1 + (Math.random() < 0.35 ? 1 : 0);
+        if (Math.random() < 0.40) { c.chemotaxis = true; c.chemoLevel = 1 + (Math.random() < 0.3 ? 1 : 0); }
+        if (Math.random() < 0.22) c.crispr = true;
+        if (Math.random() < 0.30) c.antibiotic = 1;
+        c.ups = genomeUps(c);   // it arrived already carrying these — read the log off the genome
+      }
       c.invuln = 2.5;
-      c.ups = genomeUps(c);   // it arrived already carrying these — read the log off the genome
       cells.push(c);
     }
   }
@@ -960,6 +1014,7 @@
     // No promise of a way back: the grazers have their own immigration (minCount, respawnFloor) and
     // effectively never all die, so becomeBacterium() almost never fires. Tell the player what they
     // CAN do instead of something that won't happen.
+    if (state.roleSwaps) state.roleSwaps.push({ t: +state.elapsed.toFixed(1), to: "protist" });
     flashRole("You are now a PROTIST", "your kind died out — graze the bacteria instead · Space to sprint");
     Audio.play("spawn", 0.6);
   }
@@ -970,6 +1025,7 @@
     predators.forEach((p) => (p.controlled = false));
     if (!cells.length) immigrateBacteria(CFG.cycle.reseedBacteria);
     const c = cells[0]; if (c) { c.controlled = true; c.invuln = Math.max(c.invuln, 2); cam.x = c.x; cam.y = c.y; }
+    if (state.roleSwaps) state.roleSwaps.push({ t: +state.elapsed.toFixed(1), to: "bacterium" });
     flashRole("You are now a BACTERIUM", "the grazers died out — forage, evolve, divide");
     Audio.play("spawn", 0.6);
   }
@@ -1176,6 +1232,7 @@
   function onCellDeath(c, cause) {
     c.alive = false;
     if (state) { const k = MORT_IDX[cause]; if (k != null) { state.mortLive[k]++; state.mortFull[k]++; } }
+    rememberGenome(c);   // the sea keeps a seed bank of everything that has ever lived in it
     if (c.infectedGreen) releaseGreenPhages(c);
     burst(c.x, c.y, cause === "predator" ? "#ff7a6b" : cause === "lysis" ? "#7CFC5A" : "#9fb0aa", 18);
     if (c.controlled) transferControl(c);
@@ -1185,6 +1242,30 @@
     onCellDeath(c, byPredator ? "predator" : (c.toxT > 0 ? "toxin" : "starve")); // energy-zero death: antibiotic if recently poisoned, else starvation
   }
 
+  // The trophic role-swap is the biggest thing that can happen in a run — your whole kind dies and
+  // you come back as the thing that was eating you. It deserves more than a colour change on the
+  // chart: a full-height divider, so "before I was bacteria / after I was the grazer" is unmissable.
+  function drawRoleSwaps(g, W, H, swaps, dur) {
+    if (!swaps || !swaps.length) return;
+    const d = Math.max(1, dur), fs = H > 150 ? 11 : 9;
+    for (const s of swaps) {
+      const x = clamp(s.t/d, 0, 1)*W, toProtist = s.to === "protist";
+      const col = toProtist ? PROTIST_COLOR : "#57e0c0";
+      g.save();
+      g.strokeStyle = col; g.lineWidth = 2; g.setLineDash([4, 3]);
+      g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke(); g.setLineDash([]);
+      if (H > 90) {                                  // only the big charts have room to say what it was
+        const label = toProtist ? "▲ became protist" : "▼ back to bacteria";
+        g.font = "bold " + fs + "px 'Trebuchet MS', sans-serif";
+        const w = g.measureText(label).width + 10;
+        const lx = clamp(x + 4, 2, W - w - 2);
+        g.fillStyle = "rgba(4,17,21,.85)"; g.fillRect(lx, H - fs - 8, w, fs + 5);
+        g.fillStyle = col; g.textAlign = "left"; g.textBaseline = "middle";
+        g.fillText(label, lx + 5, H - fs/2 - 5);
+      }
+      g.restore();
+    }
+  }
   // vertical markers where each adaptation happened — overlaid on both the ecotype and substrate charts
   function drawAdaptationMarkers(g, W, H, upgrades, dur) {
     if (!upgrades || !upgrades.length) return;
@@ -1204,8 +1285,8 @@
   }
   // Shared annotated renderers (game-over screen + high-score detail view): ecotype and substrate charts,
   // both with adaptation markers so you can read "new enzyme → its substrate gets eaten → colony booms".
-  function annotateRun(g, W, H, hist, upgrades, dur) { renderEcoChart(g, W, H, hist); drawAdaptationMarkers(g, W, H, upgrades, dur); }
-  function annotateSub(g, W, H, hist, upgrades, dur) { renderSubChart(g, W, H, hist); drawAdaptationMarkers(g, W, H, upgrades, dur); }
+  function annotateRun(g, W, H, hist, upgrades, dur, swaps) { renderEcoChart(g, W, H, hist); drawAdaptationMarkers(g, W, H, upgrades, dur); drawRoleSwaps(g, W, H, swaps, dur); }
+  function annotateSub(g, W, H, hist, upgrades, dur, swaps) { renderSubChart(g, W, H, hist); drawAdaptationMarkers(g, W, H, upgrades, dur); drawRoleSwaps(g, W, H, swaps, dur); }
   function runStatsHtml(hist, upgrades) {
     let peakCol = 0, peakP = 0, peakV = 0;
     for (const s of hist) { let t = 0; for (let i = 0; i < 8; i++) t += s.eco[i]; if (t > peakCol) peakCol = t; if (s.p > peakP) peakP = s.p; if ((s.v||0) > peakV) peakV = s.v; }
@@ -1213,15 +1294,15 @@
   }
   function drawAnalysis() {
     if (!actx || !state) return;
-    annotateRun(actx, el.analysisChart.width, el.analysisChart.height, state.fullHist, state.upgrades, state.elapsed);
-    if (asctx) annotateSub(asctx, el.analysisSubChart.width, el.analysisSubChart.height, state.fullHist, state.upgrades, state.elapsed);
+    annotateRun(actx, el.analysisChart.width, el.analysisChart.height, state.fullHist, state.upgrades, state.elapsed, state.roleSwaps);
+    if (asctx) annotateSub(asctx, el.analysisSubChart.width, el.analysisSubChart.height, state.fullHist, state.upgrades, state.elapsed, state.roleSwaps);
     if (el.analysisSubLabel) el.analysisSubLabel.textContent = subLabelText();
     if (el.analysisClado) drawClado(el.analysisClado, analysisRec());
     if (el.analysisStats) el.analysisStats.innerHTML = runStatsHtml(state.fullHist, state.upgrades);
   }
   // the live run, shaped like a saved record — so the charts, circos and cladogram take one type
   const analysisRec = () => state && ({ hist: state.fullHist, upgrades: state.upgrades, lineages: state.lineages,
-                                        gen: state.gen, score: state.score, dur: state.elapsed });
+                                        gen: state.gen, score: state.score, dur: state.elapsed, roleSwaps: state.roleSwaps });
   function gameOver(dayComplete) {
     state.running = false;
     recordGame();
@@ -1407,16 +1488,30 @@
     c.vy = c.tvy + (c.vy - c.tvy)*relax;
     const sp = Math.hypot(c.vx, c.vy), vmax = CFG.cell.maxSpeed/Math.sqrt(visc)*swimScale();
     if (sp > vmax) { c.vx = c.vx/sp*vmax; c.vy = c.vy/sp*vmax; }
-    c.x = wrapX(c.x + c.vx*dt); c.y = wrapY(c.y + c.vy*dt);
-
-    // collide the rod against solid particles at both poles and the center
-    const pl = cellPolesLocal(c);
-    const pts = [[c.x + pl[0], c.y + pl[1]], [c.x, c.y], [c.x + pl[2], c.y + pl[3]]];
-    for (const [sx, sy] of pts) {
-      const probe = { x: sx, y: sy, vx: c.vx, vy: c.vy };
-      collideCircle(probe, CFG.cell.radius);
-      c.x = wrapX(c.x + (probe.x - sx)); c.y = wrapY(c.y + (probe.y - sy));
-      c.vx = probe.vx; c.vy = probe.vy;
+    // MOVE IN SUBSTEPS, and collide after each one.
+    // Under the old momentum physics a cell crept up on a wall: a collision killed its speed, and
+    // thrust rebuilt it at ~13 px/s per frame, so it only ever nudged the surface. Now (low Reynolds)
+    // velocity snaps back to ~63% of full thrust the very next frame, so the cell rams the wall at
+    // speed, every frame, forever. One big step can bury a probe deep inside a particle — and deep
+    // inside, pushCircleOut's summed voxel overlaps point every which way and cancel, so instead of
+    // ejecting the cell it can walk it straight through. Capping each step to ~2px keeps every
+    // penetration shallow, which is the only regime that push-out reliably resolves.
+    const stepDist = Math.hypot(c.vx, c.vy)*dt;
+    // BROAD PHASE FIRST. collideRod walks every particle's voxels, so substepping it blindly would
+    // multiply the hot path by 8 and tank the frame rate (it did). Almost every cell, almost every
+    // frame, is in open water — one cheap bounding-box pass proves that, and then it just moves.
+    const bpReach = stepDist + cellHalfLen(c) + CFG.cell.radius + 4;
+    let near = false;
+    for (const p of substrates) {
+      if (Math.abs(dx(c.x, p.x)) < p.half + bpReach && Math.abs(dy(c.y, p.y)) < p.half + bpReach) { near = true; break; }
+    }
+    if (!near) { c.x = wrapX(c.x + c.vx*dt); c.y = wrapY(c.y + c.vy*dt); }
+    else {
+      const steps = clamp(Math.ceil(stepDist/2), 1, 8);
+      for (let s = 0; s < steps; s++) {
+        c.x = wrapX(c.x + c.vx*dt/steps); c.y = wrapY(c.y + c.vy*dt/steps);
+        collideRod(c);
+      }
     }
 
     const sizeF = cellHalfLen(c)/CFG.cell.baseHalf;
@@ -1875,6 +1970,21 @@
     ctx.restore();
     drawDayNight(); // time-of-day color wash (screen space, over the world, under the minimap)
     drawMinimap(); // HUD-space, never zoomed
+  }
+  // The page around the stage was a fixed midnight gradient while the sea inside it went from navy to
+  // bright teal — at noon the game looked like a lit window cut into a dark wall. Drive the page from
+  // the same diel light, darker than the water so the stage still reads as the lit thing.
+  let _bgLight = -1;
+  function syncPageBackdrop() {
+    const light = state && state.light != null ? state.light : 0.6;
+    if (Math.abs(light - _bgLight) < 0.01) return;      // only touch the DOM when it would actually change
+    _bgLight = light;
+    const N = CFG.diel.waterNight, D = CFG.diel.waterDay, t = clamp(light, 0, 1);
+    const mix = (i, k) => Math.round((N[i] + (D[i] - N[i])*t) * k);
+    const rgb = (k) => `rgb(${mix(0,k)},${mix(1,k)},${mix(2,k)})`;
+    document.body.style.background =
+      `radial-gradient(circle at 50% 30%, ${rgb(0.72)} 0%, ${rgb(0.42)} 55%, ${rgb(0.26)} 100%)`;
+    if (el.themeMeta) el.themeMeta.setAttribute("content", rgb(0.42));
   }
   function drawDayNight() {
     if (!state) return;
@@ -2360,7 +2470,7 @@
     // through — the backend upserts by id, and the local list replaces by id below.
     const id = state.runId || Date.now();
     const rec = { id, score: Math.round(state.score), gen: state.gen, date: id, dur: Math.round(state.elapsed), hist: state.fullHist, upgrades: state.upgrades, name: playerName,
-                  day: state.day || 1, device: state.device || "desktop", lineages: state.lineages,
+                  day: state.day || 1, device: state.device || "desktop", lineages: state.lineages, roleSwaps: state.roleSwaps,
                   tuned: cfgTuned() || undefined }; // undefined → omitted by JSON.stringify, so untuned runs are unchanged on the wire
     justFinishedTs = id; lastRec = rec;
     try {
@@ -2464,19 +2574,19 @@
   const locusOf = (u) => (String(u.abbr || "").match(/^[A-Za-z]+/) || [""])[0];  // "L2"→"L", "Ab1"→"Ab"
   // `mid` is what goes in the hole: {top, bot}. A whole run says "gen 7 / 14,820 cal"; a single
   // lineage says how many cells it had and how adapted it was.
+  // Every cell starts with one carbohydrase — that IS its genome, not an absence of one. A lineage
+  // that never adapted should show that single founding gene, not an empty ring reading "nothing".
+  const FOUNDER_GENE = () => ({ t: 0, label: "Carbohydrase 1", abbr: "C1", color: RESOURCES[2].color, acquired: true, founder: true });
   function renderCircos(g, W, H, upgrades, mid) {
     g.clearRect(0, 0, W, H);
-    const ups = (upgrades || []).filter((u) => u && u.abbr);
+    // The founding carbohydrase leads EVERY ring: the circos is the lineage's whole genome, and that
+    // gene is part of it — it just wasn't acquired, it was inherited from the first cell in the sea.
+    const ups = [FOUNDER_GENE()].concat((upgrades || []).filter((u) => u && u.abbr));
     const cx = W/2, cy = H/2, R = Math.min(W, H)/2 - 22, rIn = R*0.72;
     g.strokeStyle = "rgba(255,255,255,.10)"; g.lineWidth = 1;
     g.beginPath(); g.arc(cx, cy, R, 0, TAU); g.stroke();
     g.beginPath(); g.arc(cx, cy, rIn, 0, TAU); g.stroke();
     g.textAlign = "center"; g.textBaseline = "middle";
-    if (!ups.length) {
-      g.fillStyle = "rgba(215,245,238,.45)"; g.font = "italic 11px 'Trebuchet MS', sans-serif";
-      g.fillText("no adaptations", cx, cy);
-      return;
-    }
     const n = ups.length, step = TAU/n, gap = Math.min(step*0.18, 0.06);
     const ang = (i) => -Math.PI/2 + i*step + step/2;              // a sector's midpoint
     // chords first, so the sectors overlap them rather than the other way round
@@ -2501,7 +2611,9 @@
       const r0 = isNew ? rIn : R*0.85;                             // a bump is a stub; a new gene spans the ring
       g.beginPath(); g.arc(cx, cy, R, a0, a1); g.arc(cx, cy, r0, a1, a0, true); g.closePath();
       g.fillStyle = u.color; g.globalAlpha = isNew ? 0.95 : 0.5; g.fill(); g.globalAlpha = 1;
-      if (isNew) { g.strokeStyle = "rgba(255,255,255,.5)"; g.lineWidth = 1; g.stroke(); }
+      if (u.founder) {                                  // inherited, not acquired — mark it apart
+        g.strokeStyle = "rgba(255,255,255,.85)"; g.lineWidth = 1.2; g.setLineDash([3, 2]); g.stroke(); g.setLineDash([]);
+      } else if (isNew) { g.strokeStyle = "rgba(255,255,255,.5)"; g.lineWidth = 1; g.stroke(); }
       const a = ang(i);
       g.fillStyle = u.color; g.globalAlpha = isNew ? 1 : 0.75;
       g.font = (isNew ? "bold " : "") + "9.5px 'Trebuchet MS', sans-serif";
@@ -2582,22 +2694,29 @@
       for (const c of n.children) ys.push(yOf.get(c));
       yOf.set(n, ys.length ? (Math.min(...ys) + Math.max(...ys))/2 : padT);
     })(root);
-    // edges
+    // DIAGONAL branches: a straight line from parent to child, so the tree reads as descent with
+    // divergence rather than as a plumbing diagram.
     g.lineWidth = 1.6; g.font = "9.5px 'Trebuchet MS', sans-serif"; g.textAlign = "center";
     (function draw(n) {
       const x0 = xAt(n.depth), y0 = yOf.get(n);
       for (const c of n.children) {
         const x1 = xAt(c.depth), y1 = yOf.get(c);
         g.strokeStyle = c.color || "rgba(255,255,255,.3)";
-        g.beginPath(); g.moveTo(x0, y0); g.lineTo(x0, y1); g.lineTo(x1, y1); g.stroke();  // right-angled: a cladogram, not a curve
+        g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
         g.fillStyle = c.color || "#9fc3ba";
-        g.fillText(c.abbr, (x0 + x1)/2, y1 - 7);      // the adaptation that split this branch off
+        g.save();                                       // label rides ON the branch, along its slope
+        g.translate((x0 + x1)/2, (y0 + y1)/2);
+        g.rotate(Math.atan2(y1 - y0, x1 - x0));
+        g.fillText(c.abbr, 0, -5);                      // the adaptation that split this branch off
+        g.restore();
         draw(c);
       }
     })(root);
-    // the founder
-    g.fillStyle = "#9fc3ba"; g.textAlign = "right"; g.font = "10px 'Trebuchet MS', sans-serif";
-    g.beginPath(); g.arc(xAt(0), yOf.get(root), 3, 0, TAU); g.fill();
+    // the founder: the genome everything here descends from — one carbohydrase
+    const ry = yOf.get(root);
+    g.fillStyle = RESOURCES[2].color;
+    g.beginPath(); g.arc(xAt(0), ry, 4, 0, TAU); g.fill();
+    g.font = "bold 9.5px 'Trebuchet MS', sans-serif"; g.textAlign = "left"; g.fillText("C1", xAt(0) - 4, ry - 11);
     // leaves: the colored band from the chart above, so the two plots read as one thing
     g.textAlign = "left"; g.font = "10.5px 'Trebuchet MS', sans-serif";
     for (const r of rows) {
@@ -2609,7 +2728,9 @@
       const mask = r.key >> 6, tier = r.key & 63, col = levelColor(mask, tier);
       g.fillStyle = col; g.fillRect(xn + 6, y - 5, 10, 10);   // the same color as its band on the chart above
       g.fillStyle = "rgba(215,245,238,.85)";
-      g.fillText(`peak ${peak[r.key] || 0}` + (r.node.depth ? "" : "  · founder genome"), xn + 21, y);
+      // "peak 12" was ambiguous — peak WHAT? It's the most cells this lineage ever had at one moment.
+      const n = peak[r.key] || 0;
+      g.fillText(`${n} cell${n === 1 ? "" : "s"} at peak` + (r.node.depth ? "" : " · founder, never adapted"), xn + 21, y);
     }
   }
   function showCircos(rec) {
@@ -2618,8 +2739,8 @@
     const n = rec.upgrades ? rec.upgrades.length : 0;
     el.circosPop.style.borderColor = "";
     if (el.circosCap) el.circosCap.innerHTML = n
-      ? `${n} adaptation${n === 1 ? "" : "s"}, clockwise in the order they arrived`
-      : "this lineage never adapted";
+      ? `<em>C1</em> founding gene + ${n} adaptation${n === 1 ? "" : "s"}, clockwise as they arrived`
+      : `<em>C1</em> founding gene only — this run never adapted`;
     el.circosPop.classList.remove("hidden");
   }
   // Hovering a COLORED BAND on a run chart: that band is one lineage (an ecotype at an adaptation
@@ -2627,16 +2748,26 @@
   function showLineageCircos(rec, band) {
     if (!el.circosPop || !el.circosCanvas) return;
     const lin = (rec.lineages || {})[band.key] || (rec.lineages || {})[String(band.key)];
-    // Runs saved before per-lineage genomes existed have no `lineages` map. Rather than draw a lie,
-    // fall back to the run-level log and say so.
-    const ups = lin ? lin.ups : (rec.upgrades || []);
     const color = levelColor(band.mask, band.tier);
+    // A run saved before per-lineage genomes existed has no `lineages` map. Falling back to the
+    // run-level log drew the SAME ring for every band, which looked exactly like a broken plot —
+    // so say plainly that this run predates the data instead of quietly drawing a lie.
+    if (!lin) {
+      renderCircos(el.circosCanvas.getContext("2d"), el.circosCanvas.width, el.circosCanvas.height, [],
+                   { top: band.count + (band.count === 1 ? " cell" : " cells"), bot: "tier " + band.tier });
+      el.circosPop.style.borderColor = color;
+      if (el.circosCap) el.circosCap.innerHTML =
+        `<b style="color:${color}">■</b> <em>this run predates per-lineage genomes — no genome recorded for this band</em>`;
+      el.circosPop.classList.remove("hidden");
+      return;
+    }
+    const ups = lin.ups || [];
     renderCircos(el.circosCanvas.getContext("2d"), el.circosCanvas.width, el.circosCanvas.height, ups,
                  { top: band.count + (band.count === 1 ? " cell" : " cells"), bot: "tier " + band.tier });
     el.circosPop.style.borderColor = color;
     if (el.circosCap) el.circosCap.innerHTML =
-      `<b style="color:${color}">■</b> this lineage · ${ups.length} adaptation${ups.length === 1 ? "" : "s"}` +
-      (lin ? ", in the order they arrived" : " <em>(run total — saved before per-lineage genomes)</em>");
+      `<b style="color:${color}">■</b> this lineage · <em>C1</em> founding gene` +
+      (ups.length ? ` + ${ups.length} adaptation${ups.length === 1 ? "" : "s"}, as they arrived` : ` only — never adapted`);
     el.circosPop.classList.remove("hidden");
   }
   // Which stacked band is under the cursor? Re-derives exactly what renderEcoChart drew, so the
@@ -2720,7 +2851,7 @@
   };
   function currentRunLine() {
     return { id: -1, date: -1, name: playerName, score: Math.round(state.score), gen: state.gen, dur: Math.round(state.elapsed), hist: state.fullHist, upgrades: state.upgrades,
-             device: state.device || "desktop", lineages: state.lineages };
+             device: state.device || "desktop", lineages: state.lineages, roleSwaps: state.roleSwaps };
   }
   let _detailRec = null, _detailRank = "";
   function openScoreDetail(rankHtml, rec) {
@@ -2728,8 +2859,8 @@
     hideCircos();                             // the hover popup would otherwise hang over the detail view
     _detailRec = rec; _detailRank = rankHtml; // remembered so the log/linear toggle can redraw it
     if (el.detailCircos) renderCircos(el.detailCircos.getContext("2d"), el.detailCircos.width, el.detailCircos.height, rec.upgrades, runMid(rec));
-    annotateRun(el.detailChart.getContext("2d"), el.detailChart.width, el.detailChart.height, rec.hist || [], rec.upgrades, rec.dur);
-    if (el.detailSubChart) annotateSub(el.detailSubChart.getContext("2d"), el.detailSubChart.width, el.detailSubChart.height, rec.hist || [], rec.upgrades, rec.dur);
+    annotateRun(el.detailChart.getContext("2d"), el.detailChart.width, el.detailChart.height, rec.hist || [], rec.upgrades, rec.dur, rec.roleSwaps);
+    if (el.detailSubChart) annotateSub(el.detailSubChart.getContext("2d"), el.detailSubChart.width, el.detailSubChart.height, rec.hist || [], rec.upgrades, rec.dur, rec.roleSwaps);
     if (el.detailSubLabel) el.detailSubLabel.textContent = subLabelText();
     if (el.detailClado) drawClado(el.detailClado, rec);
     if (el.detailStats) el.detailStats.innerHTML = runStatsHtml(rec.hist || [], rec.upgrades);
@@ -2936,7 +3067,7 @@
     resizeCanvas();
     const dt = last ? Math.min((now-last)/1000, 0.05) : 0; last = now;
     if (!paused) update(dt);
-    draw(); syncHud(); drawChart();
+    draw(); syncHud(); drawChart(); syncPageBackdrop();
     { // hide the HUD + live charts behind any menu (title/over/scores/help), show only during active play
       const menu = [el.title, el.over, el.scores, el.help, el.science].some((s) => s && !s.classList.contains("hidden"));
       // The demo has no player, so the HUD would report a cell that doesn't exist (0 energy, no genome).
@@ -3519,6 +3650,8 @@
   bindLineageHover(el.analysisChart, analysisRec);
   bindLineageHover(el.detailChart, () => _detailRec);
   if (el.tutorialBtn) el.tutorialBtn.addEventListener("click", watchTutorial);
+  if (el.menuBtn) el.menuBtn.addEventListener("click", toTitle);
+  if (el.menuBtn2) el.menuBtn2.addEventListener("click", toTitle);
   if (el.demoPlay) el.demoPlay.addEventListener("click", start);
   if (el.demoBack) el.demoBack.addEventListener("click", endTutorial);
 
