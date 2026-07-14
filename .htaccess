@@ -18,3 +18,16 @@
     Header set Cache-Control "public, max-age=604800"
   </FilesMatch>
 </IfModule>
+
+# Beta feedback is whatever a tester typed — that's theirs, not the internet's. feedback.php WRITES
+# it; nobody GETs it over the web. (scores.json stays public: it's a leaderboard, that's the point.)
+# Read it over ssh instead:  python3 -m json.tool < feedback.json
+<Files "feedback.json">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</Files>

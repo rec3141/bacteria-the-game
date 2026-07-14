@@ -250,6 +250,10 @@
     demoPlay: document.getElementById("demoPlay"), demoBack: document.getElementById("demoBack"),
     menuBtn: document.getElementById("menuBtn"), menuBtn2: document.getElementById("menuBtn2"),
     feedbackBtn: document.getElementById("feedbackBtn"), feedbackBtn2: document.getElementById("feedbackBtn2"),
+    feedback: document.getElementById("feedback"), fbText: document.getElementById("fbText"),
+    fbName: document.getElementById("fbName"), fbCtx: document.getElementById("fbCtx"),
+    fbStatus: document.getElementById("fbStatus"), fbSend: document.getElementById("fbSend"),
+    fbCancel: document.getElementById("fbCancel"),
     science: document.getElementById("science"), sciBody: document.getElementById("sciBody"), sciBack: document.getElementById("sciBack"),
     sciBtn: document.getElementById("sciBtn"), sciBtn2: document.getElementById("sciBtn2"), sciBtn3: document.getElementById("sciBtn3"),
     analysisChart: document.getElementById("analysisChart"), analysisStats: document.getElementById("analysisStats"),
@@ -473,6 +477,7 @@
     if (e.key === "`" || e.code === "Backquote") { e.preventDefault(); toggleAdmin(); return; } // live-tuning panel
     if (adminOpen && e.key === "/" && el.adminSearch) { e.preventDefault(); el.adminSearch.focus(); el.adminSearch.select(); return; }
     if (e.key === "Escape") { if (adminOpen) { toggleAdmin(false); return; } if (sciOpen) { hideScience(); return; } if (helpOpen) { hideHelp(); return; }
+      if (el.feedback && !el.feedback.classList.contains("hidden")) { hideFeedback(); return; }
       if (demo && demo.watch) { endTutorial(); return; }   // leave the tutorial, back to the menu
       if (!(state && state.demo)) togglePause(); return; }
     if (e.key.toLowerCase() === "m") { cycleAudio(); return; } // cycle: all on → music off → effects off → muted
@@ -898,7 +903,7 @@
         predators.push(pr);
         return c;
       } },
-    { cap: "<b>Phages</b> hunt bacteria. One injects its DNA, hijacks the cell to copy itself, then bursts it open — a <b>lysis</b> that seeds the water with more phages.",
+    { cap: "<b>Phages</b> can't chase anything — they drift until they collide with a cell. Then one injects its DNA, hijacks the cell to copy itself, and bursts it open: a <b>lysis</b> that seeds the water with more phages.",
       secs: 10, setup: () => {
         const c = anyCell(); if (!c) return null;
         c.infectedGreen = true; c.lysisT = 4.5;      // on a schedule, not on a dice roll
@@ -3038,11 +3043,11 @@
     el.scores.classList.remove("hidden");
   }
   function hideScores() { hideCircos(); el.scores.classList.add("hidden"); if (el.scoreDetail) el.scoreDetail.classList.add("hidden"); }
-  // BETA FEEDBACK. Opens a pre-filled GitHub issue rather than posting anything itself: the tester
-  // sees exactly what is being sent and can edit or abandon it, and it needs no backend and stores
-  // nothing. The prefill is the boring half of a bug report — build, device, and what the run was
-  // doing — which is the half testers can't be expected to reconstruct after the fact.
-  const FEEDBACK_URL = "https://github.com/rec3141/bacteria-the-game/issues/new";
+  // BETA FEEDBACK. It posts to our own feedback.php (one JSON entry per report) rather than handing
+  // the tester off to GitHub — not everyone has an account, and "go make one to tell me the protists
+  // are too fast" is how you get no feedback at all. It ships the boring half of a bug report with
+  // it (build, device, what the run was doing), which is the half nobody can reconstruct afterwards.
+  const FEEDBACK_URL = "feedback.php";
   function feedbackContext() {
     const L = [];
     L.push(`build: ${BUILD}`);
@@ -3056,13 +3061,35 @@
     }
     return L.join("\n");
   }
+  function showFeedback() {
+    if (!el.feedback) return;
+    if (el.fbStatus) { el.fbStatus.textContent = ""; el.fbStatus.className = ""; }
+    if (el.fbSend) el.fbSend.disabled = false;
+    if (el.fbName && playerName) el.fbName.value = playerName;
+    if (el.fbCtx) el.fbCtx.textContent = feedbackContext();   // show them exactly what gets sent
+    el.feedback.classList.remove("hidden");
+    if (el.fbText) el.fbText.focus();
+  }
+  function hideFeedback() { if (el.feedback) el.feedback.classList.add("hidden"); }
   function sendFeedback() {
-    const body = [
-      "<!-- What happened? What did you expect? Anything you were doing at the time helps. -->",
-      "", "", "---", "```", feedbackContext(), "```",
-    ].join("\n");
-    const url = `${FEEDBACK_URL}?title=${encodeURIComponent("Feedback: ")}&body=${encodeURIComponent(body)}`;
-    window.open(url, "_blank", "noopener");
+    if (!el.fbText) return;
+    const text = (el.fbText.value || "").trim();
+    if (!text) { if (el.fbStatus) { el.fbStatus.textContent = "Say something first."; el.fbStatus.className = "warn"; } return; }
+    const payload = { text, name: (el.fbName && el.fbName.value || "").slice(0, 40), context: feedbackContext() };
+    if (el.fbSend) el.fbSend.disabled = true;
+    if (el.fbStatus) { el.fbStatus.textContent = "Sending…"; el.fbStatus.className = ""; }
+    fetch(FEEDBACK_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
+      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then(() => {
+        if (el.fbStatus) { el.fbStatus.textContent = "Sent — thank you. 🦠"; el.fbStatus.className = "ok"; }
+        if (el.fbText) el.fbText.value = "";
+        setTimeout(hideFeedback, 1100);
+      })
+      .catch(() => {
+        // Don't swallow it: tell them it failed and leave their words in the box so nothing is lost.
+        if (el.fbSend) el.fbSend.disabled = false;
+        if (el.fbStatus) { el.fbStatus.textContent = "Couldn't reach the server — your text is still here, try again in a moment."; el.fbStatus.className = "warn"; }
+      });
   }
   let helpOpen = false, sciOpen = false;
   // The day's real-time length is a tunable knob, so the help screen must not hardcode it — it used
@@ -3824,8 +3851,10 @@
   bindLineageHover(el.analysisChart, analysisRec);
   bindLineageHover(el.detailChart, () => _detailRec);
   if (el.tutorialBtn) el.tutorialBtn.addEventListener("click", watchTutorial);
-  if (el.feedbackBtn) el.feedbackBtn.addEventListener("click", sendFeedback);
-  if (el.feedbackBtn2) el.feedbackBtn2.addEventListener("click", sendFeedback);
+  if (el.feedbackBtn) el.feedbackBtn.addEventListener("click", showFeedback);
+  if (el.feedbackBtn2) el.feedbackBtn2.addEventListener("click", showFeedback);
+  if (el.fbSend) el.fbSend.addEventListener("click", sendFeedback);
+  if (el.fbCancel) el.fbCancel.addEventListener("click", hideFeedback);
   if (el.menuBtn) el.menuBtn.addEventListener("click", toTitle);
   if (el.menuBtn2) el.menuBtn2.addEventListener("click", toTitle);
   if (el.demoPlay) el.demoPlay.addEventListener("click", start);

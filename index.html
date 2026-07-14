@@ -165,6 +165,19 @@
   /* High scores screen */
   #scores { justify-content: flex-start; padding-top: 24px; gap: 10px;
     background: #04141a; backdrop-filter: none; } /* opaque — clean high-score backdrop */
+  /* The pause screen now carries the whole run analysis (charts, phylogeny, genome), so it scrolls —
+     and Resume was stranded at the bottom of it. Stick the actions to the floor of the scroller: the
+     way out of a screen must never be something you have to go looking for.
+     (The gradient stops the content from colliding with the buttons as it scrolls under them.) */
+  #scores > .btnrow, #over > .btnrow {
+    /* no margin-top:auto — with plain sticky, a SHORT screen leaves the buttons in normal flow next
+       to the content, and only a screen tall enough to scroll pins them to the floor. */
+    position: sticky; bottom: 0; z-index: 5; width: 100%;
+    padding: 12px 0 6px;
+    background: linear-gradient(to top, var(--sticky-bg) 55%, rgba(4,20,26,0) 100%);
+  }
+  #scores { --sticky-bg: #04141a; }
+  #over   { --sticky-bg: rgba(3,14,18,.97); }
   /* Desktop / mobile board switch */
   #scoreTabs { display: flex; gap: 8px; }
   .devtab { pointer-events: auto; cursor: pointer; font: inherit; font-size: 12px; font-weight: bold;
@@ -306,6 +319,26 @@
   #analysisClado, #detailClado { display: block; width: 100%; height: auto; border-radius: 6px; }
   /* the run charts are hoverable now (each band is a lineage) — say so with the cursor */
   #analysisChart, #detailChart { cursor: crosshair; }
+
+  /* Feedback (beta) */
+  #feedback { z-index: 30; justify-content: flex-start; padding-top: 26px; gap: 10px; background: #04141a; }
+  #feedback .fbhint { max-width: 520px; font-size: 13px; color: var(--muted); }
+  #fbText { width: min(560px, 92%); background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.18);
+    color: #eafff8; border-radius: 8px; padding: 10px 12px; font: inherit; font-size: 14px; line-height: 1.5;
+    outline: none; resize: vertical; }
+  #fbText:focus { border-color: var(--accent); }
+  #fbRow { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+  #fbName { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.18); color: #eafff8;
+    border-radius: 7px; padding: 5px 10px; font: inherit; font-size: 13px; width: 190px; outline: none; }
+  #fbName:focus { border-color: var(--accent); }
+  /* the tester can see exactly what is attached — no silent telemetry */
+  #fbDetails { width: min(560px, 92%); font-size: 12px; color: var(--muted); text-align: left; }
+  #fbDetails summary { cursor: pointer; opacity: .8; }
+  #fbCtx { margin: 6px 0 0; padding: 8px 10px; background: rgba(0,0,0,.3); border-radius: 7px;
+    font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; color: var(--muted); }
+  #fbStatus { min-height: 18px; font-size: 13px; }
+  #fbStatus.ok { color: var(--accent); }
+  #fbStatus.warn { color: #ffd24a; }
 
   /* Science overlay */
   #science { z-index: 20; justify-content: flex-start; padding-top: 22px; gap: 10px; background: #04141a; }
@@ -609,9 +642,9 @@
         <section><h2><span class="n">08</span>Evolution on the fly</h2>
           <p>Bacteria do not only inherit genes from a parent. They also acquire entirely new ones from their surroundings — <a class="wiki" href="https://en.wikipedia.org/wiki/Horizontal_gene_transfer">horizontal gene transfer</a> — and one route is <a class="wiki" href="https://en.wikipedia.org/wiki/Transduction_(genetics)">transduction</a>, in which a virus ferries DNA from one cell to the next. A cell can also turn up a trait it already has by carrying extra copies of the gene (<a class="wiki" href="https://en.wikipedia.org/wiki/Gene_duplication">amplification</a>), raising its <a class="wiki" href="https://en.wikipedia.org/wiki/Gene_expression">expression</a>. This is why bacterial evolution can outpace our intuitions — and how antibiotic resistance spreads between species.</p>
           <p class="game">The rare <b>gold phage</b> transduces a random heritable adaptation into your cell. The <b>genome</b> strand shows which genes you carry, amplification appears as <b>×2, ×3…</b>, and — as in life — an adaptation only spreads by <b>dividing</b>.</p></section>
-        <section><h2><span class="n">09</span>Viruses that hunt bacteria</h2>
-          <p>The deadliest predators of bacteria are viruses called <a class="wiki" href="https://en.wikipedia.org/wiki/Bacteriophage">bacteriophages</a>. In the <a class="wiki" href="https://en.wikipedia.org/wiki/Lytic_cycle">lytic cycle</a> a phage injects its DNA, hijacks the cell's machinery to build copies of itself, and bursts the cell open to release them. Phages are the most abundant biological entities on Earth — there are more of them in the sea than there are stars in the observable universe.</p>
-          <p class="game"><span style="color:#ff5a52">Red</span> phages infect your cells and <b>lyse</b> them, releasing a burst of new phages. They stick to particles and wait there for cells to arrive and feed.</p></section>
+        <section><h2><span class="n">09</span>Viruses cannot hunt</h2>
+          <p>The deadliest killers of bacteria are viruses called <a class="wiki" href="https://en.wikipedia.org/wiki/Bacteriophage">bacteriophages</a> — and they chase nothing. A phage has no motility whatsoever: no flagellum, no senses, no way to steer. It is a passive particle, shoved about by <a class="wiki" href="https://en.wikipedia.org/wiki/Brownian_motion">Brownian motion</a> until it happens to collide with a cell whose surface it can grip. Only then does the <a class="wiki" href="https://en.wikipedia.org/wiki/Lytic_cycle">lytic cycle</a> begin: it injects its DNA, hijacks the cell's machinery to build copies of itself, and bursts the cell open to release them. What makes blind chance sufficient is sheer number — phages are the most abundant biological entities on Earth, and there are more of them in the sea than there are stars in the observable universe.</p>
+          <p class="game"><span style="color:#ff5a52">Red</span> phages <b>drift</b>; they never home in on you. They stick to particles and wait, which is exactly where the collisions happen — the crowd around a particle is the danger, not the virus's intent.</p></section>
         <section><h2><span class="n">10</span>Kill the winner</h2>
           <p>Phages are specialists: each infects only bacteria closely related to the cell it came from. So whichever strain becomes <em>most abundant</em> is precisely the one its phages find most easily — and it gets cut down. Ecologists call this <b>"kill the winner."</b> It prevents any single type from monopolizing the ocean and keeps the community <a class="wiki" href="https://en.wikipedia.org/wiki/Biodiversity">diverse</a>, in a permanent arms race between hosts and their <a class="wiki" href="https://en.wikipedia.org/wiki/Marine_virus">viruses</a>.</p>
           <p class="game">A phage reads <span style="color:#ff5a52">red</span> if it can infect the cell you're steering and <span class="c-vir">green</span> if it cannot. Every adaptation shifts you out of reach of the current cohort — and a lineage that booms will, in time, draw its own plague.</p></section>
@@ -646,6 +679,19 @@
         <p style="color:var(--muted);font-size:13px;">The real ocean is messier and stranger than any game can be — but if this has made a bacterium, a virus or the microbial loop feel a little more alive, it has done its job. Now go and evolve something.</p>
       </div>
       <button id="sciBack" class="ghost">Back</button>
+    </div>
+    <div id="feedback" class="screen hidden">
+      <h1>Feedback</h1>
+      <p class="fbhint">Beta — anything at all: what broke, what was confusing, what was boring, what you liked. No account needed.</p>
+      <textarea id="fbText" rows="7" placeholder="What happened? What did you expect?" spellcheck="true"></textarea>
+      <div id="fbRow"><label for="fbName">Name (optional)</label>
+        <input id="fbName" maxlength="40" placeholder="anonymous" autocomplete="off"></div>
+      <details id="fbDetails"><summary>Sent with your message</summary><pre id="fbCtx"></pre></details>
+      <div id="fbStatus"></div>
+      <div class="btnrow">
+        <button id="fbSend">Send</button>
+        <button id="fbCancel" class="ghost">Cancel</button>
+      </div>
     </div>
     <div id="over" class="screen hidden">
       <h1 id="overTitle">Run ended</h1>
