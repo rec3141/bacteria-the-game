@@ -127,13 +127,22 @@ function score_lineages($value) {
   return (object)$out;
 }
 
+// A role swap is an OBJECT — {t, to} — not a bare number.
+//
+// This was handing the whole {t,to} object to score_number(), which only accepts a scalar, so every
+// entry came back null and the list was dropped: the shared board silently lost the trophic role
+// swap on every run. And even had it parsed, flattening to bare times would have thrown away `to`,
+// which is the half that says WHICH WAY you flipped — the client needs it to label the divider
+// "became protist" or "back to bacteria".
 function score_role_swaps($value) {
   if (!is_array($value)) return [];
   $out = [];
   foreach ($value as $item) {
     if (count($out) >= 32) break;
-    $time = score_number($item, 0, 86400, null);
-    if ($time !== null) $out[] = $time;
+    $time = score_number(score_value($item, 't'), 0, 86400, null);
+    if ($time === null) continue;
+    $to = score_value($item, 'to');
+    $out[] = ['t' => $time, 'to' => ($to === 'bacterium') ? 'bacterium' : 'protist'];
   }
   return $out;
 }
