@@ -2977,4 +2977,12 @@
   env.tempC = 20; env.salinity = 35; env.update();
   requestAnimationFrame(frame);
 
+
+  window.__st = () => ({ running: !!(state&&state.running), day: state.day, elapsed: Math.round(state.elapsed),
+    tod: +state.tod.toFixed(2), light: +state.light.toFixed(2), hour: +dayHour(state.tod).toFixed(1),
+    gen: state.gen, score: Math.round(state.score), cells: cells.length, runId: state.runId,
+    clock: hudClock ? hudClock() : null });
+  window.__advance = (secs) => { for (let t=0; t<secs; t+=1/30) if (state.running) update(1/30); };
+  window.__continue = () => continueDay();
+  window.__local = () => loadScores().map(r => ({ id: r.id, score: r.score, day: r.day }));
 })();
