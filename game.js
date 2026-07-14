@@ -84,7 +84,11 @@
     // trophic role-swap: when your whole population dies you flip to the other trophic level
     // instead of a game-over — bacteria extinct → you become a protist (grazer); protists extinct → back to a bacterium.
     cycle: { reseedBacteria: 16, reseedProtists: 4, protistThrust: 240, protistEatScore: 3,
-             preyFloor: 20, preyEvery: 5 },   // as a grazer, bacteria keep drifting in to hunt
+             preyFloor: 20, preyEvery: 5,     // as a grazer, bacteria keep drifting in to hunt
+             // TURBO (Space / the release button while you're a protist): a short sprint bought
+             // with energy. Grabbing a gold phage as a grazer lengthens the burst — that's the
+             // protist's version of an adaptation, and it stacks for the rest of the run.
+             turboSecs: 0.25, turboMult: 2.6, turboCost: 7, turboGoldBonus: 0.12, turboMaxSecs: 1.5 },
     // "A day in the life": a 24h clock at 1h = 1min (24-min day); conditions follow a diel cycle.
     // tod (time-of-day) runs 0→1 over the day, starting at DAWN (6am). Curves below drive it.
     day: { lengthSec: 1440, startHour: 6 },
@@ -581,7 +585,7 @@
       vx: 0, vy: 0, r: CFG.predator.radius, satiated: 0, controlled: false,
       heading: rand(0, 6.28), wobble: rand(0, 6.28), pseudo: rand(0, 6.28),
       age: age || 0, energy: energy == null ? CFG.predator.startEnergy : energy,
-      reproCd: CFG.predator.reproCooldown, toxT: 0, dead: false };
+      reproCd: CFG.predator.reproCooldown, toxT: 0, turboT: 0, dead: false };
   }
 
   function newGame() {
@@ -605,7 +609,7 @@
     cam.x = first.x; cam.y = first.y;
     state = { gen: 1, score: 0, running: true, elapsed: 0, activeEnzyme: 2, role: "bacterium", // start with carbohydrase, as a bacterium
       greenSeedT: rand(CFG.phage.greenSeed[0], CFG.phage.greenSeed[1]),
-      predImmigrateT: CFG.predator.immigrateEvery, preyT: 0,
+      predImmigrateT: CFG.predator.immigrateEvery, preyT: 0, turboBonus: 0,
       predRespawn: CFG.predator.immigrateEvery, predExtinct: false, // respawn interval halves each time protists go fully extinct
       mortLive: [0, 0, 0, 0], mortFull: [0, 0, 0, 0], // cause-of-death tallies (grazing/viral/starvation/antibiotic) per sample interval
       tod: 0, light: 0, foodTarget: CFG.substrate.count, graze: 1, // diel state (set by updateDiel each frame)
@@ -677,8 +681,19 @@
   }
   const AB = 3; // antibiotic deployable id (0-2 are the enzymes)
   function ownedDeployables(c) { const o = ownedEnzymes(c); if (c.antibiotic > 0) o.push(AB); return o; }
+  // A grazer has no enzymes, so Space (and the phone's release button) becomes a sprint instead.
+  function protistTurbo() {
+    const pr = controlledProtist(); if (!pr) return;
+    if (pr.turboT > 0) return;                       // already sprinting — no stacking
+    const C = CFG.cycle;
+    if (pr.energy <= C.turboCost) return;            // too starved to sprint
+    pr.energy -= C.turboCost;
+    pr.turboT = Math.min(C.turboSecs + (state.turboBonus || 0), C.turboMaxSecs);
+    Audio.play("enzyme", 0.5);
+  }
   function playerEnzyme() {
     if (!state || !state.running) return;
+    if (state.role === "protist") { protistTurbo(); return; }   // Space = turbo when you're the grazer
     const c = controlledCell(); if (!c) return;
     if (!ownedDeployables(c).includes(state.activeEnzyme)) state.activeEnzyme = ownedDeployables(c)[0] ?? 2;
     if (state.activeEnzyme === AB) { if (releaseAntibiotic(c)) Audio.play("enzyme", 0.55); }
@@ -1217,6 +1232,7 @@
     for (const pr of predators) {
       pr.age += dt;
       pr.energy -= P.metabolism*dt;      // grazing metabolism
+      if (pr.turboT > 0) pr.turboT = Math.max(0, pr.turboT - dt);
       if (pr.reproCd > 0) pr.reproCd -= dt;
       if (pr.toxT > 0) pr.toxT -= dt;
       if (pr.satiated > 0) pr.satiated -= dt;
@@ -1225,7 +1241,8 @@
         const a = axis();
         if (a.x !== 0 || a.y !== 0) {
           pr.heading = Math.atan2(a.y, a.x);
-          const spd = CFG.cycle.protistThrust*swimScale()/Math.sqrt(env.viscosity);
+          const boost = pr.turboT > 0 ? CFG.cycle.turboMult : 1;   // Space = a burst of speed
+          const spd = CFG.cycle.protistThrust*swimScale()*boost/Math.sqrt(env.viscosity);
           pr.vx = Math.cos(pr.heading)*spd; pr.vy = Math.sin(pr.heading)*spd;
         } else { pr.vx *= 0.8; pr.vy *= 0.8; }
       } else {
@@ -1322,6 +1339,25 @@
       } else {                                          // gold holds its drift (stays with its host particle)
         ph.x = wrapX(ph.x + ph.vx*dt); ph.y = wrapY(ph.y + ph.vy*dt);
         ph.life -= dt; if (ph.life <= 0) { ph.dead = true; continue; }
+      }
+      // A GRAZER can grab the gold phage too — it's the protist's version of an adaptation, and it
+      // lengthens your turbo burst for the rest of the run. (Without this the gold star on the map
+      // was just taunting you: as a protist there was nothing you could do with it.)
+      if (ph.type === "gold" && !ph.dead && state.role === "protist") {
+        const pr = controlledProtist();
+        if (pr) {
+          const grab = (pr.r + ph.r + CFG.phage.infectHalo) * (isTouch ? CFG.phage.goldGrabTouch : 1);
+          if (toroDist2(ph.x, ph.y, pr.x, pr.y) < grab*grab) {
+            const C = CFG.cycle;
+            state.turboBonus = Math.min((state.turboBonus || 0) + C.turboGoldBonus,
+                                        C.turboMaxSecs - C.turboSecs);
+            const total = Math.min(C.turboSecs + state.turboBonus, C.turboMaxSecs);
+            ph.dead = true;
+            showUpgradeToast(`Turbo ${total.toFixed(2)}s`, "#ffd24a");
+            Audio.play("upgrade", 0.7);
+            continue;                                  // consumed — don't also run the cell loop
+          }
+        }
       }
       // adsorb to the first cell it contacts. On a phone the GOLD phage gets a much bigger grab
       // radius: it's the one thing you actively chase, and threading a 14px capture window with a
@@ -1678,9 +1714,13 @@
     for (let i = 0; i <= 9; i++) { const a = i/9*6.28, rr = r*(0.85 + 0.25*Math.sin(a*3 + pr.pseudo)); ctx[i ? "lineTo" : "moveTo"](Math.cos(a)*rr, Math.sin(a)*rr); }
     ctx.closePath(); ctx.fill();
     ctx.fillStyle = "rgba(90,20,50,0.8)"; ctx.beginPath(); ctx.arc(Math.cos(pr.pseudo)*3, Math.sin(pr.pseudo)*3, r*0.3, 0, 6.28); ctx.fill();
-    if (pr.controlled) { // the protist YOU are steering — bright ring so it stands out
-      ctx.globalAlpha = 1; ctx.strokeStyle = "#8dffdc"; ctx.lineWidth = 2.4;
-      ctx.beginPath(); ctx.arc(0, 0, r + 5, 0, 6.28); ctx.stroke();
+    if (pr.controlled) { // the protist YOU are steering. No ring — the camera already centres you,
+                         // and the minimap marks you. A turbo burst flares instead.
+      if (pr.turboT > 0) {
+        ctx.globalAlpha = clamp(pr.turboT/CFG.cycle.turboSecs, 0, 1);
+        ctx.strokeStyle = "#ffd24a"; ctx.lineWidth = 2.6;
+        ctx.beginPath(); ctx.arc(0, 0, r + 6, 0, 6.28); ctx.stroke();
+      }
     }
     ctx.restore();
   }
@@ -2098,6 +2138,12 @@
   }
   function syncRolodex(c) {
     if (!isTouch || !el.tEnz) return;        // the deck only exists on a phone
+    if (state && state.role === "protist") { // a grazer has no enzymes — the button is a sprint
+      paintRolo(el.tEnz, "#ffd24a", "turbo", null, null);
+      const pr = controlledProtist();
+      if (el.tLin && pr) paintRolo(el.tLin, "#ff9ec0", "graze", null, null);
+      return;
+    }
     const owned = c ? ownedDeployables(c) : [2];
     let i = owned.indexOf(state.activeEnzyme); if (i < 0) i = 0;
     const many = owned.length > 1;
@@ -2252,6 +2298,11 @@
     "cell.maxCells": "Hard cap on living cells — a performance backstop, not an ecological limit.",
     "cell.touchLatchSecs": "Phone thumbstick: how long you must hold it at FULL deflection before the run locks in and keeps going after you lift your thumb. Lower = quicker to commit but easier to trigger by accident.",
     "cell.touchRunSecs": "How long a locked-in run lasts before it winds down on its own (the knob eases back to centre as it runs out). Stops the stick getting stuck on. Touching it again pauses the countdown; re-latching refills it.",
+    "cycle.turboSecs": "Base length of a protist's turbo burst (Space, or the release button on a phone).",
+    "cycle.turboMult": "How much faster a protist swims during a turbo burst.",
+    "cycle.turboCost": "Energy a protist spends per turbo burst. It has no other use for energy but staying alive, so this is the real price of a sprint.",
+    "cycle.turboGoldBonus": "Seconds added to your turbo burst for each gold phage you catch AS A PROTIST — the grazer's version of an adaptation. Stacks for the rest of the run.",
+    "cycle.turboMaxSecs": "Ceiling on the turbo burst, however many gold phages you collect.",
     "respirationBase": "Baseline energy per second every cell burns just staying alive. The single biggest lever on how punishing the game is.",
     "touchSpeedScale": "TOUCH ONLY: how fast swimming things move — your cells AND the protists together, so predator/prey stays in proportion. The phone magnifies the world onto a small screen, which makes the same world-speed read as much faster. 1 = desktop speed. NOTE: energy costs are per SECOND, so slower swimming means a trip to food costs more energy.",
     "grid.cs": "Voxel size of destructible particles (px) — smaller = finer digging but more work per frame. Only affects NEWLY spawned particles.",

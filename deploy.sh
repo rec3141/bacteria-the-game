@@ -54,14 +54,27 @@ known_blobs() {   # every version of $1 this repo has ever held, plus the one on
 # index.html and game.js are BUILD-STAMPED on the way out (__BUILD__ -> "<sha>-<time>"), so the
 # live bytes never equal any blob in git — the guard would cry drift on every single deploy.
 # Put the placeholder back before hashing and we're comparing like with like again.
-unstamp() { sed -E 's/\b([0-9a-f]{7,40}|dev)-[0-9]{10}\b/__BUILD__/g'; }
+# Only index.html and game.js carry the stamp. Piping the others through sed is pointless and
+# actively breaks on macOS: BSD sed dies with "illegal byte sequence" on Bacteria.swf's binary
+# bytes, which killed the whole deploy before it printed a word. LC_ALL=C keeps sed byte-safe
+# even so, in case a stamped file ever picks up a stray non-UTF8 byte.
+# No \b here: it's a GNU sed extension that BSD/macOS sed does not support, so on a Mac the
+# substitution silently did nothing, every stamped file looked foreign, and the guard blocked
+# every single deploy. The pattern is specific enough (7-40 hex, dash, exactly 10 digits) to
+# not need word boundaries.
+unstamp() { LC_ALL=C sed -E 's/([0-9a-f]{7,40}|dev)-[0-9]{10}/__BUILD__/g'; }
+is_stamped() { [ "$1" = "index.html" ] || [ "$1" = "game.js" ]; }
 DRIFT=""
 for f in index.html game.js scores.php README.md manifest.webmanifest icon.svg Bacteria.swf .htaccess; do
   [ -f "$f" ] || continue
   # `|| true` on the REMOTE side: a missing file makes cat exit non-zero, and with
   # `set -o pipefail` that would kill the whole deploy — which is exactly what happens
   # the first time you publish to a brand-new, empty docroot.
-  rhash="$(ssh "$REMOTE_HOST" "cat '$REMOTE_DIR/$f' 2>/dev/null || true" | unstamp | git hash-object --stdin)"
+  if is_stamped "$f"; then
+    rhash="$(ssh "$REMOTE_HOST" "cat '$REMOTE_DIR/$f' 2>/dev/null || true" | unstamp | git hash-object --stdin)"
+  else
+    rhash="$(ssh "$REMOTE_HOST" "cat '$REMOTE_DIR/$f' 2>/dev/null || true" | git hash-object --stdin)"
+  fi
   [ "$rhash" = "$(printf '' | git hash-object --stdin)" ] && continue  # absent remotely = a new file, not a conflict
   if ! known_blobs "$f" | sort -u | grep -qx "$rhash"; then DRIFT="$DRIFT$f
 "; fi
@@ -98,7 +111,9 @@ echo "    (anything replaced is preserved in $BACKUP_DIR)"
 # Stamp in a copy, never in the working tree — deploying must not dirty the repo.
 STAGE="$(mktemp -d)"
 cp -R "${FILES[@]}" "$STAGE"/
-sed -i "s/__BUILD__/$BUILD/g" "$STAGE/index.html" "$STAGE/game.js"
+# perl, not `sed -i`: GNU sed takes `-i` with no argument, BSD/macOS sed demands a backup suffix
+# and otherwise swallows the expression as one ("invalid command code f"), killing the deploy.
+perl -pi -e "s/__BUILD__/$BUILD/g" "$STAGE/index.html" "$STAGE/game.js"
 # -c so identical files aren't re-sent — which also keeps the backup dir free of pointless
 # copies of files that never changed. It matters doubly here: rsync's default quick check is
 # size+mtime, and every file in a fresh staging dir has a brand-new mtime, so without -c each
