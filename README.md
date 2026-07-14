@@ -12,8 +12,8 @@ Play it at **https://bacteria.cryomics.org**
 
 - **W A S D / arrows** — run; release to tumble (reorient)
 - **Space** — release the loaded enzyme (dissolve the particle ahead) or antibiotic (poison protists)
-- **X** — switch which enzyme / antibiotic is loaded · **M** — toggle music
-- **Esc** — pause & high scores · **?** — help
+- **Tab** — switch which enzyme / antibiotic is loaded · **M** — toggle music
+- **Esc** — pause & high scores
 
 ## Mechanics (in brief)
 

@@ -280,7 +280,8 @@
   const Audio = (() => {
     const files = { eat: "assets/sounds/sound_40.mp3", enzyme: "assets/sounds/sound_145.mp3",
       divide: "assets/sounds/sound_18.mp3", death: "assets/sounds/sound_42.mp3",
-      hit: "assets/sounds/sound_146.mp3", spawn: "assets/sounds/sound_37.mp3" };
+      hit: "assets/sounds/sound_146.mp3", upgrade: "assets/sounds/sound_147.mp3",
+      spawn: "assets/sounds/sound_37.mp3" };
     const SFX_MASTER = 0.05;  // ~10% of the music bus (0.3) — effects sit well under the ambient track
     let actx = null, sfxBus = null, muted = false; const buffers = {};
     async function init() {
