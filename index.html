@@ -291,10 +291,20 @@
     background: rgba(4,17,21,.82); border: 1px solid rgba(87,224,192,.28); border-radius: 10px;
     padding: 7px 14px; backdrop-filter: blur(2px); }
   #demoCap.hidden { display: none !important; }
+  #demoCap.tut { bottom: 58px; }   /* make room for the Back/Skip bar underneath it */
   #demoCap i { display: block; font-style: normal; font-size: 10px; letter-spacing: 1.4px;
     text-transform: uppercase; color: var(--accent); opacity: .75; margin-bottom: 2px; }
   #demoCap span { font-size: 13px; line-height: 1.45; color: var(--ink); }
   #demoCap b { color: var(--accent); }
+  /* the one thing this step wants you to DO */
+  #demoCap .tutgoal { display: block; margin-top: 6px; padding-top: 6px; font-size: 13px;
+    border-top: 1px solid rgba(255,255,255,.12); color: #ffd24a; }
+  #demoCap .tutgoal.ok { color: var(--accent); font-size: 15px; }
+  #tutBar { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%);
+    z-index: 12; display: flex; gap: 10px; align-items: center; pointer-events: none; }
+  #tutBar.hidden { display: none !important; }
+  #tutBar button { pointer-events: auto; padding: 7px 16px; font-size: 12px; }
+  #tutBar button:disabled { opacity: .35; cursor: default; }
   /* the way out of the tutorial, since the menu is hidden while it plays */
   #demoExit { position: absolute; top: 12px; right: 12px; z-index: 12; display: flex; gap: 8px; }
   #demoExit.hidden { display: none !important; }
@@ -572,6 +582,12 @@
     <!-- Attract-mode caption. Sits over the ocean but UNDER the title screen's menu, so the demo
          narrates itself without fighting the buttons for space. -->
     <div id="demoCap" class="hidden"></div>
+    <!-- Interactive tutorial: Back / Skip. The DEFAULT way through is to do the thing the step asks;
+         these are for anyone who wants past a step they can't or won't complete. -->
+    <div id="tutBar" class="hidden">
+      <button id="tutPrev" class="ghost">◀ Back</button>
+      <button id="tutNext" class="ghost">Skip ▶</button>
+    </div>
     <!-- Shown only while WATCHING the tutorial (the menu is pulled away, so there has to be a way back). -->
     <div id="demoExit" class="hidden">
       <button id="demoPlay">Begin life</button>

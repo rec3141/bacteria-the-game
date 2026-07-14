@@ -84,7 +84,10 @@
     // THE TUTORIAL DISH. A circular world the size of the viewport: nothing being explained can leave
     // the screen, the camera never moves, and the director controls every organism in it. When the
     // lesson ends the rim dissolves and the dish opens into the whole ocean.
-    demo: { food: 4, foodScale: 0.42, dishPad: 30, rimFade: 1.8 },
+    demo: { food: 4, foodScale: 0.42, dishPad: 30, rimFade: 1.8,
+            driftRate: 0.75,     // how fast the screensaver camera glides to its subject (was 2.6 = a snap)
+            nearWindow: 0.9,     // prefer a new subject within this many screens of the camera
+            panSpeed: 340, panHold: 2.2 },  // arrow keys pan the screensaver; it resumes drifting after panHold
     // TOUCH-ONLY tuning. The phone is not a smaller desktop, it's a different game: a cramped view,
     // a thumb instead of a keyboard, and players who will give it ninety seconds. These knobs exist
     // to make it FUN there, not to make it match. Desktop is untouched by all of them.
@@ -258,6 +261,7 @@
     analysisClado: document.getElementById("analysisClado"), detailClado: document.getElementById("detailClado"),
     tutorialBtn: document.getElementById("tutorialBtn"), demoExit: document.getElementById("demoExit"),
     demoPlay: document.getElementById("demoPlay"), demoBack: document.getElementById("demoBack"),
+    tutBar: document.getElementById("tutBar"), tutPrev: document.getElementById("tutPrev"), tutNext: document.getElementById("tutNext"),
     menuBtn: document.getElementById("menuBtn"), menuBtn2: document.getElementById("menuBtn2"),
     feedbackBtn: document.getElementById("feedbackBtn"), feedbackBtn2: document.getElementById("feedbackBtn2"),
     feedback: document.getElementById("feedback"), fbText: document.getElementById("fbText"),
@@ -991,6 +995,155 @@
         return c;
       } },
   ];
+  // ============================================================ interactive tutorial
+  // The attract loop is a film: it plays itself, on a timer, behind the menu. The TUTORIAL is not a
+  // film — you drive. Each step names one thing to do and waits for you to actually do it; the timer
+  // is gone. Back/Skip exist for anyone who wants out of a step, but the default path through is to
+  // play it. Both share the dish, the director's control of the cast, and the still camera.
+  let tut = null;
+  const ctrlCell = () => cells.find((c) => c.controlled && c.alive);
+  function tutDid(flag) { if (tut && !tut.done) tut.flags[flag] = true; }
+  function grantCrispr(c) {                     // the tutorial promises CRISPR, so it delivers CRISPR
+    c.crispr = true;
+    c.ups = (c.ups || []).concat([{ t: state ? state.elapsed : 0, label: "CRISPR", abbr: "Cr", color: CRISPR_COLOR, acquired: true }]);
+    return { msg: "CRISPR", color: CRISPR_COLOR, abbr: "Cr", acquired: true };
+  }
+  function clearCast(keepFood) {                // each step stages its own scene, and only its own
+    predators.length = 0; phages.length = 0; toxins.length = 0;
+    if (!keepFood) substrates.length = 0;
+  }
+  function spawnCarbParticle() {                // chitin is 70% carbohydrate — the one you can already eat
+    const s = makeSubstrate("chitin");
+    const p = dishSpot(dishRadius()*0.55);
+    s.x = p.x; s.y = p.y; s.vx = s.vy = 0;
+    substrates.push(s);
+    return s;
+  }
+  const TUT_STEPS = [
+    { cap: "You are this <b>bacterium</b>. Swim with the <b>arrow keys</b> or <b>WASD</b> — and notice that you stop the instant you let go. Water is treacle at this size.",
+      goal: "Swim to the <b>ringed</b> particle — the <b class='c-carb'>blue</b> blocks in it are carbohydrate",
+      setup: () => { clearCast(); const s = spawnCarbParticle(); tut.target = s; demo.focus = s; centre(ctrlCell()); },
+      done: () => { const c = ctrlCell(), s = tut.target;
+        return !!(c && s && Math.hypot(dx(c.x, s.x), dy(c.y, s.y)) < s.R + 46); } },
+
+    { cap: "You are far too small to swallow it. So you digest it from the OUTSIDE: <b>Space</b> releases your <b class='c-carb'>carbohydrase</b>, the <b class='c-carb'>blue</b> blocks dissolve, and you absorb what comes loose.",
+      goal: "Face the particle and press <b>Space</b> — eat something",
+      setup: () => { if (!tut.target || tut.target.organic <= 0) { clearCast(); tut.target = spawnCarbParticle(); }
+        demo.focus = tut.target; tut.score0 = state.score; },
+      done: () => state.score > (tut.score0 || 0) + 2 },
+
+    { cap: "This is a <b style='color:#ff9ec0'>protist</b> — a single-celled hunter, far bigger than you, and bacteria are what it eats. You cannot fight it and you cannot outrun it forever.",
+      goal: "Let it catch you. <b>Get eaten.</b>",
+      setup: () => { clearCast(true); const c = centre(ctrlCell());
+        const pr = makePredator(WORLD_W/2 + 170, WORLD_H/2, CFG.predator.startEnergy, 0);
+        predators.push(pr); demo.focus = pr; if (c) c.invuln = 0; },
+      done: () => !!tut.flags.eaten },
+
+    { cap: "<b style='color:#ff5a52'>Red</b> phages can infect <em>you</em>; <b style='color:#8bf06a'>green</b> ones can't. A phage cannot chase — it drifts, and waits to collide.",
+      goal: "Swim into a <b style='color:#ff5a52'>red</b> phage. <b>Get infected.</b>",
+      setup: () => { clearCast(true); const c = centre(ctrlCell()); if (!c) return;
+        demo.hero = c; c.invuln = 0; c.infectedGreen = false;
+        const tier = upgradeTier(c);
+        for (let i = 0; i < 7; i++) { const p = near(c, rand(120, 210)); const ph = makePhage("green", p.x, p.y, tier); ph.vx = ph.vy = 0; phages.push(ph); if (i === 0) demo.focus = ph; } },
+      done: () => { const c = ctrlCell(); return !!(tut.flags.infected || (c && c.infectedGreen)); } },
+
+    { cap: "Not every phage kills. The <b style='color:#ffd24a'>gold</b> one carries a gene INTO you instead — it is the only thing in this sea that changes what you can <em>do</em>.",
+      goal: "Catch the <b style='color:#ffd24a'>gold phage</b> — it carries <b>CRISPR</b>",
+      setup: () => { clearCast(true); const c = centre(ctrlCell()); if (!c) return;
+        c.infectedGreen = false; c.crispr = false;      // a clean slate, so the gene is the news
+        const p = near(c, 190); const ph = makePhage("gold", p.x, p.y); ph.vx = ph.vy = 0;
+        phages.push(ph); demo.focus = ph; },
+      done: () => { const c = ctrlCell(); return !!(tut.flags.adapted || (c && c.crispr)); } },
+
+    { cap: "<b>CRISPR</b> is a real immune system: it files away the DNA of viruses that attacked you and shreds them on sight. A phage that cannot infect you stops being a threat and becomes <b>lunch</b>.",
+      goal: "Swim into a <b style='color:#8bf06a'>green</b> phage. <b>Eat it.</b>",
+      setup: () => { clearCast(true); const c = centre(ctrlCell()); if (!c) return;
+        demo.hero = c; if (!c.crispr) grantCrispr(c);   // Skip'd past the last step? You still get the gene.
+        const tier = upgradeTier(c);
+        for (let i = 0; i < 8; i++) { const p = near(c, rand(110, 200));
+          const ph = makePhage("green", p.x, p.y, tier + CFG.phage.hostTolerance + 4);  // immune to you = edible
+          ph.vx = ph.vy = 0; phages.push(ph); if (i === 0) demo.focus = ph; } },
+      done: () => !!tut.flags.atePhage },
+  ];
+  function startTutorial() {
+    stopDemo();
+    newGame(true);                              // demo state: dish world, no score, no leaderboard
+    const first = cells[0];
+    first.controlled = true;                    // ...but YOU drive this one
+    demo = { i: -1, t: 0, secs: Infinity, focus: null, idle: false, idleT: 0,
+             dish: true, rim: 0, hero: first, gold: null, watch: true, interactive: true };
+    tut = { i: -1, flags: {}, done: false, doneT: 0, target: null, score0: 0 };
+    if (el.title) el.title.classList.add("hidden");
+    if (el.demoExit) el.demoExit.classList.remove("hidden");
+    if (el.tutBar) el.tutBar.classList.remove("hidden");
+    gotoTutStep(0);
+  }
+  function stopTutorial() {
+    tut = null;
+    if (el.tutBar) el.tutBar.classList.add("hidden");
+  }
+  function gotoTutStep(i) {
+    if (!tut) return;
+    tut.i = clamp(i, 0, TUT_STEPS.length - 1);
+    tut.flags = {}; tut.done = false; tut.doneT = 0;
+    const c = ctrlCell();
+    if (c) { c.energy = Math.max(c.energy, CFG.cell.startEnergy); c.infectedGreen = false; }
+    TUT_STEPS[tut.i].setup();
+    renderTutStep();
+  }
+  function renderTutStep(done) {
+    const st = TUT_STEPS[tut.i];
+    if (el.demoCap) {
+      el.demoCap.innerHTML =
+        `<i>step ${tut.i + 1} / ${TUT_STEPS.length}</i><span>${st.cap}</span>` +
+        (done ? `<b class="tutgoal ok">✓ done</b>` : `<b class="tutgoal">▸ ${st.goal}</b>`);
+      el.demoCap.classList.remove("hidden");
+      el.demoCap.classList.add("tut");        // sits above the Back/Skip bar
+    }
+    if (el.tutPrev) el.tutPrev.disabled = tut.i === 0;
+    if (el.tutNext) el.tutNext.textContent = tut.i === TUT_STEPS.length - 1 ? "Finish ▶" : "Skip ▶";
+  }
+  function tutNext() {
+    if (!tut) return;
+    if (tut.i >= TUT_STEPS.length - 1) { finishTutorial(); return; }
+    gotoTutStep(tut.i + 1);
+  }
+  // The reward for finishing is the ocean itself: the glass dissolves, the dish opens out, and the
+  // sea runs on by itself. Control is handed back to the cells — from here you're watching, and the
+  // camera drifts. Nudge it with the arrow keys whenever you want a closer look at something.
+  function finishTutorial() {
+    stopTutorial();
+    if (el.demoCap) el.demoCap.classList.add("hidden");
+    cells.forEach((c) => (c.controlled = false));
+    if (demo) {
+      demo.interactive = false; demo.idle = true; demo.idleT = 0;
+      demo.i = DEMO_BEATS.length; demo.secs = Infinity;
+      openDemoWorld();
+    }
+  }
+  function tutPrev() { if (tut) gotoTutStep(tut.i - 1); }
+  function updateTutorial(dt) {
+    if (!tut || !demo) return;
+    // Your cell being eaten is the LESSON in step 3, not a failure — so the sea hands you another one
+    // instead of flipping you to a protist. (A tutorial that ends by taking the game away is a joke.)
+    if (!cells.some((c) => c.alive)) {
+      const c = makeCell(WORLD_W/2, WORLD_H/2, CFG.cell.startEnergy, rand(0, TAU), 1);
+      c.controlled = true; c.invuln = 1.5; cells.push(c);
+      demo.hero = c;
+    } else if (!ctrlCell()) { const c = cells.find((x) => x.alive); if (c) { c.controlled = true; demo.hero = c; } }
+    if (tut.done) {                              // held on "✓ done" for a beat, then move on
+      tut.doneT -= dt;
+      if (tut.doneT <= 0) tutNext();
+      return;
+    }
+    if (TUT_STEPS[tut.i].done()) {
+      tut.done = true; tut.doneT = 1.6;
+      Audio.play("upgrade", 0.5);
+      renderTutStep(true);
+    }
+  }
+
+  // The attract film: plays itself, on a timer, behind the title menu.
   function startDemo() {
     newGame(true);
     demo = { i: -1, t: 0, secs: 0, focus: null, hold: 0, idle: false, idleT: 0,
@@ -998,6 +1151,7 @@
     nextDemoBeat();
   }
   function stopDemo() {
+    stopTutorial();
     demo = null;
     if (el.demoCap) el.demoCap.classList.add("hidden");
     if (el.demoExit) el.demoExit.classList.add("hidden");
@@ -1005,15 +1159,11 @@
   // The attract loop plays behind the title menu, which covers most of it — fine as a backdrop, no
   // good as a lesson. WATCHING the tutorial pulls the menu away so you can actually see the ocean,
   // and replays it from beat 1.
-  function watchTutorial() {
-    startDemo();
-    demo.watch = true;
-    if (el.title) el.title.classList.add("hidden");
-    if (el.demoExit) el.demoExit.classList.remove("hidden");
-  }
-  function endTutorial() {                    // back to the menu; the demo keeps playing behind it
-    if (demo) demo.watch = false;
+  function watchTutorial() { startTutorial(); }
+  function endTutorial() {                    // back to the menu; the attract loop resumes behind it
+    stopTutorial();
     if (el.demoExit) el.demoExit.classList.add("hidden");
+    startDemo();                             // the title needs its living ocean back
     if (el.title) el.title.classList.remove("hidden");
   }
   // Once you'd started a run there was NO WAY BACK to the title — so no way to reach the tutorial,
@@ -1042,28 +1192,65 @@
     demo.focus = b.setup() || anyCell();
     if (el.demoCap) {
       el.demoCap.innerHTML = `<i>${demo.i + 1}/${DEMO_BEATS.length}</i><span>${b.cap}</span>`;
-      el.demoCap.classList.remove("hidden");
+      el.demoCap.classList.remove("hidden", "tut");
     }
   }
   // Screensaver: no captions, just drift to whatever is worth watching — something dying loudly,
   // a grazer mid-hunt, the gold phage, or failing all that the thick of the colony.
+  // Pick the next thing to watch. The old version rolled dice over the whole ocean, so the camera
+  // hurled itself across the world every few seconds — twitchy, and you lost the thread of whatever
+  // you were looking at. Now it prefers something ALREADY IN THE SAME WINDOW: the shot changes, the
+  // place doesn't. It only travels when the neighbourhood has nothing left worth watching.
   function demoInteresting() {
-    const lysing = cells.filter((c) => c.alive && c.infectedGreen);
-    if (lysing.length && Math.random() < 0.5) return lysing[(Math.random()*lysing.length)|0];
-    const gold = phages.find((p) => p.type === "gold" && !p.dead);
-    if (gold && Math.random() < 0.4) return gold;
-    if (predators.length && Math.random() < 0.5) return predators[(Math.random()*predators.length)|0];
-    return anyCell();
+    const R = Math.max(VIEW_W, VIEW_H)*CFG.demo.nearWindow;
+    const cand = [];
+    const add = (e, w) => {
+      if (!alive(e)) return;
+      const d = Math.hypot(dx(e.x, cam.x), dy(e.y, cam.y));
+      cand.push({ e, w, d, near: d < R });
+    };
+    for (const c of cells) if (c.alive && c.infectedGreen) add(c, 5);      // about to burst
+    for (const p of phages) if (p.type === "gold" && !p.dead) add(p, 4);   // the prize
+    for (const p of predators) add(p, 3);                                  // a hunt
+    for (const c of cells) if (c.alive && !c.cyst) add(c, 1);              // ordinary life
+    if (!cand.length) return anyCell();
+    const near = cand.filter((x) => x.near);
+    const pool = near.length ? near : cand;
+    const best = Math.max(...pool.map((x) => x.w));
+    const top = pool.filter((x) => x.w >= best);          // most interesting…
+    top.sort((a, b) => a.d - b.d);                        // …and of those, the closest
+    const pick = top[Math.min(top.length - 1, (Math.random()*Math.min(3, top.length))|0)];
+    return pick.e;
   }
   function updateDemo(dt) {
     if (!demo || !state || !state.demo) return;
     demo.t += dt;
+    if (demo.interactive) {                   // YOU are driving: no timer, no beats — objectives
+      updateTutorial(dt);
+      cam.x = WORLD_W/2; cam.y = WORLD_H/2;   // the dish is the whole world; the camera holds still
+      confineToDish();
+      return;
+    }
     const b = !demo.idle && DEMO_BEATS[demo.i];
     if (b && b.tick) b.tick(demo.focus, demo.t);
     if (!alive(demo.focus)) demo.focus = demo.idle ? demoInteresting() : anyCell();   // it died mid-shot
     if (demo.idle) {
+      // YOU can take the camera: hold a direction and it pans. Let go and, after a moment, it goes
+      // back to drifting on its own — the sim is never taken away from you, and never held hostage.
+      const a = demo.watch ? axis() : { x: 0, y: 0 };
+      if (a.x || a.y) {
+        const sp = CFG.demo.panSpeed*dt;
+        cam.x = wrapX(cam.x + a.x*sp); cam.y = wrapY(cam.y + a.y*sp);
+        demo.manualT = CFG.demo.panHold; demo.focus = null;
+        return;
+      }
+      if (demo.manualT > 0) {
+        demo.manualT -= dt;
+        if (demo.manualT <= 0) { demo.focus = demoInteresting(); demo.idleT = rand(9, 15); }
+        return;
+      }
       demo.idleT -= dt;
-      if (demo.idleT <= 0) { demo.idleT = rand(7, 12); demo.focus = demoInteresting(); }
+      if (demo.idleT <= 0 || !alive(demo.focus)) { demo.idleT = rand(9, 15); demo.focus = demoInteresting(); }
     } else if (demo.t >= demo.secs) nextDemoBeat();
     if (demo.rim > 0) demo.rim = Math.max(0, demo.rim - dt/CFG.demo.rimFade);   // the glass dissolves
     if (demo.dish) {
@@ -1087,10 +1274,11 @@
       confineToDish();
       return;
     }
-    // Out in the open ocean the screensaver drifts between whatever is worth watching.
+    // Out in the open ocean the camera GLIDES to whatever is worth watching. 2.6/s was a snap — it
+    // arrived before your eye did, which is what made it feel twitchy.
     const f = demo.focus;
     if (f) {
-      const k = 1 - Math.exp(-2.6*dt);
+      const k = 1 - Math.exp(-CFG.demo.driftRate*dt);
       cam.x = wrapX(cam.x + dx(f.x, cam.x)*k);
       cam.y = wrapY(cam.y + dy(f.y, cam.y)*k);
     }
@@ -1588,7 +1776,8 @@
     // trophic role-swap: bacteria extinct → you become a protist (not game over). The demo has no
     // one to promote, so it just restocks the sea and keeps running — an attract loop can't end.
     if (state.role === "bacterium" && !cells.length) {
-      if (state.demo) immigrateBacteria(CFG.cycle.reseedBacteria);
+      if (tut) { /* updateTutorial hands you a fresh cell — being eaten is a lesson, not an ending */ }
+      else if (state.demo) immigrateBacteria(CFG.cycle.reseedBacteria);
       else { becomeProtist(); return; }
     }
     // don't hand the demo a controlled cell behind our backs — that's what this guard is for
@@ -1981,6 +2170,7 @@
         {
           pr.energy += c.cyst ? P.mealEnergy*P.cystMealFactor : P.mealEnergy;
           if (pr.controlled) state.score += CFG.cycle.protistEatScore; // you score calories while grazing as a protist
+          if (c.controlled) tutDid("eaten");
           killCell(c, true); pr.satiated = P.satiatedTime; break;
         }
       }
@@ -2090,13 +2280,18 @@
         if (ph.type === "green") {
           if (c.infectedGreen) continue;             // already infected — drift on
           if (!hostMatch(ph.host, upgradeTier(c))) { // kill-the-winner: this phage can't infect this cell's tier
-            if (c.crispr) { c.energy = Math.min(c.energy + CFG.cell.crisprEnergy, CFG.cell.maxEnergy); ph.dead = true; break; } // CRISPR harvests the immune virus for energy
+            if (c.crispr) { c.energy = Math.min(c.energy + CFG.cell.crisprEnergy, CFG.cell.maxEnergy); ph.dead = true;
+              if (c.controlled) tutDid("atePhage"); burst(ph.x, ph.y, CRISPR_COLOR, 8); break; } // CRISPR harvests the immune virus for energy
             continue;
           }
           c.infectedGreen = true; c.lysisT = rand(CFG.phage.latent[0], CFG.phage.latent[1]);
+          if (c.controlled) tutDid("infected");
           ph.dead = true;
         } else {                                     // gold: transduce a random upgrade
-          const { msg, color, abbr, acquired } = grantRandomUpgrade(c);
+          // The tutorial promises CRISPR by name, and then has to teach eating a phage with it — so
+          // there it grants CRISPR outright rather than rolling the dice on the lesson.
+          const { msg, color, abbr, acquired } = (tut && !c.crispr) ? grantCrispr(c) : grantRandomUpgrade(c);
+          if (c.controlled) tutDid("adapted");
           ph.dead = true;
           burst(c.x, c.y, "#ffd24a", 16);
           if (c.controlled) {
@@ -3450,8 +3645,10 @@
       const menu = [el.title, el.over, el.scores, el.help, el.science].some((s) => s && !s.classList.contains("hidden"));
       // The demo has no player, so the HUD would report a cell that doesn't exist (0 energy, no genome).
       // Hide it — the tutorial should read as a film of the sea, not a game with nobody driving.
-      const hide = menu || !(state && state.running) || !!(state && state.demo);
-      if (el.chartwrap) el.chartwrap.classList.toggle("hidden", hide);
+      const interactive = !!(demo && demo.interactive);
+      const hide = menu || !(state && state.running) || (!!(state && state.demo) && !interactive);
+      // charts stay away in the tutorial: it's busy enough, and they're not what's being taught yet
+      if (el.chartwrap) el.chartwrap.classList.toggle("hidden", hide || interactive);
       if (el.hud) el.hud.classList.toggle("hidden", hide);
       if (el.touch) el.touch.classList.toggle("hidden", hide); // on-screen controls live only during active play
     }
@@ -4041,6 +4238,8 @@
   if (el.menuBtn2) el.menuBtn2.addEventListener("click", toTitle);
   if (el.demoPlay) el.demoPlay.addEventListener("click", start);
   if (el.demoBack) el.demoBack.addEventListener("click", endTutorial);
+  if (el.tutPrev) el.tutPrev.addEventListener("click", tutPrev);
+  if (el.tutNext) el.tutNext.addEventListener("click", tutNext);
 
   // Touch-event support is not an input mode: hybrid laptops expose ontouchstart while their
   // primary mouse/trackpad is still fine and hover-capable. Only a touch-first primary pointer
