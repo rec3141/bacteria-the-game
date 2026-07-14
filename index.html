@@ -553,6 +553,59 @@
   /* squeezed: the chips have to share the right column with the buttons now */
   body.touch .gene { font-size: 10.5px; padding: 4px 7px; text-align: center; white-space: nowrap;
     line-height: 1.2; border-radius: 6px; }
+
+  /* A phone in landscape is a different geometry: stacking charts, ocean and a portrait-sized
+     deck leaves almost no ocean at 844×390 or 667×375. Put the deck beside the stage, size every
+     control from viewport HEIGHT, and keep the auto-collapsed charts as an optional overlay pill. */
+  @media (pointer: coarse) and (hover: none) and (orientation: landscape) and (max-height: 560px) {
+    body.touch #wrap {
+      --landscape-deck: clamp(288px, 38vw, 330px);
+      flex-direction: row; align-items: stretch; justify-content: center; gap: 6px;
+    }
+    body.touch #stage {
+      order: 0; flex: 1 1 auto; width: auto; max-width: none; height: 100%; min-width: 0;
+    }
+    body.touch #touch {
+      order: 1; flex: 0 0 var(--landscape-deck); width: var(--landscape-deck); height: 100%;
+      min-width: 0; justify-content: center; padding: 2px 4px;
+    }
+    body.touch #deckRow { width: 100%; height: 100%; min-height: 0; gap: 8px; }
+    body.touch #stickZone {
+      width: clamp(108px, 30vh, 126px); height: clamp(108px, 30vh, 126px);
+      width: clamp(108px, 30dvh, 126px); height: clamp(108px, 30dvh, 126px);
+    }
+    body.touch #stickKnob {
+      width: clamp(42px, 12vh, 48px); height: clamp(42px, 12vh, 48px);
+      width: clamp(42px, 12dvh, 48px); height: clamp(42px, 12dvh, 48px);
+    }
+    body.touch #deckRight { height: 100%; gap: 6px; }
+    body.touch #touch .genome { gap: 3px; padding: 4px; }
+    body.touch .gene { font-size: 9.5px; padding: 3px 5px; }
+    body.touch #tbtns { gap: 6px; flex-wrap: nowrap; }
+    body.touch .tbtn {
+      width: clamp(42px, 12vh, 48px); height: clamp(42px, 12vh, 48px);
+      width: clamp(42px, 12dvh, 48px); height: clamp(42px, 12dvh, 48px);
+    }
+    body.touch .tbtn.big {
+      width: clamp(56px, 16vh, 64px); height: clamp(56px, 16vh, 64px);
+      width: clamp(56px, 16dvh, 64px); height: clamp(56px, 16dvh, 64px);
+    }
+    body.touch .tbtn.pause {
+      width: clamp(36px, 10vh, 42px); height: clamp(36px, 10vh, 42px);
+      width: clamp(36px, 10dvh, 42px); height: clamp(36px, 10dvh, 42px);
+    }
+    body.touch #chartwrap {
+      position: fixed; z-index: 20;
+      left: max(10px, var(--safe-left)); bottom: max(8px, var(--safe-bottom));
+      width: min(520px, calc(100vw - var(--landscape-deck) - 30px)); max-width: none;
+      box-shadow: 0 5px 22px rgba(0,0,0,.55);
+    }
+    body.touch #chartwrap.collapsed { width: auto; padding: 5px 10px; }
+    body.touch #chart { height: 68px; }
+    body.touch #subchart { height: 42px; }
+    body.touch .topline { margin-left: 29%; font-size: 10.5px; gap: 5px; }
+    body.touch .bar { width: 88px; }
+  }
 </style>
 </head>
 <body>

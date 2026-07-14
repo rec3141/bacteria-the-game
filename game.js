@@ -3679,7 +3679,12 @@
     requestAnimationFrame(frame);
   }
 
-  function start() { stopDemo(); Audio.init(); Music.start(Audio.ctx()); applyAudioMode(); justFinishedTs = null; el.title.classList.add("hidden"); el.over.classList.add("hidden"); newGame(); }
+  function start() {
+    stopDemo(); Audio.init(); Music.start(Audio.ctx()); applyAudioMode(); justFinishedTs = null;
+    el.title.classList.add("hidden"); el.over.classList.add("hidden");
+    if (shortLandscapeActive() && el.chartwrap) el.chartwrap.classList.add("collapsed");
+    newGame();
+  }
   el.startBtn.addEventListener("click", start);
   // Carry the SAME run into the next day: nothing is reset — the colony, the score, the genome and
   // the clock all continue. Only the day counter moves, which pushes the next end-of-day boundary a
@@ -4271,12 +4276,29 @@
   // pointer (for example, a convertible entering or leaving tablet mode).
   const touchModeQuery = typeof matchMedia === "function"
     ? matchMedia("(pointer: coarse) and (hover: none)") : null;
+  const shortLandscapeQuery = typeof matchMedia === "function"
+    ? matchMedia("(pointer: coarse) and (hover: none) and (orientation: landscape) and (max-height: 560px)") : null;
+  let shortLandscape = false, shortLandscapeAutoCollapsed = false;
+  function shortLandscapeActive() { return !!(isTouch && shortLandscapeQuery && shortLandscapeQuery.matches); }
+  function syncShortLandscapeLayout() {
+    const on = shortLandscapeActive();
+    document.body.classList.toggle("short-landscape", on);
+    if (on && !shortLandscape) {
+      shortLandscapeAutoCollapsed = !!(el.chartwrap && !el.chartwrap.classList.contains("collapsed"));
+      if (el.chartwrap) el.chartwrap.classList.add("collapsed");
+    } else if (!on && shortLandscape && shortLandscapeAutoCollapsed && el.chartwrap) {
+      el.chartwrap.classList.remove("collapsed");
+    }
+    shortLandscape = on;
+    if (!on) shortLandscapeAutoCollapsed = false;
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(resizeCanvas);
+  }
   const genomeRow = document.querySelector("#hud .genome-row");
   const genomeHome = genomeRow ? document.createComment("genome-row home") : null;
   if (genomeRow && genomeHome && genomeRow.parentNode) genomeRow.parentNode.insertBefore(genomeHome, genomeRow);
   function applyTouchMode(on) {
     on = !!on;
-    if (isTouch === on) return;
+    if (isTouch === on) { syncShortLandscapeLayout(); return; }
     isTouch = on;
     document.body.classList.toggle("touch", on);
     scoreDevice = on ? "touch" : "desktop";
@@ -4293,6 +4315,7 @@
       releaseStick();
       if (el.chartwrap) el.chartwrap.classList.remove("collapsed");
     }
+    syncShortLandscapeLayout();
     if (el.scores && !el.scores.classList.contains("hidden")) renderScoreList();
     if (typeof requestAnimationFrame === "function") requestAnimationFrame(resizeCanvas);
   }
@@ -4301,6 +4324,11 @@
     const onTouchModeChange = (event) => applyTouchMode(event.matches);
     if (touchModeQuery.addEventListener) touchModeQuery.addEventListener("change", onTouchModeChange);
     else if (touchModeQuery.addListener) touchModeQuery.addListener(onTouchModeChange);
+  }
+  if (shortLandscapeQuery) {
+    const onShortLandscapeChange = () => syncShortLandscapeLayout();
+    if (shortLandscapeQuery.addEventListener) shortLandscapeQuery.addEventListener("change", onShortLandscapeChange);
+    else if (shortLandscapeQuery.addListener) shortLandscapeQuery.addListener(onShortLandscapeChange);
   }
   setupTouch();
 
