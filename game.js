@@ -1573,7 +1573,9 @@
   }
 
   let waterDots = makeWaterDots();
-  function makeWaterDots() { return Array.from({ length: 70 }, () => ({ x: Math.random()*VIEW_W, y: Math.random()*VIEW_H, r: Math.random()*2 + 0.5 })); }
+  // Dots live in NORMALISED space (u,v in 0..1) so a canvas resize just re-scales them instead of
+  // re-randomising the whole field — a resize used to snap the starfield to a brand-new layout.
+  function makeWaterDots() { return Array.from({ length: 70 }, () => ({ u: Math.random(), v: Math.random(), r: Math.random()*2 + 0.5 })); }
   function drawWater() {
     ctx.save(); ctx.globalAlpha = 0.2; ctx.fillStyle = "#bfeee0";
     const ox = ((cam.x*0.3)%40+40)%40, oy = ((cam.y*0.3)%40+40)%40;
@@ -2313,7 +2315,7 @@
     if (!r.width || !r.height) return; // not laid out yet (or headless)
     const w = Math.round(r.width), h = Math.round(r.height);
     if (canvas.width !== w || canvas.height !== h) {
-      canvas.width = w; canvas.height = h; VIEW_W = w; VIEW_H = h; waterDots = makeWaterDots();
+      canvas.width = w; canvas.height = h; VIEW_W = w; VIEW_H = h; // dots are normalised — no rebuild
       // Re-derive the zoom from the canvas we actually got. Without this the touch zoom (tuned
       // when the canvas was a fixed 800px being CSS-scaled down) composites with the responsive
       // canvas and the world is magnified twice over.
