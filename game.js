@@ -65,7 +65,7 @@
       exprBoost: 0.16,            // enzyme-radius gain per expression level (stacking gold-phage upgrade)
       chemoRange0: 300, chemoRangePer: 140, // chemotaxis sensing range grows with chemoLevel
       chemoBias: 0.9,                       // run-length extension per level when heading up-gradient (biased random walk)
-      fedLinger: 2.2, maxCells: 100000, // effectively uncapped (perf backstop only)
+      fedLinger: 2.2, maxCells: 10000, // measured stress ceiling; see benchmarks/spatial-index.mjs
       startUpgrades: 0,    // pre-load the starting cell with this many RANDOM adaptations, drawn from the
                            // same pool a gold phage gives. 0 = the normal game; raise it to start a run
                            // mid-evolution instead of grinding there to test the late game.
@@ -161,7 +161,7 @@
       maturity: 8,                                       // no senescence — a grazer dies of STARVATION
                                                          // (or antibiotics), never of old age
       reproEnergy: 320, reproCooldown: 11,               // reproduction, gated only by feeding — faster so grazers can chase a bacterial boom
-      safetyMax: 600,                                    // perf backstop only — never binds ecologically
+      safetyMax: 300,                                    // measured stress ceiling; never binds normal ecology
       minCount: 2, immigrateEvery: 8,                    // starting immigration/respawn interval (halves on each protist extinction)
       immigratePerPrey: 0.04, immigrateCap: 150, immigrateMax: 14, // grazers immigrate toward a target that rises with bacterial abundance; more per step so they can catch a boom
       respawnFloor: 0.5,                                 // the respawn interval halves on each protist extinction, down to this floor
@@ -170,7 +170,7 @@
       virusEnergy: 5,                                    // protists also graze free-floating viruses — a small meal, and a top-down brake on phage blooms
     },
     phage: {
-      greenCount: 18, radius: 3.6, life: [16, 24], maxCount: 4000, diffuse: 22, // maxCount is a perf backstop only (was 220) — let epidemics get nasty
+      greenCount: 18, radius: 3.6, life: [16, 24], maxCount: 2500, diffuse: 22, // measured backstop — still far above normal epidemics
       infectHalo: 5,        // adsorption reach beyond the cell body
       burst: [4, 8],        // green progeny released when an infected cell dies (bumped up — protist grazing + genome upkeep now keep viruses in check)
       latent: [9, 15],      // seconds from green infection to lysis
@@ -594,6 +594,81 @@
   function dx(a, b) { return dWrap(a, b, WORLD_W); }
   function dy(a, b) { return dWrap(a, b, WORLD_H); }
   function toroDist2(ax, ay, bx, by) { const x = dx(ax, bx), y = dy(ay, by); return x*x + y*y; }
+
+  // SPATIAL_INDEX_START — pure torus-aware grid, also executed by tests and the benchmark.
+  class TorusSpatialGrid {
+    constructor(worldWidth, worldHeight, targetCellSize = 64) {
+      this.targetCellSize = targetCellSize;
+      this.queryToken = 0;
+      this.resize(worldWidth, worldHeight);
+    }
+    resize(worldWidth, worldHeight) {
+      const width = Math.max(1, Number(worldWidth) || 1), height = Math.max(1, Number(worldHeight) || 1);
+      if (width === this.worldWidth && height === this.worldHeight) return;
+      this.worldWidth = width; this.worldHeight = height;
+      this.cols = Math.max(1, Math.ceil(width / this.targetCellSize));
+      this.rows = Math.max(1, Math.ceil(height / this.targetCellSize));
+      // Equal bucket widths make wrapped bucket arithmetic exact even when the world size is not
+      // divisible by targetCellSize (2600 / 64 has a partial final bucket otherwise).
+      this.bucketWidth = width / this.cols; this.bucketHeight = height / this.rows;
+      this.buckets = Array.from({ length: this.cols * this.rows }, () => []);
+      this.queryMarks = new Uint32Array(this.buckets.length);
+    }
+    rebuild(items, include) {
+      for (const bucket of this.buckets) bucket.length = 0;
+      for (const item of items) {
+        if ((include && !include(item)) || !Number.isFinite(item.x) || !Number.isFinite(item.y)) continue;
+        const x = ((item.x % this.worldWidth) + this.worldWidth) % this.worldWidth;
+        const y = ((item.y % this.worldHeight) + this.worldHeight) % this.worldHeight;
+        const col = Math.min(this.cols - 1, Math.floor(x / this.bucketWidth));
+        const row = Math.min(this.rows - 1, Math.floor(y / this.bucketHeight));
+        this.buckets[row * this.cols + col].push(item);
+      }
+      return this;
+    }
+    query(x, y, radius, out = []) {
+      out.length = 0;
+      const r = Math.max(0, Number(radius) || 0);
+      const minCol = Math.floor((x - r) / this.bucketWidth), maxCol = Math.floor((x + r) / this.bucketWidth);
+      const minRow = Math.floor((y - r) / this.bucketHeight), maxRow = Math.floor((y + r) / this.bucketHeight);
+      const scanMinCol = maxCol - minCol + 1 >= this.cols ? 0 : minCol;
+      const scanMaxCol = maxCol - minCol + 1 >= this.cols ? this.cols - 1 : maxCol;
+      const scanMinRow = maxRow - minRow + 1 >= this.rows ? 0 : minRow;
+      const scanMaxRow = maxRow - minRow + 1 >= this.rows ? this.rows - 1 : maxRow;
+      this.queryToken = (this.queryToken + 1) >>> 0;
+      if (!this.queryToken) { this.queryMarks.fill(0); this.queryToken = 1; }
+      for (let rawRow = scanMinRow; rawRow <= scanMaxRow; rawRow++) {
+        const row = ((rawRow % this.rows) + this.rows) % this.rows;
+        for (let rawCol = scanMinCol; rawCol <= scanMaxCol; rawCol++) {
+          const col = ((rawCol % this.cols) + this.cols) % this.cols;
+          const index = row * this.cols + col;
+          if (this.queryMarks[index] === this.queryToken) continue;
+          this.queryMarks[index] = this.queryToken;
+          for (const item of this.buckets[index]) out.push(item);
+        }
+      }
+      return out;
+    }
+  }
+  // SPATIAL_INDEX_END
+
+  const SPATIAL_CELL_SIZE = 64, SPATIAL_FRAME_PAD = 16;
+  const cellSpace = new TorusSpatialGrid(WORLD_W, WORLD_H, SPATIAL_CELL_SIZE);
+  const predatorSpace = new TorusSpatialGrid(WORLD_W, WORLD_H, SPATIAL_CELL_SIZE);
+  const phageSpace = new TorusSpatialGrid(WORLD_W, WORLD_H, SPATIAL_CELL_SIZE);
+  const nutrientSpace = new TorusSpatialGrid(WORLD_W, WORLD_H, SPATIAL_CELL_SIZE);
+  const cellCandidates = [], predatorCandidates = [], phageCandidates = [], nutrientCandidates = [];
+  function rebuildSpatialIndexes() {
+    for (const grid of [cellSpace, predatorSpace, phageSpace, nutrientSpace]) grid.resize(WORLD_W, WORLD_H);
+    cellSpace.rebuild(cells, (c) => c.alive);
+    predatorSpace.rebuild(predators, (p) => !p.dead);
+    phageSpace.rebuild(phages, (p) => !p.dead);
+    nutrientSpace.rebuild(nutrients, (n) => !n.dead);
+  }
+  function rebuildCellSpace() {
+    cellSpace.resize(WORLD_W, WORLD_H);
+    cellSpace.rebuild(cells, (c) => c.alive);
+  }
   function segDist(px, py, x1, y1, x2, y2) {
     const ex = x2-x1, ey = y2-y1, l2 = ex*ex + ey*ey || 1;
     let t = clamp(((px-x1)*ex + (py-y1)*ey)/l2, 0, 1);
@@ -1557,9 +1632,10 @@
     toxins.push({ x: tx, y: ty, r: 4, life: CFG.toxin.life, age: 0, maxR, potency: CFG.toxin.potency, genome: gsnap });
     // instant dose to every protist caught in the release — the reliable "hit" (the cloud is lingering bonus)
     const dose = CFG.toxin.dose, rr = maxR*maxR;
-    for (const pr of predators) if (toroDist2(tx, ty, pr.x, pr.y) <= rr) { pr.energy -= dose; pr.toxT = 0.5; }
+    for (const pr of predatorSpace.query(tx, ty, maxR + SPATIAL_FRAME_PAD, predatorCandidates))
+      if (!pr.dead && toroDist2(tx, ty, pr.x, pr.y) <= rr) { pr.energy -= dose; pr.toxT = 0.5; }
     // cross-reactive: also hit bacteria genetically distant from the releaser (kin are spared)
-    for (const oc of cells) {
+    for (const oc of cellSpace.query(tx, ty, maxR + SPATIAL_FRAME_PAD, cellCandidates)) {
       if (oc === c || !oc.alive || oc.cyst || oc.invuln > 0) continue;
       if (toroDist2(tx, ty, oc.x, oc.y) <= rr && genDist(gsnap, oc) >= CFG.toxin.crossDist) { oc.energy -= dose*CFG.toxin.crossFactor; oc.toxT = 0.5; }
     }
@@ -1824,6 +1900,7 @@
         if (el.stickBase) el.stickBase.style.setProperty("--lock", frac.toFixed(3));
       }
     }
+    rebuildSpatialIndexes(); // pre-move positions serve input-triggered AoE and nutrient uptake
     for (const c of cells) if (c.alive) updateCell(c, dt);
     // dividing before lysis lets a cell shed the virus into one daughter and escape clean
     for (const c of cells) if (c.alive && c.energy >= CFG.cell.divideThreshold) divide(c);
@@ -1834,10 +1911,11 @@
     if (state.role === "bacterium" && !cells.length) {
       if (tut) { /* updateTutorial hands you a fresh cell — being eaten is a lesson, not an ending */ }
       else if (state.demo) immigrateBacteria(CFG.cycle.reseedBacteria);
-      else { becomeProtist(); return; }
+      else { becomeProtist(); rebuildSpatialIndexes(); return; }
     }
     // don't hand the demo a controlled cell behind our backs — that's what this guard is for
     if (!state.demo && state.role === "bacterium" && cells.length && !hadControlled && !cells.some((c) => c.controlled)) cells[0].controlled = true;
+    rebuildCellSpace(); // predators, toxins and phages all need the cells' new positions
     // particle lifecycle: drift slowly; when fully eaten or past its lifespan, respawn
     // (past-lifespan particles erode away voxel-by-voxel rather than vanishing)
     for (const s of substrates) {
@@ -1893,6 +1971,7 @@
     // camera follows whichever entity you're controlling (cell or protist)
     const pc = controlledEntity(); if (pc) { cam.x = pc.x; cam.y = pc.y; }
     updateDemo(dt);   // no player to follow in attract mode — the director drives the camera instead
+    rebuildSpatialIndexes(); // final positions feed rendering and any input between animation frames
     // sample per-ecotype abundances for the time-series chart
     const greenCount = phages.reduce((a, p) => a + (p.type === "green"), 0);
     const subTotals = [0, 0, 0]; // total available organic of each resource on the board (lipid/protein/carb)
@@ -1993,7 +2072,8 @@
     c.energy = Math.min(c.energy, CFG.cell.maxEnergy);
 
     const reach = CFG.cell.radius + CFG.cell.uptake + CFG.nutrient.radius;
-    for (const nnn of nutrients) {
+    const nutrientReach = cellHalfLen(c) + reach + SPATIAL_FRAME_PAD;
+    for (const nnn of nutrientSpace.query(c.x, c.y, nutrientReach, nutrientCandidates)) {
       if (nnn.dead) continue;
       if (cellDistTo(c, nnn.x, nnn.y) < reach) {
         nnn.dead = true; c.energy += CFG.substrate.moteEnergy; c.fed = CFG.cell.fedLinger;
@@ -2063,7 +2143,8 @@
       if (c.toxCd <= 0) {
         const maxR = CFG.toxin.maxRadius * (1 + (c.antibiotic-1)*CFG.toxin.radiusPer), rr = (maxR*0.6)**2;
         let threatened = false;
-        for (const pr of predators) if (toroDist2(c.x, c.y, pr.x, pr.y) <= rr) { threatened = true; break; }
+        for (const pr of predatorSpace.query(c.x, c.y, maxR*0.6 + SPATIAL_FRAME_PAD, predatorCandidates))
+          if (!pr.dead && toroDist2(c.x, c.y, pr.x, pr.y) <= rr) { threatened = true; break; }
         if (threatened) { releaseAntibiotic(c); c.toxCd = rand(4.5, 8); } else c.toxCd = 0.6; // else re-check shortly
       }
     }
@@ -2109,9 +2190,10 @@
       const grow = Math.min(1, z.age/P.growTime);
       z.r = z.maxR*grow*(0.6 + 0.4*clamp(z.life/P.life, 0, 1));
       const r2 = z.r*z.r;
-      for (const pr of predators) if (toroDist2(z.x, z.y, pr.x, pr.y) <= r2) { pr.energy -= z.potency*dt; pr.toxT = 0.5; } // mark recently poisoned → death here counts as a KILL
+      for (const pr of predatorSpace.query(z.x, z.y, z.r, predatorCandidates))
+        if (!pr.dead && toroDist2(z.x, z.y, pr.x, pr.y) <= r2) { pr.energy -= z.potency*dt; pr.toxT = 0.5; } // mark recently poisoned → death here counts as a KILL
       // cross-reactive: the cloud also drains genetically distant bacteria (kin/self are spared)
-      if (z.genome) for (const oc of cells) {
+      if (z.genome) for (const oc of cellSpace.query(z.x, z.y, z.r, cellCandidates)) {
         if (oc.cyst || oc.invuln > 0 || !oc.alive) continue;
         if (toroDist2(z.x, z.y, oc.x, oc.y) <= r2 && genDist(z.genome, oc) >= P.crossDist) { oc.energy -= z.potency*P.crossFactor*dt; oc.toxT = 0.5; }
       }
@@ -2208,9 +2290,10 @@
         }
       } else {
         let target = null, td = P.senseRange**2;
-        if (hunting) for (const c of cells) { if (!c.alive || c.cyst) continue; const d = toroDist2(pr.x, pr.y, c.x, c.y); if (d < td) { td = d; target = c; } }
+        const sensed = hunting ? cellSpace.query(pr.x, pr.y, P.senseRange, cellCandidates) : [];
+        if (hunting) for (const c of sensed) { if (!c.alive || c.cyst) continue; const d = toroDist2(pr.x, pr.y, c.x, c.y); if (d < td) { td = d; target = c; } }
         // no active prey in range → drift toward the nearest cyst bank to graze it
-        if (hunting && !target) for (const c of cells) { if (!c.alive || !c.cyst) continue; const d = toroDist2(pr.x, pr.y, c.x, c.y); if (d < td) { td = d; target = c; } }
+        if (hunting && !target) for (const c of sensed) { if (!c.alive || !c.cyst) continue; const d = toroDist2(pr.x, pr.y, c.x, c.y); if (d < td) { td = d; target = c; } }
         if (target) pr.heading = Math.atan2(dy(target.y, pr.y), dx(target.x, pr.x));
         else { pr.wobble += dt; pr.heading += Math.sin(pr.wobble*1.7)*dt*2; }
         const base = (target ? P.chaseSpeed : P.wanderSpeed)*swimScale();
@@ -2220,7 +2303,8 @@
       pr.x = wrapX(pr.x + pr.vx*dt); pr.y = wrapY(pr.y + pr.vy*dt);
       collideCircle(pr, pr.r); // protists are too big to enter tunnels
       pr.pseudo += dt*4;
-      if (hunting) for (const c of cells) {
+      const grazeReach = pr.r + CFG.cell.maxHalf + CFG.cell.radius + 2;
+      if (hunting) for (const c of cellSpace.query(pr.x, pr.y, grazeReach, cellCandidates)) {
         if (!c.alive || c.invuln > 0 || cellDistTo(c, pr.x, pr.y) >= pr.r + CFG.cell.radius*0.6) continue;
         if (c.cyst && Math.random() >= P.cystEatChance*dt) continue; // tough cyst usually resists a bump
         {
@@ -2232,7 +2316,7 @@
       }
       // protists also graze free-floating viruses on contact — a small meal and a
       // top-down brake on phage blooms (helps with the viral crisis)
-      for (const ph of phages) {
+      for (const ph of phageSpace.query(pr.x, pr.y, pr.r + CFG.phage.radius + 2, phageCandidates)) {
         if (ph.type !== "green" || ph.dead) continue;
         const rr = pr.r + ph.r;
         if (toroDist2(pr.x, pr.y, ph.x, ph.y) < rr*rr) { ph.dead = true; pr.energy += P.virusEnergy; }
@@ -2327,7 +2411,8 @@
       // catching the gold should get easier on mobile, not catching a plague.
       const reach = (ph.type === "gold" && isTouch) ? CFG.phage.goldGrabTouch : 1;
       const infectDist = (CFG.cell.radius + ph.r + CFG.phage.infectHalo) * reach;
-      for (const c of cells) {
+      const cellReach = CFG.cell.maxHalf + infectDist + 2;
+      for (const c of cellSpace.query(ph.x, ph.y, cellReach, cellCandidates)) {
         if (!c.alive || c.cyst) continue;            // cysts are impervious to viruses
         if (ph.type === "gold" && !c.controlled) continue; // only YOU can grab the gold phage — daughters can't steal your adaptation
         const hl = cellHalfLen(c) + infectDist + 2;
@@ -2428,6 +2513,11 @@
   function sx(wx) { return VIEW_W/2 + dx(wx, cam.x); }
   function sy(wy) { return VIEW_H/2 + dy(wy, cam.y); }
   const onScreen = (x, y, m) => x > -m && x < VIEW_W + m && y > -m && y < VIEW_H + m;
+  function visibleSpatial(grid, scratch, margin) {
+    const zoom = Math.max(0.05, Math.abs(ZOOM) || 1);
+    const radius = Math.hypot(VIEW_W/(2*zoom), VIEW_H/(2*zoom)) + margin;
+    return grid.query(cam.x, cam.y, radius, scratch);
+  }
 
   function draw() {
     // The sea itself carries the time of day: deep navy at midnight, bright teal at noon. Coloring
@@ -2442,11 +2532,11 @@
     for (const p of substrates) drawSubstrate(p);
     for (const z of enzymes) drawEnzyme(z);
     for (const z of toxins) drawToxin(z);
-    for (const n of nutrients) drawNutrient(n);
+    for (const n of visibleSpatial(nutrientSpace, nutrientCandidates, CFG.nutrient.radius + 4)) drawNutrient(n);
     for (const q of particles) drawParticle(q);
-    for (const ph of phages) drawPhage(ph);
-    for (const pr of predators) drawPredator(pr);
-    for (const c of cells) drawCell(c);
+    for (const ph of visibleSpatial(phageSpace, phageCandidates, CFG.phage.radius + 8)) drawPhage(ph);
+    for (const pr of visibleSpatial(predatorSpace, predatorCandidates, CFG.predator.radius + 8)) drawPredator(pr);
+    for (const c of visibleSpatial(cellSpace, cellCandidates, CFG.cell.maxHalf + CFG.cell.radius + 8)) drawCell(c);
     drawDemoFocus();      // inside the zoom transform, so the ring tracks the cell exactly
     ctx.restore();
     drawDayNight(); // time-of-day color wash (screen space, over the world, under the minimap)
@@ -2748,9 +2838,13 @@
     ctx.beginPath(); ctx.rect(mx, my, mw, mh); ctx.clip(); // keep marks inside the frame
     // particles are omitted — the map shows only the living things
     if (!isTouch) { // colony dots colored by generation (same palette as the chart); cysts hidden
-      for (const c of cells) if (!c.controlled && !c.cyst) {
-        ctx.fillStyle = levelColor(ecoMask(c), upgradeTier(c));
-        ctx.fillRect(MX(c.x) - 1, MY(c.y) - 1, 2, 2);
+      const stride = Math.max(1, Math.ceil(cells.length/2000)); // bounded map cost at the stress cap
+      for (let i = 0; i < cells.length; i += stride) {
+        const c = cells[i];
+        if (!c.controlled && !c.cyst) {
+          ctx.fillStyle = levelColor(ecoMask(c), upgradeTier(c));
+          ctx.fillRect(MX(c.x) - 1, MY(c.y) - 1, 2, 2);
+        }
       }
     }
     ctx.fillStyle = "#ff7a6b";
