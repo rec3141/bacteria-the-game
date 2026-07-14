@@ -552,12 +552,18 @@
     for (const pr of predators) if (toroDist2(tx, ty, pr.x, pr.y) <= rr) { pr.energy -= dose; pr.toxT = 0.5; }
     return true;
   }
-  function cycleEnzyme() {
+  // a deployable's colour + short label — same colours the gene chips use, so the phone's
+  // release button and the genome row can never disagree about what "carb" looks like
+  const TOXIN_UI = "#f05ad0";
+  const deployColor = (id) => (id === AB ? TOXIN_UI : RESOURCES[id].color);
+  const deployCap   = (id) => (id === AB ? "anti" : ["lip", "pro", "carb"][id]);
+  function cycleEnzyme(dir) {                // dir -1 steps back; default forward
     if (!state || !state.running) return;
     const c = controlledCell(); if (!c) return;
     const owned = ownedDeployables(c); if (owned.length < 2) return; // nothing else to load
-    const cur = owned.indexOf(state.activeEnzyme);
-    state.activeEnzyme = owned[(cur + 1) % owned.length];
+    const step = dir === -1 ? -1 : 1;
+    let cur = owned.indexOf(state.activeEnzyme); if (cur < 0) cur = 0;
+    state.activeEnzyme = owned[(cur + step + owned.length) % owned.length];
     Audio.play("eat", 0.3);
   }
   // directly load a specific deployable by tapping its gene (id 0-2 enzymes, 3 antibiotic); ignored if not owned
@@ -570,19 +576,27 @@
   }
   // hand control to a DIFFERENT lineage — cycle through the distinct generations (ecotype+tier) present,
   // so you can shepherd several populations at different adaptation tiers (diversity = virus resilience).
-  function switchControl() {
-    if (!state || !state.running) return;
-    const cur = controlledCell(); if (!cur) return;
-    const reps = new Map(); // one healthy representative per generation bucket in the living colony
+  // the distinct lineages alive right now, one healthy representative each, in a stable order.
+  // Shared by switchControl and the lineage button, so the button shows exactly what a swipe
+  // would hand you.
+  function lineageReps() {
+    const reps = new Map();
     for (const c of cells) { if (!c.alive || c.cyst) continue;
       const k = ecoMask(c)*64 + upgradeTier(c), r = reps.get(k);
       if (!r || c.energy > r.energy) reps.set(k, c);
     }
+    return { reps, ks: [...reps.keys()].sort((a, b) => a - b) };
+  }
+  const lineageKeyColor = (k) => levelColor(Math.floor(k/64), k % 64); // key → the colour it's drawn in
+  function switchControl(dir) {              // dir -1 steps back through the lineages; default forward
+    if (!state || !state.running) return;
+    const cur = controlledCell(); if (!cur) return;
+    const { reps, ks } = lineageReps();
+    const step = dir === -1 ? -1 : 1;
     let target = null;
     if (reps.size >= 2) {                    // cycle to the next distinct lineage
-      const ks = [...reps.keys()].sort((a, b) => a - b);
       let i = ks.indexOf(ecoMask(cur)*64 + upgradeTier(cur)); if (i < 0) i = 0;
-      target = reps.get(ks[(i + 1) % ks.length]);
+      target = reps.get(ks[(i + step + ks.length) % ks.length]);
     } else {                                 // only one lineage — jump to the farthest other cell (a separate cluster)
       let bd = -1; for (const c of cells) { if (c === cur || !c.alive || c.cyst) continue;
         const d = toroDist2(c.x, c.y, cur.x, cur.y); if (d > bd) { bd = d; target = c; } }
@@ -1380,11 +1394,21 @@
   }
 
   function drawMinimap() {
-    // desktop: bottom-right. touch: top-left (thumb-free corner on a phone).
-    const mw = isTouch ? 132 : 150, mh = mw*WORLD_H/WORLD_W;
+    // Desktop: small, bottom-right, showing everything including the colony.
+    // Phone: BIGGER, top-left, and deliberately sparser — the colony dots are dropped and the
+    // marks that remain (you, protists, gold phage) are drawn at double size. A dot swarm that
+    // reads fine on a monitor is unreadable mush at a third of the size in your hand, so the
+    // phone map answers only the two questions worth answering at a glance: what's hunting me,
+    // and where's the gold.
+    const mw = isTouch ? 220 : 150, mh = mw*WORLD_H/WORLD_W;
     const mx = isTouch ? 12 : VIEW_W - mw - 12, my = isTouch ? 12 : VIEW_H - mh - 12;
+    const ps = isTouch ? 2 : 1;   // mark scale
     ctx.save();
-    ctx.globalAlpha = 0.85; ctx.fillStyle = "rgba(4,20,26,0.7)"; ctx.strokeStyle = "rgba(120,220,200,0.4)";
+    // The frame is translucent on desktop, but at phone size a particle drifting behind a
+    // 220px map bleeds straight through it and swamps the marks. Nearly opaque there.
+    ctx.globalAlpha = isTouch ? 1 : 0.85;
+    ctx.fillStyle = isTouch ? "rgba(4,20,26,0.94)" : "rgba(4,20,26,0.7)";
+    ctx.strokeStyle = "rgba(120,220,200,0.4)";
     ctx.lineWidth = 1; ctx.fillRect(mx, my, mw, mh); ctx.strokeRect(mx, my, mw, mh);
     const kx = mw/WORLD_W, ky = mh/WORLD_H;
     // CENTRED on the player: everything is drawn relative to your cell (toroidal wrap via dx/dy),
@@ -1393,18 +1417,19 @@
     const MX = pc ? (ex) => cx0 + dx(ex, pc.x)*kx : (ex) => mx + ex*kx;
     const MY = pc ? (ey) => cy0 + dy(ey, pc.y)*ky : (ey) => my + ey*ky;
     ctx.beginPath(); ctx.rect(mx, my, mw, mh); ctx.clip(); // keep marks inside the frame
-    // particles are omitted — the map shows only the living things (you, colony, predators, gold phage)
-    // colony dots coloured by generation (same palette as the chart); cysts hidden (too many, too cluttered)
-    for (const c of cells) if (!c.controlled && !c.cyst) {
-      ctx.fillStyle = levelColor(ecoMask(c), upgradeTier(c));
-      ctx.fillRect(MX(c.x) - 1, MY(c.y) - 1, 2, 2);
+    // particles are omitted — the map shows only the living things
+    if (!isTouch) { // colony dots coloured by generation (same palette as the chart); cysts hidden
+      for (const c of cells) if (!c.controlled && !c.cyst) {
+        ctx.fillStyle = levelColor(ecoMask(c), upgradeTier(c));
+        ctx.fillRect(MX(c.x) - 1, MY(c.y) - 1, 2, 2);
+      }
     }
     ctx.fillStyle = "#ff7a6b";
-    for (const pr of predators) { ctx.beginPath(); ctx.arc(MX(pr.x), MY(pr.y), 2.5, 0, 6.28); ctx.fill(); }
+    for (const pr of predators) { ctx.beginPath(); ctx.arc(MX(pr.x), MY(pr.y), 2.5*ps, 0, 6.28); ctx.fill(); }
     // gold phage — a bright STAR so it stands out from round dots
-    for (const ph of phages) if (ph.type === "gold") drawMiniStar(MX(ph.x), MY(ph.y), 5.5, 2.4, "#ffd24a");
+    for (const ph of phages) if (ph.type === "gold") drawMiniStar(MX(ph.x), MY(ph.y), 5.5*ps, 2.4*ps, "#ffd24a");
     // your cell — a white-ringed teal DIAMOND, dead centre
-    if (pc) drawMiniDiamond(cx0, cy0, 4.5, "#8dffdc");
+    if (pc) drawMiniDiamond(cx0, cy0, 4.5*ps, "#8dffdc");
     ctx.restore();
   }
   function drawMiniDiamond(x, y, r, fill) {
@@ -1744,6 +1769,35 @@
   }
 
   // ------------------------------------------------------------------ hud sync
+  // Paint one rolodex button: the face is what's loaded, prev/next peek out behind it so you
+  // can see what a swipe would bring up. Nulls hide the neighbours (nothing else to cycle to).
+  function paintRolo(btn, face, cap, prev, next) {
+    if (!btn) return;
+    const f = btn.querySelector(".rface"), p = btn.querySelector(".rprev"),
+          n = btn.querySelector(".rnext"), t = btn.querySelector(".rcap");
+    if (f) { f.style.background = face; f.style.boxShadow = `0 2px 12px rgba(0,0,0,.5), 0 0 16px -4px ${face}`; }
+    if (t) t.textContent = cap;
+    if (p) { p.style.background = prev || "transparent"; p.style.visibility = prev ? "visible" : "hidden"; }
+    if (n) { n.style.background = next || "transparent"; n.style.visibility = next ? "visible" : "hidden"; }
+  }
+  function syncRolodex(c) {
+    if (!isTouch || !el.tEnz) return;        // the deck only exists on a phone
+    const owned = c ? ownedDeployables(c) : [2];
+    let i = owned.indexOf(state.activeEnzyme); if (i < 0) i = 0;
+    const many = owned.length > 1;
+    paintRolo(el.tEnz, deployColor(owned[i]), deployCap(owned[i]),
+      many ? deployColor(owned[(i - 1 + owned.length) % owned.length]) : null,
+      many ? deployColor(owned[(i + 1) % owned.length]) : null);
+
+    if (el.tLin && c) {
+      const { ks } = lineageReps();
+      let j = ks.indexOf(ecoMask(c)*64 + upgradeTier(c)); if (j < 0) j = 0;
+      const multi = ks.length > 1;
+      paintRolo(el.tLin, levelColor(ecoMask(c), upgradeTier(c)), "lin",
+        multi ? lineageKeyColor(ks[(j - 1 + ks.length) % ks.length]) : null,
+        multi ? lineageKeyColor(ks[(j + 1) % ks.length]) : null);
+    }
+  }
   function syncHud() {
     if (!state) return;
     if (el.toast && el.toast.classList.contains("show")) positionToast(); // keep the announcement pinned above the cell
@@ -1753,6 +1807,7 @@
     el.colony.textContent = cells.length; el.gen.textContent = state.gen; el.score.textContent = Math.round(state.score);
     if (el.colonyWord) el.colonyWord.textContent = cells.length === 1 ? "bacterium" : "bacteria";
     drawHelix(c); // DNA double-helix backbone under the genome, drawn in the current lineage's colour
+    syncRolodex(c);
     const pc = controlledCell();
     const amp = (n) => n > 1 ? ` <span class="amp">×${n}</span>` : ""; // expression level shown as gene amplification (×N)
     for (let i = 0; i < 3; i++) if (el.enz[i]) {
@@ -2203,19 +2258,46 @@
       zone.addEventListener("pointerup", lift);
       zone.addEventListener("pointercancel", lift);
     }
+    const live = () => !(paused || helpOpen || sciOpen || !state || !state.running);
     // Buttons act on pointerDOWN: immediate, no synthetic-click delay, and — the point —
     // unaffected by another finger already holding the stick.
     const act = (elm, fn, gate) => elm && elm.addEventListener("pointerdown", (e) => {
       e.preventDefault();
-      if (gate && (paused || helpOpen || sciOpen || !state || !state.running)) return;
+      if (gate && !live()) return;
       fn();
     });
-    act(el.tEnz, playerEnzyme, true);
-    act(el.tLin, switchControl, true);
     act(el.tPause, togglePause, false); // must also work while paused, to un-pause
     // tap a gene to load that enzyme/antibiotic (pointerdown covers mouse clicks too)
     el.enz.forEach((g, i) => act(g, () => selectEnzyme(i), false));
     act(el.enzTox, () => selectEnzyme(3), false);
+
+    // Rolodex buttons: TAP does the thing, SWIPE up/down cycles what's loaded. Telling the two
+    // apart means we can only commit on pointerUP — you can't know a press was a swipe until the
+    // finger leaves. Still no click delay, and still multi-touch safe (each pointerId is its own).
+    const SWIPE = 14; // px of vertical travel before a press counts as a swipe rather than a tap
+    const swipeBtn = (btn, onTap, onSwipe) => {
+      if (!btn) return;
+      let pid = null, y0 = 0;
+      btn.addEventListener("pointerdown", (e) => {
+        if (pid !== null) return;
+        pid = e.pointerId; y0 = e.clientY;
+        if (btn.setPointerCapture) btn.setPointerCapture(e.pointerId);
+        e.preventDefault();
+      });
+      btn.addEventListener("pointermove", (e) => { if (e.pointerId === pid) e.preventDefault(); });
+      btn.addEventListener("pointerup", (e) => {
+        if (e.pointerId !== pid) return;
+        const dy = e.clientY - y0;
+        pid = null; e.preventDefault();
+        if (!live()) return;
+        // the NEXT card peeks out below the face, so dragging UP pulls it into place
+        if (Math.abs(dy) > SWIPE) onSwipe(dy < 0 ? 1 : -1);
+        else onTap();
+      });
+      btn.addEventListener("pointercancel", (e) => { if (e.pointerId === pid) pid = null; });
+    };
+    swipeBtn(el.tEnz, playerEnzyme, (dir) => cycleEnzyme(dir));
+    swipeBtn(el.tLin, () => switchControl(1), (dir) => switchControl(dir));
     setupChartSwipe();
   }
   // swipe up or down anywhere on the chart panel to fold it away during play (mobile)

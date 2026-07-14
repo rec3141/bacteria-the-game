@@ -286,6 +286,21 @@
   .tbtn.big { width: clamp(66px, 20vw, 84px); height: clamp(66px, 20vw, 84px);
     font-size: 13px; border-color: var(--accent); color: var(--accent); border-width: 2px; }
   .tbtn.pause { width: clamp(44px, 12vw, 50px); height: clamp(44px, 12vw, 50px); font-size: 12px; }
+  /* Rolodex button: the loaded thing floods the face; the ones either side of it in the
+     cycle peek out above and below like cards in a stack, so you can see what a swipe
+     would bring up. Colours are set from game.js (same source as the gene chips). */
+  .tbtn.rolo { position: relative; background: transparent; border: none; box-shadow: none;
+    overflow: visible; }
+  .rolo .rface, .rolo .rprev, .rolo .rnext { position: absolute; inset: 0; border-radius: 50%; }
+  .rolo .rprev, .rolo .rnext { z-index: 1; opacity: .5; }
+  .rolo .rprev { transform: translateY(-27%) scale(.84); }
+  .rolo .rnext { transform: translateY(27%) scale(.84); }
+  .rolo .rface { z-index: 2; border: 2px solid rgba(255,255,255,.42);
+    box-shadow: 0 2px 12px rgba(0,0,0,.5), inset 0 -6px 14px -8px rgba(0,0,0,.55); }
+  .rolo .rcap { position: relative; z-index: 3; font-size: 10.5px; font-weight: bold;
+    letter-spacing: .3px; color: #06232a; pointer-events: none; text-shadow: none; }
+  .tbtn.big.rolo .rcap { font-size: 12px; }
+  .rolo:active .rface { filter: brightness(1.25); }
   /* the genome row is moved in here by game.js on touch: gene chips double as enzyme buttons */
   #touch .genome-row { display: flex; }
   #touch .genome { flex-direction: row; flex-wrap: wrap; justify-content: center; align-items: center;
@@ -374,7 +389,8 @@
   body.touch #stage { width: min(800px, 100%, 50vh); }
   /* Nothing is drawn over the ocean any more, so the HUD keeps its natural top-left line;
      only the minimap shares the stage (and game.js keeps that in a free corner). */
-  body.touch .topline { margin-left: 17%; flex-wrap: wrap; row-gap: 2px; } /* clear of the minimap */
+  /* the phone minimap is 220 of the canvas's 800px (27.5%), top-left — start the stats clear of it */
+  body.touch .topline { margin-left: 30%; flex-wrap: wrap; row-gap: 2px; }
   body.touch .bar { width: 108px; }
   body.touch #helix { display: none; }        /* the decorative helix reads as clutter at this size */
   body.touch .gene { font-size: 12px; padding: 6px 10px; text-align: center; white-space: nowrap; }
@@ -427,7 +443,7 @@
             <li><kbd>Tab</kbd> — switch which enzyme/antibiotic is loaded &nbsp;·&nbsp; <kbd>M</kbd> — toggle music</li>
             <li><kbd>Shift</kbd> — <b>switch lineage</b>: hand control to another of your lineages</li>
             <li><kbd>Esc</kbd> — pause &amp; high scores &nbsp;·&nbsp; <b>Help</b> button — this guide</li>
-            <li class="touchonly"><b>On a phone:</b> all the controls sit in the <b>deck below the ocean</b>, so your thumbs never cover it. Steer with the <b>thumbstick</b>; push it <b>all the way out and hold ~½s</b> to <b>lock in a run</b> — the rim lights up and the cell keeps swimming that way after you let go (tap the stick's <b>centre</b> to stop). <b>release</b> / <b>lineage</b> / <b>❚❚</b> are to its right, and you can hold the stick and tap them <b>at the same time</b>. Tap a gene in the <b>genome row</b> to load that enzyme; swipe the chart (up top) to fold it away.</li>
+            <li class="touchonly"><b>On a phone:</b> all the controls sit in the <b>deck below the ocean</b>, so your thumbs never cover it. Steer with the <b>thumbstick</b>; push it <b>all the way out and hold ~½s</b> to <b>lock in a run</b> — the rim lights up and the cell keeps swimming that way after you let go (tap the stick's <b>centre</b> to stop). The two round buttons to its right are <b>coloured by what's loaded</b>: the big one is your enzyme (or <span style="color:#f05ad0">antibiotic</span>), the small one your current <b>lineage</b>, with their neighbours peeking out behind like cards in a stack. <b>Tap to fire / switch, swipe up or down to change</b> — and you can hold the stick and tap them <b>at the same time</b>. Tapping a gene in the <b>genome row</b> still loads it directly; swipe the chart (up top) to fold it away.</li>
           </ul>
         </section>
         <section>
@@ -552,8 +568,16 @@
     <div id="deckRow">
       <div id="stickZone"><div id="stickBase"><div id="stickKnob"></div></div></div>
       <div id="tbtns">
-        <button id="tEnz" class="tbtn big" aria-label="Release enzyme">release</button>
-        <button id="tLin" class="tbtn" aria-label="Switch lineage">lineage</button>
+        <!-- Rolodex buttons: the face is flooded with the colour of what's loaded, and the
+             neighbours peek out behind it. Tap to fire, swipe up/down to change. -->
+        <button id="tEnz" class="tbtn big rolo" aria-label="Release loaded enzyme — swipe up or down to change it">
+          <span class="rprev"></span><span class="rnext"></span>
+          <span class="rface"></span><span class="rcap">carb</span>
+        </button>
+        <button id="tLin" class="tbtn rolo" aria-label="Switch lineage — swipe up or down to cycle">
+          <span class="rprev"></span><span class="rnext"></span>
+          <span class="rface"></span><span class="rcap">lin</span>
+        </button>
         <button id="tPause" class="tbtn pause" aria-label="Pause">❚❚</button>
       </div>
     </div>
