@@ -269,10 +269,12 @@
   #stickBase { position: absolute; inset: 0; border-radius: 50%; opacity: .55; transition: opacity .1s;
     background: rgba(255,255,255,.05); border: 1.5px solid rgba(255,255,255,.22); }
   #stickBase.on { opacity: .95; }
-  /* run locked in: the knob stays thrown and the rim lights up, so it's obvious the cell is
-     still swimming even though your thumb is off the stick */
-  #stickBase.latched { opacity: 1; border-color: var(--accent);
-    box-shadow: 0 0 0 1.5px var(--accent), 0 0 18px -4px var(--accent); }
+  /* Run locked in: the rim lights up and the knob stays thrown, so it's obvious the cell is
+     still swimming with your thumb off the stick. --lock is driven from game.js and falls
+     from 1 to 0 as the run winds down, so the glow visibly runs out instead of sticking on. */
+  #stickBase.latched { border-color: var(--accent);
+    box-shadow: 0 0 0 1.5px var(--accent), 0 0 18px -4px var(--accent);
+    opacity: calc(.5 + .5 * var(--lock, 1)); }
   #stickKnob { position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; border-radius: 50%;
     transform: translate(-50%, -50%); background: rgba(87,224,192,.42); border: 1.5px solid var(--accent);
     box-shadow: 0 0 14px rgba(87,224,192,.4); }
@@ -443,7 +445,7 @@
             <li><kbd>Tab</kbd> — switch which enzyme/antibiotic is loaded &nbsp;·&nbsp; <kbd>M</kbd> — toggle music</li>
             <li><kbd>Shift</kbd> — <b>switch lineage</b>: hand control to another of your lineages</li>
             <li><kbd>Esc</kbd> — pause &amp; high scores &nbsp;·&nbsp; <b>Help</b> button — this guide</li>
-            <li class="touchonly"><b>On a phone:</b> all the controls sit in the <b>deck below the ocean</b>, so your thumbs never cover it. Steer with the <b>thumbstick</b>; push it <b>all the way out and hold ~½s</b> to <b>lock in a run</b> — the rim lights up and the cell keeps swimming that way after you let go (tap the stick's <b>centre</b> to stop). The two round buttons to its right are <b>coloured by what's loaded</b>: the big one is your enzyme (or <span style="color:#f05ad0">antibiotic</span>), the small one your current <b>lineage</b>, with their neighbours peeking out behind like cards in a stack. <b>Tap to fire / switch, swipe up or down to change</b> — and you can hold the stick and tap them <b>at the same time</b>. Tapping a gene in the <b>genome row</b> still loads it directly; swipe the chart (up top) to fold it away.</li>
+            <li class="touchonly"><b>On a phone:</b> all the controls sit in the <b>deck below the ocean</b>, so your thumbs never cover it. Steer with the <b>thumbstick</b>; push it <b>all the way out and hold ~½s</b> to <b>lock in a run</b> — the rim lights up and the cell keeps swimming that way after you let go. The lock <b>winds down over a couple of seconds</b> (watch the knob ease back to centre), so it never sticks on; tap the stick's <b>centre</b> to stop it early. The two round buttons to its right are <b>coloured by what's loaded</b>: the big one is your enzyme (or <span style="color:#f05ad0">antibiotic</span>), the small one your current <b>lineage</b>, with their neighbours peeking out behind like cards in a stack. <b>Tap to fire / switch, swipe up or down to change</b> — and you can hold the stick and tap them <b>at the same time</b>. Tapping a gene in the <b>genome row</b> still loads it directly; swipe the chart (up top) to fold it away.</li>
           </ul>
         </section>
         <section>

@@ -38,6 +38,8 @@
       fedLinger: 2.2, maxCells: 100000, // effectively uncapped (perf backstop only)
       touchLatchSecs: 0.5, // phone stick: hold it at FULL deflection this long to lock in a run
                            // that keeps going after you lift your thumb (tap the centre to stop)
+      touchRunSecs: 2.0,   // ...and the locked run winds down over this long rather than sticking
+                           // on forever — the knob eases back to centre as it runs out
     },
     respirationBase: 0.9,
     grid: { cs: 7 },                 // destructible-particle voxel size (px)
@@ -83,6 +85,8 @@
       hostTolerance: 2,     // kill-the-winner: a phage infects only cells within this many upgrade-tiers of its host
       goldLife: [90, 140],  // gold phage lingers far longer than green — you can chase it down
                             // (one is always kept on the board, respawning near the player when used)
+      goldGrabTouch: 3,     // ON TOUCH ONLY: multiplies the gold phage's grab radius. Catching it with
+                            // a thumb on a small screen is far fiddlier than with a keyboard.
     },
   };
   // Snapshot the shipped values before anything can touch them — the tuning panel
@@ -298,6 +302,7 @@
   // would make the latch depend on things the player can't see.
   const touchVec = { x: 0, y: 0, active: false };
   let touchLatched = false;  // a locked-in run survives the finger lifting
+  let touchRunT = 0;         // ...but only for this long: it winds down instead of sticking on
   let touchAtMax = false;    // thumb is out at the rim right now
   let _latchTimer = null;
   function axis() {
@@ -713,6 +718,21 @@
   function update(dt) {
     if (!state || !state.running) return;
     state.elapsed += dt; env.update();
+    // A locked run winds down instead of sticking on: the knob eases back to centre and the
+    // rim's glow fades, so you can watch it run out rather than being stuck swimming. Held
+    // thumb pauses the countdown — that's you steering, not coasting.
+    if (touchLatched && !touchVec.active) {
+      touchRunT -= dt;
+      const frac = clamp(touchRunT / Math.max(0.01, CFG.cell.touchRunSecs), 0, 1);
+      if (touchRunT <= 0) {
+        touchVec.x = touchVec.y = 0;
+        setLatched(false);
+        parkKnob(0, 0);
+      } else {
+        parkKnob(touchVec.x*STICK_MAXR*frac, touchVec.y*STICK_MAXR*frac);
+        if (el.stickBase) el.stickBase.style.setProperty("--lock", frac.toFixed(3));
+      }
+    }
     for (const c of cells) if (c.alive) updateCell(c, dt);
     // dividing before lysis lets a cell shed the virus into one daughter and escape clean
     for (const c of cells) if (c.alive && c.energy >= CFG.cell.divideThreshold) divide(c);
@@ -1051,12 +1071,16 @@
         ph.x = wrapX(ph.x + ph.vx*dt); ph.y = wrapY(ph.y + ph.vy*dt);
         ph.life -= dt; if (ph.life <= 0) { ph.dead = true; continue; }
       }
-      // adsorb to the first cell it contacts
-      const infectDist = CFG.cell.radius + ph.r + CFG.phage.infectHalo;
+      // adsorb to the first cell it contacts. On a phone the GOLD phage gets a much bigger grab
+      // radius: it's the one thing you actively chase, and threading a 14px capture window with a
+      // thumb on a 4-inch screen is a different sport. Green phages keep their normal reach —
+      // catching the gold should get easier on mobile, not catching a plague.
+      const reach = (ph.type === "gold" && isTouch) ? CFG.phage.goldGrabTouch : 1;
+      const infectDist = (CFG.cell.radius + ph.r + CFG.phage.infectHalo) * reach;
       for (const c of cells) {
         if (!c.alive || c.cyst) continue;            // cysts are impervious to viruses
         if (ph.type === "gold" && !c.controlled) continue; // only YOU can grab the gold phage — daughters can't steal your adaptation
-        const hl = cellHalfLen(c) + ph.r + CFG.phage.infectHalo + 2;
+        const hl = cellHalfLen(c) + infectDist + 2;
         if (toroDist2(ph.x, ph.y, c.x, c.y) > hl*hl) continue;
         if (cellDistTo(c, ph.x, ph.y) > infectDist) continue;
         if (ph.type === "green") {
@@ -1910,6 +1934,7 @@
     "cell.fedLinger": "Seconds a cell stays in its 'well fed' state (shorter runs) after eating.",
     "cell.maxCells": "Hard cap on living cells — a performance backstop, not an ecological limit.",
     "cell.touchLatchSecs": "Phone thumbstick: how long you must hold it at FULL deflection before the run locks in and keeps going after you lift your thumb. Lower = quicker to commit but easier to trigger by accident.",
+    "cell.touchRunSecs": "How long a locked-in run lasts before it winds down on its own (the knob eases back to centre as it runs out). Stops the stick getting stuck on. Touching it again pauses the countdown; re-latching refills it.",
     "respirationBase": "Baseline energy per second every cell burns just staying alive. The single biggest lever on how punishing the game is.",
     "grid.cs": "Voxel size of destructible particles (px) — smaller = finer digging but more work per frame. Only affects NEWLY spawned particles.",
     "substrate.count": "How many food particles are kept drifting in the water. Applies as particles respawn.",
@@ -1971,6 +1996,7 @@
     "phage.greenFloor": "Minimum phages kept matched to the sampled lineage's tier at each top-up.",
     "phage.hostTolerance": "Kill-the-winner window: how many adaptation tiers from its host a phage can still infect. Lower = upgrading shakes off your pursuers faster.",
     "phage.goldLife": "Seconds the rare GOLD phage (the HGT upgrade) lingers before vanishing.",
+    "phage.goldGrabTouch": "TOUCH DEVICES ONLY: multiplies the gold phage's grab radius, because catching it with a thumb is much fiddlier than with a keyboard. 1 = same as desktop. Green phages are unaffected.",
   };
   // arrays are documented once at the parent path; ".0"/".1" fall back to it
   function tuneDoc(path) {
@@ -2192,9 +2218,16 @@
   let _stickId = null;
   const STICK_MAXR = 52, STICK_DEAD = 10;     // knob travel / dead-zone, CSS px
   const STICK_RIM = STICK_MAXR * 0.9;         // "full deflection" — the dwell has to happen out here
+  function parkKnob(x, y) {
+    if (el.stickKnob) el.stickKnob.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px))`;
+  }
   function setLatched(on) {
     touchLatched = on;
-    if (el.stickBase) el.stickBase.classList.toggle("latched", on); // so you can SEE the run is locked
+    if (on) touchRunT = CFG.cell.touchRunSecs;   // (re-)latching refills the run
+    if (el.stickBase) {
+      el.stickBase.classList.toggle("latched", on); // so you can SEE the run is locked
+      el.stickBase.style.setProperty("--lock", "1");
+    }
   }
   function clearLatchTimer() { if (_latchTimer) { clearTimeout(_latchTimer); _latchTimer = null; } }
   function armLatch() { // thumb just reached the rim — latch if it's STILL there when this fires
@@ -2206,14 +2239,14 @@
   }
   function releaseStick() { // full stop (used when pausing / opening a menu)
     _stickId = null; touchVec.active = false; touchVec.x = touchVec.y = 0;
-    touchAtMax = false; clearLatchTimer(); setLatched(false);
+    touchAtMax = false; touchRunT = 0; clearLatchTimer(); setLatched(false);
     if (el.stickBase) el.stickBase.classList.remove("on");
-    if (el.stickKnob) el.stickKnob.style.transform = "translate(-50%,-50%)";
+    parkKnob(0, 0);
   }
   function setupTouch() {
     const zone = el.stickZone, base = el.stickBase, knob = el.stickKnob;
     if (zone && base && knob) {
-      const park = (x, y) => { knob.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px))`; };
+      const park = parkKnob;
       // aim from a pointer's position: past the dead-zone it steers; at the centre it stops
       const aim = (e) => {
         const r = base.getBoundingClientRect(), cx = r.left + r.width/2, cy = r.top + r.height/2;
@@ -2318,7 +2351,8 @@
 
   const coarse = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
   if (coarse || "ontouchstart" in window) {
-    document.body.classList.add("touch"); isTouch = true; ZOOM = 1.35;
+    document.body.classList.add("touch"); isTouch = true;
+    ZOOM = 1.35 * 1.25; // phone: magnify the world so cells aren't specks, +25% again by request
     // The genes are controls, not HUD, so on a phone they belong in the control deck with the
     // stick and buttons — not floating over the ocean inside #hud (which is pointer-events:none).
     const grow = document.querySelector("#hud .genome-row");
