@@ -12,14 +12,19 @@
 #   2. keeps a timestamped copy of every file it replaces, server-side, under
 #      ~/bacteria-backups/<stamp>/.
 #
-# Usage: ./deploy.sh          # refuses to overwrite drifted files
-#        ./deploy.sh --force  # overwrite anyway (backups are still taken)
+# Usage: ./deploy.sh                                  # refuses to overwrite drifted files
+#        ./deploy.sh --force                          # overwrite anyway (backups are still taken)
+#        REMOTE_DIR=northinglab.com/bacteria ./deploy.sh   # deploy the same build elsewhere
 set -euo pipefail
 cd "$(dirname "$0")"
 
-REMOTE_HOST="dreamhost"
-REMOTE_DIR="bacteria.cryomics.org"          # home-relative on the remote (avoid local ~ expansion)
+REMOTE_HOST="${REMOTE_HOST:-dreamhost}"
+# home-relative on the remote (avoid local ~ expansion). Override to publish the same
+# build to another docroot — each target keeps its own scores.json, so the leaderboards
+# stay separate and one deploy can never clobber the other's data.
+REMOTE_DIR="${REMOTE_DIR:-bacteria.cryomics.org}"
 REMOTE="$REMOTE_HOST:$REMOTE_DIR/"
+SITE_URL="${SITE_URL:-https://bacteria.cryomics.org/}"
 FILES=(index.html game.js scores.php README.md Bacteria.swf assets
        manifest.webmanifest icon.svg)
 
@@ -28,7 +33,8 @@ FORCE=0
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
 REMOTE_HOME="$(ssh "$REMOTE_HOST" 'echo $HOME')"
-BACKUP_DIR="$REMOTE_HOME/bacteria-backups/$STAMP"
+BACKUP_SLUG="$(printf '%s' "$REMOTE_DIR" | tr '/' '-')"   # keep each target's backups apart
+BACKUP_DIR="$REMOTE_HOME/bacteria-backups/$BACKUP_SLUG-$STAMP"
 
 echo "==> checking the live site against this repo's history"
 # The question that matters is NOT "does the live file differ from my edits?" -- it
@@ -46,7 +52,10 @@ known_blobs() {   # every version of $1 this repo has ever held, plus the one on
 DRIFT=""
 for f in index.html game.js scores.php README.md manifest.webmanifest icon.svg Bacteria.swf; do
   [ -f "$f" ] || continue
-  rhash="$(ssh "$REMOTE_HOST" "cat '$REMOTE_DIR/$f' 2>/dev/null" | git hash-object --stdin)"
+  # `|| true` on the REMOTE side: a missing file makes cat exit non-zero, and with
+  # `set -o pipefail` that would kill the whole deploy — which is exactly what happens
+  # the first time you publish to a brand-new, empty docroot.
+  rhash="$(ssh "$REMOTE_HOST" "cat '$REMOTE_DIR/$f' 2>/dev/null || true" | git hash-object --stdin)"
   [ "$rhash" = "$(printf '' | git hash-object --stdin)" ] && continue  # absent remotely = a new file, not a conflict
   if ! known_blobs "$f" | sort -u | grep -qx "$rhash"; then DRIFT="$DRIFT$f
 "; fi
@@ -82,12 +91,15 @@ echo "    (anything replaced is preserved in $BACKUP_DIR)"
 rsync -avzc --backup --backup-dir="$BACKUP_DIR" "${FILES[@]}" "$REMOTE"
 
 echo "==> ensure the leaderboard store exists and is writable by PHP"
-ssh "$REMOTE_HOST" 'cd ~/bacteria.cryomics.org && { [ -f scores.json ] || printf "[]" > scores.json; } && chmod 664 scores.json && echo "   scores.json ready"'
+# follows $REMOTE_DIR: each target owns its own scores.json, so deploying the northinglab
+# copy can't reach over and touch the cryomics leaderboard
+ssh "$REMOTE_HOST" "cd ~/'$REMOTE_DIR' && { [ -f scores.json ] || printf '[]' > scores.json; } && chmod 664 scores.json && echo '   scores.json ready'"
 
-echo "==> prune old backups (keep the 10 most recent)"
-ssh "$REMOTE_HOST" 'cd ~/bacteria-backups 2>/dev/null && ls -1t | tail -n +11 | xargs -r rm -rf; true'
+echo "==> prune old backups (keep the 10 most recent FOR THIS TARGET)"
+# scoped to this target's slug — otherwise a busy site's backups would evict the other's
+ssh "$REMOTE_HOST" "cd ~/bacteria-backups 2>/dev/null && ls -1td '$BACKUP_SLUG'-* 2>/dev/null | tail -n +11 | xargs -r rm -rf; true"
 
 echo "==> verify (expect 200s once DNS + Let'\''s Encrypt cert are live in the panel)"
-printf "   site  %s\n" "$(curl -s -o /dev/null -w '%{http_code}' -L https://bacteria.cryomics.org/)"
-printf "   api   %s\n" "$(curl -s -o /dev/null -w '%{http_code}' -L https://bacteria.cryomics.org/scores.php)"
-echo "==> done — https://bacteria.cryomics.org/"
+printf "   site  %s\n" "$(curl -s -o /dev/null -w '%{http_code}' -L "$SITE_URL")"
+printf "   api   %s\n" "$(curl -s -o /dev/null -w '%{http_code}' -L "${SITE_URL}scores.php")"
+echo "==> done — $SITE_URL"
