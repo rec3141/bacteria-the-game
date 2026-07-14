@@ -3520,9 +3520,128 @@
     return out;
   }
   const cfgGet = (o, p) => p.reduce((x, k) => (x == null ? undefined : x[k]), o);
-  function cfgSet(p, v) { let o = CFG; for (let i = 0; i < p.length - 1; i++) o = o[p[i]]; o[p[p.length - 1]] = v; }
+  function cfgSet(root, p, v) { let o = root; for (let i = 0; i < p.length - 1; i++) o = o[p[i]]; o[p[p.length - 1]] = v; }
   const cfgDefault = (p) => cfgGet(CFG_DEFAULTS, p);
   const cfgTuned = () => cfgLeaves().some((L) => cfgGet(CFG, L.path) !== cfgDefault(L.path));
+
+  // TUNE_VALIDATOR_START — pure production validator, executed directly by the Node fixture test.
+  const TUNE_EXACT_RULES = {
+    "grid.cs": { min: 1, max: 64, integer: true },
+    "day.lengthSec": { min: 1, max: 86400 },
+    "day.startHour": { min: 0, max: 23 },
+    "day.latitude": { min: -90, max: 90 },
+    "day.dayOfYear": { min: 1, max: 365, integer: true },
+    "diel.tempBase": { min: -10, max: 50 },
+    "diel.tempLag": { min: 0, max: 1 },
+    "diel.foodFloor": { min: 0, max: 1 },
+    "diel.twilight": { min: 0, max: 1 },
+    "diel.goldTint": { min: 0, max: 1 },
+    "diel.q10RefC": { min: -50, max: 60 },
+    "cell.driftOnUpgrade": { min: 0, max: 1, integer: true },
+    "cell.driftGainChance": { min: 0, max: 1 },
+    "touch.autoEnzyme": { min: 0, max: 1, integer: true },
+    "predator.cystEatChance": { min: 0, max: 1 },
+    "predator.cystMealFactor": { min: 0, max: 1 },
+    "substrate.grainStrength": { min: 0, max: 2 },
+    "substrate.grainFloor": { min: 0, max: 1 },
+    "substrate.grainRim": { min: 0, max: 4 },
+    "cell.maxCells": { min: 1, max: 200000, integer: true },
+    "predator.safetyMax": { min: 1, max: 2000, integer: true },
+    "phage.maxCount": { min: 1, max: 10000, integer: true },
+    "nutrient.maxCount": { min: 1, max: 10000, integer: true },
+    "substrate.count": { min: 0, max: 1000, integer: true },
+  };
+  const TUNE_INTEGER_PATHS = new Set([
+    "cell.startUpgrades", "substrate.minPerRes", "cycle.reseedBacteria", "cycle.reseedProtists",
+    "cycle.preyFloor", "predator.count", "predator.minCount", "predator.immigrateCap",
+    "predator.immigrateMax", "predator.killMotes", "phage.greenCount", "phage.seedBatch",
+    "phage.greenFloor", "phage.goldCount", "phage.goldCountTouch", "phage.hostTolerance",
+    "phage.burst.0", "phage.burst.1", "toxin.crossDist",
+  ]);
+  const TUNE_POSITIVE_PATHS = new Set([
+    "cell.radius", "cell.baseHalf", "cell.maxHalf", "cell.dragRate", "cell.cystDragRate",
+    "cell.maxSpeed", "cell.runMin", "cell.runMax", "cell.tumbleDur", "cell.enzymeCooldown.0",
+    "cell.enzymeCooldown.1", "cell.invulnTime", "cell.fedLinger", "cell.touchLatchSecs",
+    "cell.touchRunSecs", "touch.autoEnzymeEvery", "substrate.bloomEvery",
+    "substrate.sizeMin", "substrate.sizeMax", "substrate.lifeMin", "substrate.lifeMax",
+    "substrate.dissolveTime", "enzyme.life", "enzyme.maxRadius", "enzyme.growTime", "toxin.life",
+    "toxin.maxRadius", "toxin.growTime", "nutrient.life", "nutrient.radius", "cycle.preyEvery",
+    "cycle.turboSecs", "cycle.turboMaxSecs", "predator.radius", "predator.satiatedTime",
+    "predator.maturity", "predator.reproCooldown", "predator.immigrateEvery", "predator.respawnFloor",
+    "phage.radius", "phage.life.0", "phage.life.1", "phage.latent.0", "phage.latent.1",
+    "phage.greenSeed.0", "phage.greenSeed.1", "phage.goldLife.0", "phage.goldLife.1",
+    "touch.zoom", "diel.q10",
+  ]);
+  const TUNE_ORDERED_RANGES = [
+    ["cell.baseHalf", "cell.maxHalf"], ["cell.runMin", "cell.runMax"],
+    ["cell.enzymeCooldown.0", "cell.enzymeCooldown.1"], ["substrate.sizeMin", "substrate.sizeMax"],
+    ["substrate.lifeMin", "substrate.lifeMax"], ["substrate.driftMin", "substrate.driftMax"],
+    ["phage.life.0", "phage.life.1"], ["phage.burst.0", "phage.burst.1"],
+    ["phage.latent.0", "phage.latent.1"], ["phage.greenSeed.0", "phage.greenSeed.1"],
+    ["phage.goldLife.0", "phage.goldLife.1"], ["cycle.turboSecs", "cycle.turboMaxSecs"],
+  ];
+  const TUNE_RELATIONS = [
+    ["cell.startEnergy", "cell.maxEnergy", "start energy cannot exceed max energy"],
+    ["cell.divideThreshold", "cell.maxEnergy", "division threshold cannot exceed max energy"],
+    ["cell.cystBelow", "cell.cystWake", "cyst wake energy must exceed the encyst threshold", true],
+    ["predator.count", "predator.safetyMax", "protist count cannot exceed its safety cap"],
+    ["predator.minCount", "predator.safetyMax", "protist minimum cannot exceed its safety cap"],
+    ["predator.minCount", "predator.immigrateCap", "protist minimum cannot exceed its immigration cap"],
+    ["predator.immigrateCap", "predator.safetyMax", "protist immigration cap cannot exceed its safety cap"],
+    ["phage.greenCount", "phage.maxCount", "green-phage count cannot exceed the phage cap"],
+    ["phage.greenFloor", "phage.maxCount", "green-phage floor cannot exceed the phage cap"],
+    ["phage.goldCount", "phage.maxCount", "gold-phage count cannot exceed the phage cap"],
+    ["phage.goldCountTouch", "phage.maxCount", "touch gold-phage count cannot exceed the phage cap"],
+  ];
+  function tuneValidatorLeaves(object, path = []) {
+    const out = [];
+    if (!object || typeof object !== "object") return out;
+    for (const key of Object.keys(object)) {
+      const value = object[key], next = [...path, key];
+      if (typeof value === "number") out.push({ path: next, value });
+      else if (value && typeof value === "object") out.push(...tuneValidatorLeaves(value, next));
+    }
+    return out;
+  }
+  function tuneValidatorGet(object, dotted) {
+    return dotted.split(".").reduce((value, key) => value == null ? undefined : value[key], object);
+  }
+  function tuneRule(path, defaultValue) {
+    const key = Array.isArray(path) ? path.join(".") : path;
+    if (TUNE_EXACT_RULES[key]) return TUNE_EXACT_RULES[key];
+    if (/^diel\.water(?:Night|Day)\.[0-2]$/.test(key)) return { min: 0, max: 255 };
+    return {
+      min: TUNE_POSITIVE_PATHS.has(key) ? 0.001 : 0,
+      max: Math.max(100, Math.abs(Number(defaultValue) || 0) * 100),
+      integer: TUNE_INTEGER_PATHS.has(key),
+    };
+  }
+  function validateTuningConfig(candidate, defaults) {
+    const errors = [];
+    for (const leaf of tuneValidatorLeaves(candidate)) {
+      const key = leaf.path.join("."), def = tuneValidatorGet(defaults, key), rule = tuneRule(key, def);
+      if (!Number.isFinite(leaf.value)) { errors.push(`${key} must be finite`); continue; }
+      if (leaf.value < rule.min || leaf.value > rule.max)
+        errors.push(`${key} must be between ${rule.min} and ${rule.max}`);
+      else if (rule.integer && !Number.isInteger(leaf.value)) errors.push(`${key} must be an integer`);
+    }
+    for (const [lowKey, highKey] of TUNE_ORDERED_RANGES) {
+      const low = tuneValidatorGet(candidate, lowKey), high = tuneValidatorGet(candidate, highKey);
+      if (Number.isFinite(low) && Number.isFinite(high) && low > high)
+        errors.push(`${lowKey} must not exceed ${highKey}`);
+    }
+    for (const [lowKey, highKey, message, strict] of TUNE_RELATIONS) {
+      const low = tuneValidatorGet(candidate, lowKey), high = tuneValidatorGet(candidate, highKey);
+      if (Number.isFinite(low) && Number.isFinite(high) && (strict ? low >= high : low > high)) errors.push(message);
+    }
+    return errors;
+  }
+  // TUNE_VALIDATOR_END
+
+  const cloneCfg = (value) => JSON.parse(JSON.stringify(value));
+  function commitCfg(candidate) {
+    for (const leaf of cfgLeaves(candidate)) cfgSet(CFG, leaf.path, leaf.path.reduce((value, key) => value[key], candidate));
+  }
 
   // log mapping: pos 0…TUNE_STEPS ↔ value in [def/10, def*10], with the default at
   // the midpoint. A default of 0 has no decade to span, so those fall back to linear.
@@ -3571,7 +3690,7 @@
       const groupRows = [];
       adminGroups.push({ head, rows: groupRows });
       for (const leaf of leaves) {
-        const def = cfgDefault(leaf.path), sc = tuneScale(def);
+        const def = cfgDefault(leaf.path), sc = tuneScale(def), rule = tuneRule(leaf.path, def);
         const row = document.createElement("div"); row.className = "arow";
         const name = document.createElement("label"); name.className = "aname";
         name.textContent = leaf.path.slice(g === "general" ? 0 : 1).join(".");
@@ -3582,19 +3701,33 @@
         const slider = document.createElement("input");
         slider.type = "range"; slider.min = 0; slider.max = TUNE_STEPS; slider.step = 1;
         const num = document.createElement("input");
-        num.type = "number"; num.className = "anum"; num.step = "any";
+        num.type = "number"; num.className = "anum"; num.step = rule.integer ? "1" : "any";
+        num.min = rule.min; num.max = rule.max;
         // `src` says which widget the value came from, so we don't fight the one being dragged
         const repaints = leaf.path[0] === "substrate" && leaf.path[1].startsWith("grain");
-        const set = (v, src) => {
-          if (!isFinite(v)) return;
-          cfgSet(leaf.path, v);
+        const paint = (v, src) => {
           if (src !== "slider") slider.value = sc.pos(v);
           if (src !== "num") num.value = fmtTune(v);
           row.classList.toggle("changed", v !== def);
           // a particle only re-caches when something carves it, so a shading tweak would
           // otherwise not show until your next bite — force the repaint to see it live
           if (repaints) for (const p of substrates) p.dirty = true;
+        };
+        const set = (rawValue, src) => {
+          const v = src === "slider" && rule.integer ? Math.round(rawValue) : rawValue;
+          const candidate = cloneCfg(CFG); cfgSet(candidate, leaf.path, v);
+          const errors = validateTuningConfig(candidate, CFG_DEFAULTS);
+          if (errors.length) {
+            row.classList.add("invalid");
+            row.dataset.error = errors[0];
+            if (src === "slider") slider.value = sc.pos(cfgGet(CFG, leaf.path));
+            adminStatus(errors[0], true);
+            return false;
+          }
+          row.classList.remove("invalid"); delete row.dataset.error;
+          cfgSet(CFG, leaf.path, v); paint(v, src);
           tunedNotice();
+          return true;
         };
         slider.addEventListener("input", () => set(sc.val(+slider.value), "slider"));
         num.addEventListener("change", () => set(parseFloat(num.value), "num")); // typed value may exceed the slider's decade — that's fine, it just pins the slider
@@ -3603,7 +3736,7 @@
         el.adminBody.appendChild(row);
         // searched text = group + dotted path + label + description, so "protist" finds
         // the predator group AND toxin.dose, which only mentions protists in its prose
-        const entry = { leaf, set, row, hay: `${g} ${leaf.path.join(".")} ${name.textContent} ${doc}`.toLowerCase() };
+        const entry = { leaf, set, paint, row, hay: `${g} ${leaf.path.join(".")} ${name.textContent} ${doc}`.toLowerCase() };
         adminRows.push(entry);
         groupRows.push(entry);
       }
@@ -3634,7 +3767,12 @@
     if (el.adminEmpty) el.adminEmpty.classList.toggle("hidden", shown > 0);
     if (el.adminCount) el.adminCount.textContent = tokens.length ? `${shown} of ${adminRows.length} knobs` : `${adminRows.length} knobs`;
   }
-  function syncAdmin() { for (const r of adminRows) r.set(cfgGet(CFG, r.leaf.path)); }
+  function syncAdmin() {
+    for (const r of adminRows) {
+      r.row.classList.remove("invalid"); delete r.row.dataset.error;
+      r.paint(cfgGet(CFG, r.leaf.path));
+    }
+  }
   function toggleAdmin(show) {
     buildAdmin();
     adminOpen = show === undefined ? !adminOpen : !!show;
@@ -3668,11 +3806,18 @@
   function adminApply(obj) {
     const src = obj && obj.cfg ? obj.cfg : obj; // accept a saved preset or a bare CFG tree
     if (!src || typeof src !== "object") { adminStatus("that file isn't a tuning preset", true); return; }
-    let n = 0;
+    const candidate = cloneCfg(CFG); let n = 0;
     for (const r of adminRows) {
       const v = cfgGet(src, r.leaf.path);
-      if (typeof v === "number" && isFinite(v)) { r.set(v); n++; }
+      if (v === undefined) continue;
+      if (typeof v !== "number" || !Number.isFinite(v)) {
+        adminStatus(`${r.leaf.path.join(".")} must be a finite number — preset not loaded`, true); return;
+      }
+      cfgSet(candidate, r.leaf.path, v); n++;
     }
+    const errors = validateTuningConfig(candidate, CFG_DEFAULTS);
+    if (errors.length) { adminStatus(`${errors[0]} — preset not loaded`, true); return; }
+    commitCfg(candidate); syncAdmin();
     adminStatus(`loaded ${n} value${n === 1 ? "" : "s"}${obj && obj.name ? ` from "${obj.name}"` : ""}`);
     if (obj && obj.name && el.adminName) el.adminName.value = obj.name;
   }
@@ -3690,7 +3835,7 @@
   });
   if (el.adminSave) el.adminSave.addEventListener("click", adminSave);
   if (el.adminReset) el.adminReset.addEventListener("click", () => {
-    for (const r of adminRows) r.set(cfgDefault(r.leaf.path));
+    commitCfg(cloneCfg(CFG_DEFAULTS)); syncAdmin();
     adminStatus("all values reset to defaults");
   });
   if (el.adminLoad && el.adminFile) {

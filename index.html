@@ -482,6 +482,8 @@
     font-variant-numeric: tabular-nums; outline: none; }
   .anum:focus { border-color: var(--accent); }
   .arow.changed .anum { border-color: #ffd24a; color: #ffe9a8; }
+  .arow.invalid .aname { color: var(--warn); opacity: 1; }
+  .arow.invalid .anum { border-color: var(--warn); color: #ffd7d2; box-shadow: 0 0 0 1px var(--warn); }
   /* Hover strip: the native title tooltip is slow and covers neighboring rows,
      so the hovered knob's description also lands here, instantly and in place. */
   #adminDoc { flex: 0 0 auto; min-height: 52px; padding: 7px 12px; font-size: 11px; line-height: 1.4;
