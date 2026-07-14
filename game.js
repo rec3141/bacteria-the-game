@@ -44,6 +44,9 @@
       chemoRange0: 300, chemoRangePer: 140, // chemotaxis sensing range grows with chemoLevel
       chemoBias: 0.9,                       // run-length extension per level when heading up-gradient (biased random walk)
       fedLinger: 2.2, maxCells: 100000, // effectively uncapped (perf backstop only)
+      startUpgrades: 0,    // pre-load the starting cell with this many RANDOM adaptations, drawn from the
+                           // same pool a gold phage gives. 0 = the normal game; raise it to start a run
+                           // mid-evolution instead of grinding there to test the late game.
       genomeUpkeep: 0.05, // extra respiration per adaptation tier — the metabolic cost of a bigger genome (streamlining pressure)
       touchLatchSecs: 0.25, // phone stick: hold it at FULL deflection this long to lock in a run
                             // that keeps going after you lift your thumb (tap the centre to stop)
@@ -96,6 +99,9 @@
       tempBase: 17, tempAmp: 5, tempLag: 0.05,   // warmest early afternoon (temp lags the sun)
       foodFloor: 0.35,                            // night food supply as a fraction of the midday bloom
       grazeNight: 1.0,                            // extra grazing pressure at night (diel vertical migration)
+      lightGamma: 1.8,                            // shapes the daylight curve: >1 deepens night, sharpens noon
+      nightTint: 0.52, dayTint: 0.10,             // how far the sea darkens by midnight / brightens by noon
+      q10: 2.0, q10RefC: 20,                      // metabolism ×q10 per +10 °C above the reference temp
     },
     predator: {
       count: 4, radius: 22, wanderSpeed: 50, chaseSpeed: 85, senseRange: 170, satiatedTime: 4.5,
@@ -319,13 +325,23 @@
       const tv = 1.4 - this.tempC/40, sv = 0.6 + this.salinity/70*0.6;
       this.viscosity = clamp(tv*sv, 0.45, 1.9);
       this.diffusivity = clamp((this.tempC+5)/25 / (0.7 + this.salinity/120), 0.3, 2.4);
-      this.metabolismMult = Math.pow(2, (this.tempC-20)/10);
+      // Q10: metabolic rate multiplies by q10 for every 10 degrees above the reference temp.
+      this.metabolismMult = Math.pow(CFG.diel.q10, (this.tempC - CFG.diel.q10RefC)/10);
     },
   };
   const TAU = Math.PI*2;
   // diel cycle: drive light/temp/food-supply/grazing from the time of day (tod 0→1 across the day).
   // Daylight over tod 0–0.5 (6am–6pm), night 0.5–1; the sun peaks at tod 0.25 (noon).
-  function dielLight(tod) { return Math.max(0, Math.sin(tod*TAU)); }
+  // Sun elevation, and the light it delivers, as ONE continuous function across the whole 24h — no
+  // day phase and night phase running under different rules. max(0, sin) used to flatten the entire
+  // night to exactly zero: a dead half-cycle where light, food and grazing pressure all stopped
+  // varying. This dips to darkness at midnight and climbs back out smoothly, so every driver keeps
+  // moving around the clock.
+  function sunElev(tod) { return Math.sin(tod*TAU); }               // -1 (midnight) .. +1 (noon)
+  function dielLight(tod) {
+    const s = 0.5 + 0.5*sunElev(tod);                               // 0 .. 1, and 0.5 at dawn/dusk
+    return Math.pow(s, CFG.diel.lightGamma);                        // gamma deepens night, sharpens noon
+  }
   function dayHour(tod) { return (CFG.day.startHour + tod*24) % 24; }
   function updateDiel() {
     const D = CFG.diel, tod = clamp(state.elapsed / CFG.day.lengthSec, 0, 1);
@@ -439,6 +455,32 @@
     return segDist(dx(x, c.x), dy(y, c.y), p[0], p[1], p[2], p[3]);
   }
 
+  // The adaptation pool a gold phage transduces: one option per enzyme (acquire it if locked, else
+  // raise its expression), plus chemotaxis / antibiotic / CRISPR. Genes aren't guaranteed each time,
+  // so runs skew per-skill. Shared with cell.startUpgrades, which pre-loads the starting cell.
+  function grantRandomUpgrade(c) {
+    const pool = ["chemo", "enz0", "enz1", "enz2", "antibiotic"];
+    if (!c.crispr) pool.push("crispr");            // one-time: phage-immune-harvesting defence system
+    const pick = pool[(Math.random()*pool.length)|0];
+    if (pick === "crispr") {
+      c.crispr = true;
+      return { msg: "CRISPR", color: CRISPR_COLOR, abbr: "Cr", acquired: true };
+    }
+    if (pick === "antibiotic") {
+      const acquired = c.antibiotic === 0; c.antibiotic++;
+      return { msg: "Antibiotic " + c.antibiotic, color: TOXIN_COLOR, abbr: "Ab" + c.antibiotic, acquired };
+    }
+    if (pick === "chemo") {
+      const acquired = !c.chemotaxis;
+      if (acquired) { c.chemotaxis = true; c.chemoLevel = 1; } else c.chemoLevel++;
+      return { msg: "Chemotaxis " + c.chemoLevel, color: "#ffd24a", abbr: "T" + c.chemoLevel, acquired };
+    }
+    const i = +pick[3]; c.enzLvl[i]++;             // 0 -> 1 = newly acquired gene, else more expression
+    const name = RESOURCES[i].enzyme;
+    return { msg: name[0].toUpperCase() + name.slice(1) + " " + c.enzLvl[i],
+             color: RESOURCES[i].color, abbr: ["L", "P", "C"][i] + c.enzLvl[i],
+             acquired: c.enzLvl[i] === 1 };
+  }
   function makeCell(x, y, energy, angle, gen) {
     return { x: wrapX(x), y: wrapY(y), vx: 0, vy: 0, angle, energy, gen: gen || 1,
       controlled: false, alive: true, invuln: CFG.cell.invulnTime, cyst: false,
@@ -590,6 +632,7 @@
 
   function newGame() {
     const first = makeCell(WORLD_W/2, WORLD_H/2, CFG.cell.startEnergy, -Math.PI/2, 1);
+    for (let i = 0; i < Math.round(CFG.cell.startUpgrades); i++) grantRandomUpgrade(first); // testing aid
     first.controlled = true; cells = [first]; // start as a single founder cell
     substrates = [];
     for (let i = 0; i < CFG.substrate.count; i++) substrates.push(makeSubstrate());
@@ -1231,7 +1274,7 @@
     const P = CFG.predator, newborns = [];
     for (const pr of predators) {
       pr.age += dt;
-      pr.energy -= P.metabolism*dt;      // grazing metabolism
+      pr.energy -= P.metabolism*env.metabolismMult*dt;  // grazing metabolism, Q10-scaled like everything else
       if (pr.turboT > 0) pr.turboT = Math.max(0, pr.turboT - dt);
       if (pr.reproCd > 0) pr.reproCd -= dt;
       if (pr.toxT > 0) pr.toxT -= dt;
@@ -1380,27 +1423,7 @@
           c.infectedGreen = true; c.lysisT = rand(CFG.phage.latent[0], CFG.phage.latent[1]);
           ph.dead = true;
         } else {                                     // gold: transduce a random upgrade
-          // one option per enzyme (acquire it if locked, else level up its expression)
-          // + chemotaxis; genes aren't guaranteed each time so runs skew per-skill
-          const pool = ["chemo", "enz0", "enz1", "enz2", "antibiotic"];
-          if (!c.crispr) pool.push("crispr");           // one-time: phage-immune-harvesting defense system
-          const pick = pool[(Math.random()*pool.length)|0];
-          let msg, color, acquired, abbr;
-          if (pick === "crispr") {
-            c.crispr = true; acquired = true; msg = "CRISPR"; color = CRISPR_COLOR; abbr = "Cr";
-          } else if (pick === "antibiotic") {
-            acquired = c.antibiotic === 0; c.antibiotic++;
-            msg = "Antibiotic " + c.antibiotic; color = TOXIN_COLOR; abbr = "Ab" + c.antibiotic;
-          } else if (pick === "chemo") {
-            acquired = !c.chemotaxis;
-            if (acquired) { c.chemotaxis = true; c.chemoLevel = 1; } else c.chemoLevel++;
-            msg = "Chemotaxis " + c.chemoLevel; color = "#ffd24a"; abbr = "T" + c.chemoLevel; // T = chemoTaxis
-          } else {
-            const i = +pick[3]; c.enzLvl[i]++; acquired = c.enzLvl[i] === 1; // 0→1 = newly acquired gene
-            const name = RESOURCES[i].enzyme;
-            msg = name[0].toUpperCase() + name.slice(1) + " " + c.enzLvl[i]; color = RESOURCES[i].color;
-            abbr = ["L", "P", "C"][i] + c.enzLvl[i]; // Lipase / Protease / Carbohydrase
-          }
+          const { msg, color, abbr, acquired } = grantRandomUpgrade(c);
           ph.dead = true;
           burst(c.x, c.y, "#ffd24a", 16);
           if (c.controlled) {
@@ -1493,8 +1516,11 @@
   }
   function drawDayNight() {
     if (!state) return;
-    const light = state.light || 0, night = 1 - light;
-    if (night > 0.01) { ctx.fillStyle = `rgba(4,10,34,${(0.52*night).toFixed(3)})`; ctx.fillRect(0, 0, VIEW_W, VIEW_H); } // navy night
+    const D = CFG.diel, light = state.light || 0, night = 1 - light;
+    // Two washes that cross-fade continuously with the sun: the sea deepens to navy toward midnight
+    // and brightens toward noon, so the water itself tells you the time of day.
+    if (night > 0.01) { ctx.fillStyle = `rgba(4,10,34,${(D.nightTint*night).toFixed(3)})`; ctx.fillRect(0, 0, VIEW_W, VIEW_H); }
+    if (light > 0.01) { ctx.fillStyle = `rgba(186,240,255,${(D.dayTint*light).toFixed(3)})`; ctx.fillRect(0, 0, VIEW_W, VIEW_H); }
     const gold = clamp((0.4 - light)/0.4, 0, 1) * clamp(light*5, 0, 1); // warm glow when the sun is low (dawn/dusk)
     if (gold > 0.01) { ctx.fillStyle = `rgba(255,150,60,${(0.18*gold).toFixed(3)})`; ctx.fillRect(0, 0, VIEW_W, VIEW_H); }
   }
@@ -1750,7 +1776,7 @@
     const kx = mw/WORLD_W, ky = mh/WORLD_H;
     // CENTRED on the player: everything is drawn relative to your cell (toroidal wrap via dx/dy),
     // so you stay in the middle and the world scrolls under you — much easier to navigate the wrap.
-    const pc = controlledCell(), cx0 = mx + mw/2, cy0 = my + mh/2;
+    const pc = controlledEntity(), cx0 = mx + mw/2, cy0 = my + mh/2; // cell OR protist — the map follows whoever you are
     const MX = pc ? (ex) => cx0 + dx(ex, pc.x)*kx : (ex) => mx + ex*kx;
     const MY = pc ? (ey) => cy0 + dy(ey, pc.y)*ky : (ey) => my + ey*ky;
     ctx.beginPath(); ctx.rect(mx, my, mw, mh); ctx.clip(); // keep marks inside the frame
@@ -1801,18 +1827,13 @@
   }
   function toggleSubMode() { subMode ^= 1; updateSubLegend(); }
   function ecoMask(c) { return (c.enzLvl[0] > 0 ? 1 : 0) | (c.enzLvl[1] > 0 ? 2 : 0) | (c.chemotaxis ? 4 : 0); }
-  function ecoLabel(mask) {
-    if (mask === 0) return "carb only";
-    const parts = [];
-    if (mask & 1) parts.push("lipase"); if (mask & 2) parts.push("protease"); if (mask & 4) parts.push("chemotaxis");
-    return "+" + parts.join(" +");
-  }
   function updateLegend(eco, preds, green) {
     if (!el.legend) return;
-    // colours encode GENERATION (ecotype+tier), not a fixed ecotype hue — so list ecotype COUNTS as text (no misleading swatch)
+    // Just the totals. The per-ecotype breakdown ("carb only 1 · +lipase 6 · +protease 1 · …") grew a
+    // line per gene combination and crowded the legend off the chart; the colour bands already show
+    // the composition, and the run analysis on death gives the detail.
     let colony = 0; for (let m = 0; m < 8; m++) colony += eco[m];
     let html = `<span><i class="gen-swatch"></i>${colony === 1 ? "bacterium" : "bacteria"} <b>${colony}</b></span>`;
-    for (let m = 0; m < 8; m++) if (eco[m] > 0) html += `<span class="ecoq">${ecoLabel(m)} <b>${eco[m]}</b></span>`;
     html += `<span><i class="eco-line" style="border-color:${PROTIST_COLOR}"></i>protists <b>${preds}</b></span>`;
     html += `<span><i class="eco-line" style="border-color:${VIRUS_COLOR}"></i>viruses <b>${green || 0}</b></span>`;
     html += `<span id="chartTitle">ecotype abundance vs. time · click for ${chartLog ? "linear" : "log"}</span>`;
@@ -2295,6 +2316,7 @@
     "cell.chemoBias": "How much heading up-gradient stretches a run, per chemotaxis level — the bias in the biased random walk.",
     "cell.genomeUpkeep": "Extra respiration per adaptation tier — what a bigger genome costs to carry (the pressure to streamline).",
     "cell.fedLinger": "Seconds a cell stays in its 'well fed' state (shorter runs) after eating.",
+    "cell.startUpgrades": "TESTING AID: how many random adaptations the starting cell already has, drawn from the same pool a gold phage gives. 0 = the normal game. Raise it to drop straight into the late game instead of grinding there.",
     "cell.maxCells": "Hard cap on living cells — a performance backstop, not an ecological limit.",
     "cell.touchLatchSecs": "Phone thumbstick: how long you must hold it at FULL deflection before the run locks in and keeps going after you lift your thumb. Lower = quicker to commit but easier to trigger by accident.",
     "cell.touchRunSecs": "How long a locked-in run lasts before it winds down on its own (the knob eases back to centre as it runs out). Stops the stick getting stuck on. Touching it again pauses the countdown; re-latching refills it.",
@@ -2303,6 +2325,11 @@
     "cycle.turboCost": "Energy a protist spends per turbo burst. It has no other use for energy but staying alive, so this is the real price of a sprint.",
     "cycle.turboGoldBonus": "Seconds added to your turbo burst for each gold phage you catch AS A PROTIST — the grazer's version of an adaptation. Stacks for the rest of the run.",
     "cycle.turboMaxSecs": "Ceiling on the turbo burst, however many gold phages you collect.",
+    "diel.lightGamma": "Shapes the daylight curve across the 24h. 1 = a plain sinusoid; higher deepens the night and sharpens midday. The light drives food supply, grazing pressure and the colour of the water.",
+    "diel.nightTint": "How dark the sea goes at midnight.",
+    "diel.dayTint": "How much the sea brightens at noon.",
+    "diel.q10": "Q10: metabolic rate multiplies by this for every +10 degC. 2 = the textbook value (rate doubles). 1 = temperature has no effect. Applies to bacteria AND protists.",
+    "diel.q10RefC": "Reference temperature for Q10 — metabolism runs at its base rate here.",
     "respirationBase": "Baseline energy per second every cell burns just staying alive. The single biggest lever on how punishing the game is.",
     "touchSpeedScale": "TOUCH ONLY: how fast swimming things move — your cells AND the protists together, so predator/prey stays in proportion. The phone magnifies the world onto a small screen, which makes the same world-speed read as much faster. 1 = desktop speed. NOTE: energy costs are per SECOND, so slower swimming means a trip to food costs more energy.",
     "grid.cs": "Voxel size of destructible particles (px) — smaller = finer digging but more work per frame. Only affects NEWLY spawned particles.",
@@ -2421,7 +2448,7 @@
       return { val: (t) => Math.exp(lo + (hi - lo) * t / TUNE_STEPS),
                pos: (v) => (v > 0 ? clamp(Math.round((Math.log(v) - lo) / (hi - lo) * TUNE_STEPS), 0, TUNE_STEPS) : 0) };
     }
-    const lo = def - 1, hi = def + 1;
+    const lo = 0, hi = def === 0 ? 10 : def + 1;   // a zero default has no decade to span (startUpgrades)
     return { val: (t) => lo + (hi - lo) * t / TUNE_STEPS,
              pos: (v) => clamp(Math.round((v - lo) / (hi - lo) * TUNE_STEPS), 0, TUNE_STEPS) };
   }
