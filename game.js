@@ -61,7 +61,7 @@
     touchSpeedScale: 0.625,
     grid: { cs: 7 },                 // destructible-particle voxel size (px)
     substrate: {
-      count: 38, moteEnergy: 7,      // board particle count (a knob for future levels; food scarcity keeps colonies + the phage bursts they feed manageable)
+      count: 60, moteEnergy: 7,      // board particle count (a knob for future levels; food scarcity keeps colonies + the phage bursts they feed manageable)
       sizeMin: 30, sizeMax: 200, sizeExp: 1.6, // Junge-like size spectrum: abundance ∝ size^-sizeExp → many small, few large (lower exp = flatter = more big particles)
       carveRate: 4.5,                // density removed /sec per covered voxel
       lifeMin: 130, lifeMax: 300,    // each particle has its own lifespan (staggered)
@@ -97,7 +97,7 @@
     // WHERE and WHEN this run happens. Latitude + day-of-year give the real sun: its declination,
     // its altitude through the day, and therefore true sunrise/sunset — including midnight sun and
     // polar night above the Arctic Circle. Scenarios will set these.
-    day: { lengthSec: 240, startHour: 6, latitude: 45, dayOfYear: 172 }, // 172 = the June solstice
+    day: { lengthSec: 240, startHour: 0, latitude: 45, dayOfYear: 172 }, // start at midnight; 172 = June solstice
     diel: {
       tempBase: 17, tempAmp: 5, tempLag: 0.05,   // warmest early afternoon (temp lags the sun)
       foodFloor: 0.35,                            // night food supply as a fraction of the midday bloom
@@ -148,7 +148,9 @@
   // are colour-coded by resource so a particle reads as its biochemical makeup.
   const RESOURCES = [
     { key: "lipid",   enzyme: "lipase",       color: "#efd98a", cal: 9 }, // 0 — fats/oils, wheat-yellow (9 kcal/g)
-    { key: "protein", enzyme: "protease",     color: "#e0645a", cal: 4 }, // 1 — proteinaceous, coral-red (4 kcal/g)
+    { key: "protein", enzyme: "protease",     color: "#ef8b3c", cal: 4 }, // 1 — proteinaceous, orange (4 kcal/g).
+                                                                       // Deliberately NOT red: the reds are spoken for by
+                                                                       // infectious phages, protists and the antibiotic.
     { key: "carb",    enzyme: "carbohydrase", color: "#6fa8ff", cal: 4 }, // 2 — sugars/polysaccharide, blue (4 kcal/g)
   ];
   const BIOMASS_CAL = 4; // protist biomass motes (res = null) count as protein-grade calories
@@ -1658,7 +1660,7 @@
     ctx.drawImage(p.cache, cx - p.half, cy - p.half);
   }
 
-  const ENZ_RGB = ["239,217,138", "224,100,90", "111,168,255"]; // matches RESOURCES colours
+  const ENZ_RGB = ["239,217,138", "239,139,60", "111,168,255"]; // matches RESOURCES colours
   function drawEnzyme(z) {
     const cx = sx(z.x), cy = sy(z.y); if (!onScreen(cx, cy, z.r + 4)) return;
     const rgb = ENZ_RGB[z.res] || "190,130,255";
