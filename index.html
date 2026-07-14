@@ -254,29 +254,39 @@
   .gene { pointer-events: auto; }
   .gene.owned { cursor: pointer; }
 
-  /* On-screen touch controls (mobile) — only shown when the device has a coarse pointer */
-  #touch { position: absolute; inset: 0; display: none; pointer-events: none; z-index: 4;
-    -webkit-tap-highlight-color: transparent; touch-action: none; }
-  body.touch #touch { display: block; }
+  /* On-screen touch controls (mobile) — a DECK below the play area, only on a coarse pointer.
+     The stage doesn't fill a phone screen (it's a fixed 800×680 aspect), so the controls live
+     in the space underneath instead of covering the ocean with your thumbs. */
+  #touch { display: none; width: min(800px, 100%); flex-direction: column; gap: 8px;
+    padding: 2px 4px 4px; touch-action: none; -webkit-tap-highlight-color: transparent; }
+  body.touch #touch { display: flex; }
   #touch.hidden { display: none !important; }
-  #stickZone { position: absolute; left: 12px; bottom: 78px; width: 124px; height: 124px;
-    pointer-events: auto; touch-action: none; }
-  #stickBase { position: absolute; inset: 0; border-radius: 50%; opacity: .5; transition: opacity .1s;
+  /* Sizes are fluid: fixed px would need ~382px of row and would overflow a 360px-wide
+     phone. clamp() lets the stick and buttons shrink with the viewport instead. */
+  #deckRow { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  #stickZone { position: relative; flex: 0 0 auto; touch-action: none;
+    width: clamp(100px, 30vw, 132px); height: clamp(100px, 30vw, 132px); }
+  #stickBase { position: absolute; inset: 0; border-radius: 50%; opacity: .55; transition: opacity .1s;
     background: rgba(255,255,255,.05); border: 1.5px solid rgba(255,255,255,.22); }
-  #stickBase.on { opacity: .9; }
-  #stickKnob { position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; border-radius: 50%;
+  #stickBase.on { opacity: .95; }
+  #stickKnob { position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; border-radius: 50%;
     transform: translate(-50%, -50%); background: rgba(87,224,192,.42); border: 1.5px solid var(--accent);
     box-shadow: 0 0 14px rgba(87,224,192,.4); }
-  #tbtns { position: absolute; right: 16px; bottom: 78px; display: flex; flex-direction: column-reverse;
-    align-items: center; gap: 12px; pointer-events: none; }
-  .tbtn { pointer-events: auto; touch-action: none; user-select: none; -webkit-user-select: none;
+  #tbtns { display: flex; flex-direction: row; align-items: center; gap: clamp(6px, 2vw, 10px); }
+  .tbtn { touch-action: none; user-select: none; -webkit-user-select: none; flex: 0 0 auto;
     background: rgba(9,28,34,.74); color: var(--ink); border: 1.5px solid rgba(87,224,192,.55);
-    border-radius: 50%; width: 62px; height: 62px; padding: 0; font: inherit; font-size: 11px; font-weight: bold;
+    border-radius: 50%; padding: 0; font: inherit; font-size: 11px; font-weight: bold;
+    width: clamp(52px, 15vw, 62px); height: clamp(52px, 15vw, 62px);
     display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 12px rgba(0,0,0,.45); }
   .tbtn:active { background: rgba(87,224,192,.3); transform: scale(.93); box-shadow: 0 1px 6px rgba(0,0,0,.45); }
-  .tbtn.big { width: 88px; height: 88px; font-size: 13px; border-color: var(--accent);
-    color: var(--accent); border-width: 2px; }
-  .tbtn.pause { position: absolute; top: 12px; right: 12px; bottom: auto; width: 44px; height: 44px; font-size: 13px; }
+  .tbtn.big { width: clamp(66px, 20vw, 84px); height: clamp(66px, 20vw, 84px);
+    font-size: 13px; border-color: var(--accent); color: var(--accent); border-width: 2px; }
+  .tbtn.pause { width: clamp(44px, 12vw, 50px); height: clamp(44px, 12vw, 50px); font-size: 12px; }
+  /* the genome row is moved in here by game.js on touch: gene chips double as enzyme buttons */
+  #touch .genome-row { display: flex; }
+  #touch .genome { flex-direction: row; flex-wrap: wrap; justify-content: center; align-items: center;
+    gap: 6px; padding: 7px 8px; width: 100%;
+    background: rgba(6,22,27,.68); border: 1px solid rgba(255,255,255,.1); border-radius: 12px; }
 
   /* fold the live charts away with a swipe during play */
   #chartwrap.collapsed > #chartlegend, #chartwrap.collapsed > #chart,
@@ -348,31 +358,22 @@
     #analysisWrap { padding: 6px 8px; }
     #helpBody, #sciBody, #scoresList { max-height: 62vh; }
   }
-  /* On a phone the live charts move ABOVE the short play area (flex reorder) and shrink
-     a little so they don't crowd the stage out of the viewport. */
+  /* On a phone the live charts move ABOVE the play area (flex reorder) and shrink a little.
+     Order down the page is then: charts · ocean · control deck. */
   body.touch #chartwrap { order: -1; }
   body.touch #chart { height: 74px; }
   body.touch #subchart { height: 48px; }
-  /* Energy bar + stats shift clear of the top-left minimap and top-right pause. */
-  body.touch .topline { margin: 0 50px 0 17%; flex-wrap: wrap; row-gap: 2px; }
+  body.touch #wrap { gap: 6px; justify-content: center; }
+  /* body is overflow:hidden, so anything that doesn't fit is CUT OFF rather than scrollable.
+     Bound the ocean by viewport height as well as width, so the control deck below it always
+     has room on a short phone. Only binds when the screen is short; tall phones are unaffected. */
+  body.touch #stage { width: min(800px, 100%, 50vh); }
+  /* Nothing is drawn over the ocean any more, so the HUD keeps its natural top-left line;
+     only the minimap shares the stage (and game.js keeps that in a free corner). */
+  body.touch .topline { margin-left: 17%; flex-wrap: wrap; row-gap: 2px; } /* clear of the minimap */
   body.touch .bar { width: 108px; }
-  /* The genome/enzyme switches run down the RIGHT side (bottom half), in thumb reach;
-     each gene doubles as an enzyme-select button. The decorative helix is dropped. */
-  body.touch #hud .genome-row { position: absolute; left: auto; right: 6px; top: 44%; bottom: 22px;
-    margin: 0; align-items: stretch; justify-content: flex-end; }
-  body.touch .genome { flex-direction: column; flex-wrap: nowrap; align-items: stretch; justify-content: center;
-    gap: 5px; padding: 6px 7px;
-    background: rgba(6,22,27,.68); border: 1px solid rgba(255,255,255,.1); border-radius: 12px; }
-  body.touch #helix { display: none; }
-  body.touch .gene { font-size: 11px; padding: 5px 9px; text-align: center; white-space: nowrap; }
-  /* The bottom genome bar is gone, so drop the movement stick + actions lower to use the space. */
-  body.touch #stickZone { left: 12px; bottom: 22px; width: 110px; height: 110px; }
-  /* Primary actions: a compact vertical pair centred in the gap between the stick and the
-     enzyme column (never overlapping either). */
-  body.touch #tbtns { left: 50%; right: auto; bottom: 22px; transform: translateX(-50%);
-    flex-direction: column-reverse; align-items: center; gap: 10px; }
-  body.touch #tbtns .tbtn { width: 54px; height: 54px; }
-  body.touch #tbtns .tbtn.big { width: 66px; height: 66px; }
+  body.touch #helix { display: none; }        /* the decorative helix reads as clutter at this size */
+  body.touch .gene { font-size: 12px; padding: 6px 10px; text-align: center; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -398,14 +399,6 @@
       </div>
     </div>
     <div id="toast"></div>
-    <div id="touch" class="hidden">
-      <div id="stickZone"><div id="stickBase"><div id="stickKnob"></div></div></div>
-      <div id="tbtns">
-        <button id="tEnz" class="tbtn big" aria-label="Release enzyme">release</button>
-        <button id="tLin" class="tbtn" aria-label="Switch lineage">lineage</button>
-      </div>
-      <button id="tPause" class="tbtn pause" aria-label="Pause">❚❚</button>
-    </div>
     <div id="title" class="screen">
       <div class="titlecard">
         <h1>Bacteria!</h1>
@@ -430,7 +423,7 @@
             <li><kbd>Tab</kbd> — switch which enzyme/antibiotic is loaded &nbsp;·&nbsp; <kbd>M</kbd> — toggle music</li>
             <li><kbd>Shift</kbd> — <b>switch lineage</b>: hand control to another of your lineages</li>
             <li><kbd>Esc</kbd> — pause &amp; high scores &nbsp;·&nbsp; <b>Help</b> button — this guide</li>
-            <li class="touchonly"><b>On a phone:</b> flick the left <b>thumbstick</b> toward a direction and the cell <b>runs that way for ~3s</b> on its own — no need to hold (tap the centre to stop); <b>release</b> / <b>lineage</b> sit along the bottom and <b>❚❚</b> pauses; tap a gene in the right-hand <b>genome column</b> to load that enzyme; swipe the chart (up top) to fold it away.</li>
+            <li class="touchonly"><b>On a phone:</b> all the controls sit in the <b>deck below the ocean</b>, so your thumbs never cover it. Flick the <b>thumbstick</b> toward a direction and the cell <b>runs that way for ~3s</b> on its own — no need to hold (tap the centre to stop). <b>release</b> / <b>lineage</b> / <b>❚❚</b> are to its right, and you can hold the stick and tap them <b>at the same time</b>. Tap a gene in the <b>genome row</b> to load that enzyme; swipe the chart (up top) to fold it away.</li>
           </ul>
         </section>
         <section>
@@ -545,6 +538,19 @@
         <button id="helpBtn2" class="ghost">Help</button>
         <button id="sciBtn2" class="ghost">The science</button>
         <button id="endGameBtn" class="ghost danger hidden">End game</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Touch controls: a deck BELOW the play area, not an overlay on top of it, so a thumb
+       never covers the ocean. game.js moves the genome/gene row in here on touch devices. -->
+  <div id="touch" class="hidden">
+    <div id="deckRow">
+      <div id="stickZone"><div id="stickBase"><div id="stickKnob"></div></div></div>
+      <div id="tbtns">
+        <button id="tEnz" class="tbtn big" aria-label="Release enzyme">release</button>
+        <button id="tLin" class="tbtn" aria-label="Switch lineage">lineage</button>
+        <button id="tPause" class="tbtn pause" aria-label="Pause">❚❚</button>
       </div>
     </div>
   </div>

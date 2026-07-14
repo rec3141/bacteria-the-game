@@ -2111,9 +2111,17 @@
   }
 
   // --------------------------------------------------------- touch controls
-  // A visible fixed thumbstick (bottom-left) drives movement; the right-hand
-  // buttons + the tappable genome bar cover every action, so the game is fully
-  // playable by touch. Uses Touch events for the widest device support.
+  // The controls live in a deck BELOW the ocean (see #touch in index.html), so a thumb
+  // never covers the thing you're looking at.
+  //
+  // Everything here is POINTER events, not touch+click. Two reasons, both bugs on a real
+  // phone with the old code:
+  //   - `click` needs a clean press-release with no other finger down, so you could not
+  //     hold the stick and tap `release` at the same time. Pointer events carry a pointerId
+  //     and each finger is tracked independently, so both work at once.
+  //   - the stick only took its direction from MOVE events, so a quick flick that started
+  //     at the centre (thumb lands, flicks off) committed no direction at all and the cell
+  //     just sat there. The release point is now sampled on pointerup as well.
   let _stickId = null;
   function releaseStick() { // full stop (used when pausing / opening a menu)
     _stickId = null; touchVec.active = false; touchVec.x = touchVec.y = 0; touchRunT = 0;
@@ -2122,40 +2130,52 @@
   }
   function setupTouch() {
     const zone = el.stickZone, base = el.stickBase, knob = el.stickKnob;
-    const MAXR = 48, DEAD = 8; // knob travel / dead-zone in CSS px
+    const MAXR = 52, DEAD = 10; // knob travel / dead-zone in CSS px
     if (zone && base && knob) {
-      const track = (t) => {
+      // aim from a pointer's position: past the dead-zone it arms a run; at the centre it stops
+      const aim = (e) => {
         const r = base.getBoundingClientRect(), cx = r.left + r.width/2, cy = r.top + r.height/2;
-        let dxp = t.clientX - cx, dyp = t.clientY - cy;
-        const d = Math.hypot(dxp, dyp), cl = d > MAXR ? MAXR / d : 1;
+        const dxp = e.clientX - cx, dyp = e.clientY - cy;
+        const d = Math.hypot(dxp, dyp), cl = d > MAXR ? MAXR/d : 1;
         knob.style.transform = `translate(calc(-50% + ${dxp*cl}px), calc(-50% + ${dyp*cl}px))`;
-        touchVec.active = true;
-        // aim (re-arms the run) unless the finger is at the centre, which cancels the run (a stop gesture)
         if (d > DEAD) { touchVec.x = dxp/d; touchVec.y = dyp/d; touchRunT = TOUCH_RUN_SECS; }
-        else { touchVec.x = touchVec.y = 0; touchRunT = 0; }
+        else { touchVec.x = touchVec.y = 0; touchRunT = 0; } // centre = stop
       };
-      const find = (list) => { for (const t of list) if (t.identifier === _stickId) return t; return null; };
-      // lifting the finger COMMITS the run: keep the aimed direction and let it coast for TOUCH_RUN_SECS
-      const commit = () => {
-        _stickId = null; touchVec.active = false;
-        base.classList.remove("on"); knob.style.transform = "translate(-50%,-50%)";
+      zone.addEventListener("pointerdown", (e) => {
+        if (_stickId !== null) return;             // one finger owns the stick; others are free
+        _stickId = e.pointerId;
+        if (zone.setPointerCapture) zone.setPointerCapture(e.pointerId); // keep it ours if the thumb slides off
+        touchVec.active = true; base.classList.add("on");
+        aim(e); e.preventDefault();
+      });
+      zone.addEventListener("pointermove", (e) => {
+        if (e.pointerId !== _stickId) return;
+        aim(e); e.preventDefault();
+      });
+      const lift = (e) => {
+        if (e.pointerId !== _stickId) return;
+        aim(e);                                    // sample where the finger ACTUALLY left — a fast
+                                                   // flick may never fire a move event at all
+        _stickId = null; touchVec.active = false;  // the aimed run now coasts for TOUCH_RUN_SECS
+        base.classList.remove("on");
+        knob.style.transform = "translate(-50%,-50%)";
       };
-      zone.addEventListener("touchstart", (e) => {
-        if (_stickId !== null) return;
-        _stickId = e.changedTouches[0].identifier; base.classList.add("on"); track(e.changedTouches[0]); e.preventDefault();
-      }, { passive: false });
-      zone.addEventListener("touchmove", (e) => { const t = find(e.changedTouches); if (t) { track(t); e.preventDefault(); } }, { passive: false });
-      const end = (e) => { if (find(e.changedTouches)) commit(); };
-      zone.addEventListener("touchend", end); zone.addEventListener("touchcancel", end);
+      zone.addEventListener("pointerup", lift);
+      zone.addEventListener("pointercancel", lift);
     }
-    const gated = (fn) => (e) => { if (e) e.preventDefault(); if (!paused && !helpOpen && !sciOpen && state && state.running) fn(); };
-    const tap = (elm, fn) => elm && elm.addEventListener("click", fn);
-    tap(el.tEnz, gated(playerEnzyme));
-    tap(el.tLin, gated(switchControl));
-    tap(el.tPause, () => togglePause());
-    // tap a gene on the genome bar to load that enzyme/antibiotic (works on desktop too)
-    el.enz.forEach((g, i) => g && g.addEventListener("click", () => selectEnzyme(i)));
-    if (el.enzTox) el.enzTox.addEventListener("click", () => selectEnzyme(3));
+    // Buttons act on pointerDOWN: immediate, no synthetic-click delay, and — the point —
+    // unaffected by another finger already holding the stick.
+    const act = (elm, fn, gate) => elm && elm.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      if (gate && (paused || helpOpen || sciOpen || !state || !state.running)) return;
+      fn();
+    });
+    act(el.tEnz, playerEnzyme, true);
+    act(el.tLin, switchControl, true);
+    act(el.tPause, togglePause, false); // must also work while paused, to un-pause
+    // tap a gene to load that enzyme/antibiotic (pointerdown covers mouse clicks too)
+    el.enz.forEach((g, i) => act(g, () => selectEnzyme(i), false));
+    act(el.enzTox, () => selectEnzyme(3), false);
     setupChartSwipe();
   }
   // swipe up or down anywhere on the chart panel to fold it away during play (mobile)
@@ -2175,7 +2195,13 @@
   if (el.detailChart) el.detailChart.addEventListener("click", () => { chartLog = !chartLog; if (_detailRec) openScoreDetail(_detailRank, _detailRec); });
 
   const coarse = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
-  if (coarse || "ontouchstart" in window) { document.body.classList.add("touch"); isTouch = true; ZOOM = 1.35; }
+  if (coarse || "ontouchstart" in window) {
+    document.body.classList.add("touch"); isTouch = true; ZOOM = 1.35;
+    // The genes are controls, not HUD, so on a phone they belong in the control deck with the
+    // stick and buttons — not floating over the ocean inside #hud (which is pointer-events:none).
+    const grow = document.querySelector("#hud .genome-row");
+    if (grow && el.touch) el.touch.insertBefore(grow, el.touch.firstChild);
+  }
   setupTouch();
 
   // temperature & salinity are held neutral for now (reserved for future levels:
