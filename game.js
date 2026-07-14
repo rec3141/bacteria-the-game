@@ -893,14 +893,31 @@
     p.dissolveRate = Math.max(1, order.length / CFG.substrate.dissolveTime);
     p.phase = "dissolving";
   }
+  // A point anywhere in the world you cannot currently see — for bringing things in from
+  // offscreen without popping them into view.
+  //
+  // It samples the WHOLE world and rejects the visible box, rather than picking a point on
+  // a ring around the camera. That distinction is the whole fix: a camera-centred ring ties
+  // the ecology to the viewport, so a player who stops moving respawns every particle onto
+  // one fixed annulus around themselves. The colony grows where the food is, and the map
+  // turns into a donut of bacteria with a starved hole where the player sits. Food has to be
+  // distributed by the WORLD, not by where you happen to be looking.
+  function offscreenPoint(margin) {
+    const hw = (VIEW_W/2)/ZOOM + margin, hh = (VIEW_H/2)/ZOOM + margin;
+    for (let i = 0; i < 40; i++) {
+      const x = rand(0, WORLD_W), y = rand(0, WORLD_H);
+      if (Math.abs(dx(x, cam.x)) > hw || Math.abs(dy(y, cam.y)) > hh) return { x, y };
+    }
+    return { x: rand(0, WORLD_W), y: rand(0, WORLD_H) }; // view somehow covers the world — just place it
+  }
   function recycleSubstrate(p) {
     // don't strand an embedded gold phage — carry it off so a fresh one respawns in a new particle
     for (const ph of phages) if (ph.type === "gold" && toroDist2(ph.x, ph.y, p.x, p.y) < p.R*p.R) ph.dead = true;
     Object.assign(p, makeSubstrate(pickBalancedKind(p))); // keep every resource above its floor as particles cycle
-    // reborn offscreen, drifting into the play area so it eases into view instead of popping in
-    const a = rand(0, 6.28), dist = Math.hypot(VIEW_W, VIEW_H)/2 + p.half + 140, spd = rand(CFG.substrate.driftMin, CFG.substrate.driftMax);
-    p.x = wrapX(cam.x + Math.cos(a)*dist); p.y = wrapY(cam.y + Math.sin(a)*dist);
-    p.vx = -Math.cos(a)*spd; p.vy = -Math.sin(a)*spd;
+    // reborn somewhere offscreen — anywhere in the sea, not on a ring around you — keeping the
+    // random drift makeSubstrate already gave it, so it still eases into view instead of popping in
+    const q = offscreenPoint(p.half + 60);
+    p.x = q.x; p.y = q.y;
   }
 
   function updateNutrients(dt) {
@@ -1064,9 +1081,9 @@
         const tier = upgradeTier(rc);
         let matching = 0; for (const p of phages) if (p.type === "green" && hostMatch(p.host, tier)) matching++;
         if (matching < CFG.phage.greenFloor) {
-          const a = rand(0, 6.28), d = Math.hypot(VIEW_W, VIEW_H)/2 + rand(80, 400);
+          const q = offscreenPoint(40); // offscreen, but spread over the sea — a ring around the camera would shell the player in viruses
           const host = Math.max(0, tier + ((Math.random()*3)|0) - 1);
-          phages.push(makePhage("green", cam.x + Math.cos(a)*d, cam.y + Math.sin(a)*d, host));
+          phages.push(makePhage("green", q.x, q.y, host));
         }
       }
     }
