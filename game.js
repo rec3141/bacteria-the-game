@@ -806,7 +806,6 @@
   // release button and the genome row can never disagree about what "carb" looks like
   const TOXIN_UI = "#f05ad0";
   const deployColor = (id) => (id === AB ? TOXIN_UI : RESOURCES[id].color);
-  const deployCap   = (id) => (id === AB ? "anti" : ["lip", "pro", "carb"][id]);
   function cycleEnzyme(dir) {                // dir -1 steps back; default forward
     if (!state || !state.running) return;
     const c = controlledCell(); if (!c) return;
@@ -2194,27 +2193,67 @@
   // ------------------------------------------------------------------ hud sync
   // Paint one rolodex button: the face is what's loaded, prev/next peek out behind it so you
   // can see what a swipe would bring up. Nulls hide the neighbours (nothing else to cycle to).
-  function paintRolo(btn, face, cap, prev, next) {
+  function paintRolo(btn, face, prev, next) {
     if (!btn) return;
     const f = btn.querySelector(".rface"), p = btn.querySelector(".rprev"),
-          n = btn.querySelector(".rnext"), t = btn.querySelector(".rcap");
+          n = btn.querySelector(".rnext");
     if (f) { f.style.background = face; f.style.boxShadow = `0 2px 12px rgba(0,0,0,.5), 0 0 16px -4px ${face}`; }
-    if (t) t.textContent = cap;
     if (p) { p.style.background = prev || "transparent"; p.style.visibility = prev ? "visible" : "hidden"; }
     if (n) { n.style.background = next || "transparent"; n.style.visibility = next ? "visible" : "hidden"; }
   }
+  // What you currently ARE, drawn in dark ink on the lineage button's face: a flagellated rod, or a
+  // blobby grazer once a role-swap has flipped you. Only redrawn when the role changes — the face
+  // colour underneath carries the lineage, so the ink never has to change.
+  function drawRoleSprite(cv, role) {
+    if (!cv || cv.dataset.role === role) return;
+    cv.dataset.role = role;
+    const g = cv.getContext("2d"), w = cv.width, hgt = cv.height;
+    g.clearRect(0, 0, w, hgt);
+    g.save(); g.translate(w/2, hgt/2);
+    g.fillStyle = "#06232a"; g.strokeStyle = "#06232a"; g.lineJoin = "round";
+    if (role === "protist") {
+      g.beginPath();                                  // an amoeboid blob, lobed like the real thing
+      for (let i = 0; i <= 28; i++) {
+        const a = i/28*TAU, r = w*0.38*(1 + 0.13*Math.sin(a*3 + 0.6));
+        g[i ? "lineTo" : "moveTo"](Math.cos(a)*r, Math.sin(a)*r);
+      }
+      g.closePath(); g.fill();
+      g.globalAlpha = 0.30; g.fillStyle = "#ffffff";  // food vacuole
+      g.beginPath(); g.arc(w*0.09, -hgt*0.06, w*0.13, 0, TAU); g.fill();
+    } else {
+      g.lineWidth = Math.max(1.5, w*0.055);           // flagellum
+      g.beginPath();
+      for (let i = 0; i <= 14; i++) {
+        const t = i/14, x = -w*0.22 - t*w*0.22, y = Math.sin(t*7)*w*0.06*t;
+        g[i ? "lineTo" : "moveTo"](x, y);
+      }
+      g.stroke();
+      const hl = w*0.24, r = w*0.145;                 // the rod
+      g.beginPath();
+      g.moveTo(-hl, -r); g.lineTo(hl, -r);
+      g.arc(hl, 0, r, -Math.PI/2, Math.PI/2);
+      g.lineTo(-hl, r);
+      g.arc(-hl, 0, r, Math.PI/2, -Math.PI/2);
+      g.closePath(); g.fill();
+    }
+    g.restore();
+  }
   function syncRolodex(c) {
     if (!isTouch || !el.tEnz) return;        // the deck only exists on a phone
+    const sprite = el.tLin && el.tLin.querySelector(".rsprite");
     if (state && state.role === "protist") { // a grazer has no enzymes — the button is a sprint
-      paintRolo(el.tEnz, "#ffd24a", "turbo", null, null);
+      paintRolo(el.tEnz, "#ffd24a", null, null);
       const pr = controlledProtist();
-      if (el.tLin && pr) paintRolo(el.tLin, "#ff9ec0", "graze", null, null);
+      if (el.tLin && pr) {
+        paintRolo(el.tLin, "#ff9ec0", null, null);
+        drawRoleSprite(sprite, "protist");
+      }
       return;
     }
     const owned = c ? ownedDeployables(c) : [2];
     let i = owned.indexOf(state.activeEnzyme); if (i < 0) i = 0;
     const many = owned.length > 1;
-    paintRolo(el.tEnz, deployColor(owned[i]), deployCap(owned[i]),
+    paintRolo(el.tEnz, deployColor(owned[i]),
       many ? deployColor(owned[(i - 1 + owned.length) % owned.length]) : null,
       many ? deployColor(owned[(i + 1) % owned.length]) : null);
 
@@ -2222,9 +2261,10 @@
       const { ks } = lineageReps();
       let j = ks.indexOf(ecoMask(c)*64 + upgradeTier(c)); if (j < 0) j = 0;
       const multi = ks.length > 1;
-      paintRolo(el.tLin, levelColor(ecoMask(c), upgradeTier(c)), "lin",
+      paintRolo(el.tLin, levelColor(ecoMask(c), upgradeTier(c)),
         multi ? lineageKeyColor(ks[(j - 1 + ks.length) % ks.length]) : null,
         multi ? lineageKeyColor(ks[(j + 1) % ks.length]) : null);
+      drawRoleSprite(sprite, "bacterium");
     }
   }
   function syncHud() {

@@ -327,9 +327,12 @@
   .rolo .rnext { transform: translateY(27%) scale(.84); }
   .rolo .rface { z-index: 2; border: 2px solid rgba(255,255,255,.42);
     box-shadow: 0 2px 12px rgba(0,0,0,.5), inset 0 -6px 14px -8px rgba(0,0,0,.55); }
-  .rolo .rcap { position: relative; z-index: 3; font-size: 10.5px; font-weight: bold;
-    letter-spacing: .3px; color: #06232a; pointer-events: none; text-shadow: none; }
-  .tbtn.big.rolo .rcap { font-size: 12px; }
+  /* the lineage button draws what you currently are — a bacterium, or a protist once you've
+     been flipped — in dark ink over the lineage's own colour */
+  /* background:transparent is load-bearing — the global `canvas { background: #06232a }` rule would
+     otherwise paint an opaque dark rectangle over the button's face */
+  .rolo .rsprite { position: relative; z-index: 3; width: 62%; height: 62%;
+    pointer-events: none; background: transparent; }
   .rolo:active .rface { filter: brightness(1.25); }
   /* The genome row is moved into the right column by game.js on touch: gene chips double as
      enzyme buttons. Compact and right-aligned so they tuck in above the action buttons. */
@@ -482,7 +485,7 @@
             <li><kbd>Tab</kbd> — switch which enzyme/antibiotic is loaded &nbsp;·&nbsp; <kbd>M</kbd> — cycle sound (music / effects / off)</li>
             <li><kbd>Shift</kbd> — <b>switch lineage</b>: hand control to another of your lineages</li>
             <li><kbd>Esc</kbd> — pause &amp; high scores &nbsp;·&nbsp; <b>Help</b> button — this guide</li>
-            <li class="touchonly"><b>On a phone:</b> all the controls sit in the <b>deck below the ocean</b>, so your thumbs never cover it. Steer with the <b>thumbstick</b>; push it <b>all the way out and hold a beat</b> (¼s) to <b>lock in a run</b> — the rim lights up and the cell keeps swimming that way after you let go. The lock <b>winds down over a couple of seconds</b> (watch the knob ease back to centre), so it never sticks on; tap the stick's <b>centre</b> to stop it early. The two round buttons to its right are <b>coloured by what's loaded</b>: the big one is your enzyme (or <span style="color:#f05ad0">antibiotic</span>), the small one your current <b>lineage</b>, with their neighbours peeking out behind like cards in a stack. <b>Tap to fire / switch, swipe up or down to change</b> — and you can hold the stick and tap them <b>at the same time</b>. Tapping a gene in the <b>genome row</b> still loads it directly; swipe the chart (up top) to fold it away.</li>
+            <li class="touchonly"><b>On a phone:</b> all the controls sit in the <b>deck below the ocean</b>, so your thumbs never cover it. Steer with the <b>thumbstick</b>; push it <b>all the way out and hold a beat</b> (¼s) to <b>lock in a run</b> — the rim lights up and the cell keeps swimming that way after you let go. The lock <b>winds down over a couple of seconds</b> (watch the knob ease back to centre), so it never sticks on; tap the stick's <b>centre</b> to stop it early. The two round buttons to its right carry <b>no labels, only colour</b>: the small inner one is your current <b>lineage</b> (with a little <b>bacterium</b> drawn on it — a <b>protist</b> once you've been flipped), and the big outer one is your loaded enzyme (or <span style="color:#f05ad0">antibiotic</span>). Their neighbours peek out behind like cards in a stack. <b>Tap to fire / switch, swipe up or down to change</b> — and you can hold the stick and tap them <b>at the same time</b>. Tapping a gene in the <b>genome row</b> still loads it directly; swipe the chart (up top) to fold it away.</li>
           </ul>
         </section>
         <section>
@@ -619,14 +622,17 @@
       <div id="deckRight">
       <div id="tbtns">
         <!-- Rolodex buttons: the face is flooded with the colour of what's loaded, and the
-             neighbours peek out behind it. Tap to fire, swipe up/down to change. -->
-        <button id="tEnz" class="tbtn big rolo" aria-label="Release loaded enzyme — swipe up or down to change it">
-          <span class="rprev"></span><span class="rnext"></span>
-          <span class="rface"></span><span class="rcap">carb</span>
-        </button>
+             neighbours peek out behind it. Tap to fire, swipe up/down to change.
+             LINEAGE sits first (innermost) and RELEASE last, so the button you hammer is the one
+             furthest from the stick — the two thumbs stop crowding each other. No labels: colour
+             carries the enzyme, and the lineage button draws whatever you currently are. -->
         <button id="tLin" class="tbtn rolo" aria-label="Switch lineage — swipe up or down to cycle">
           <span class="rprev"></span><span class="rnext"></span>
-          <span class="rface"></span><span class="rcap">lin</span>
+          <span class="rface"></span><canvas class="rsprite" width="44" height="44"></canvas>
+        </button>
+        <button id="tEnz" class="tbtn big rolo" aria-label="Release loaded enzyme — swipe up or down to change it">
+          <span class="rprev"></span><span class="rnext"></span>
+          <span class="rface"></span>
         </button>
         <button id="tPause" class="tbtn pause" aria-label="Pause">❚❚</button>
       </div>
