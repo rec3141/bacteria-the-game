@@ -3803,6 +3803,11 @@
     prepareHiDpiCanvas(canvas, w, h, ctx);
     if (changed) {
       VIEW_W = w; VIEW_H = h; // logical CSS pixels; dots are normalized — no rebuild
+      // The tutorial dish IS the viewport, so a resize has to resize the world with it — otherwise
+      // rotating the phone (or the chart collapsing under you in short landscape, which now happens)
+      // leaves the glass sized for a canvas that no longer exists, with the camera parked off-centre.
+      // confineToDish() then walks everything back inside on the next frame.
+      if (dishOn() && state && state.demo) { setWorld(VIEW_W, VIEW_H); cam.x = WORLD_W/2; cam.y = WORLD_H/2; }
       // Re-derive the zoom from the canvas we actually got. Without this the touch zoom (tuned
       // when the canvas was a fixed 800px being CSS-scaled down) composites with the responsive
       // canvas and the world is magnified twice over.
