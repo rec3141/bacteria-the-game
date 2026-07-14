@@ -235,8 +235,26 @@
     border-radius: 4px; padding: 1px 6px; font-family: inherit; font-size: 12px; margin: 0 1px;
   }
 
-  /* Title screen */
-  #title { gap: 20px; }
+  /* Title screen. The attract-mode sim runs BEHIND this, so the backdrop is a gradient rather than
+     the near-opaque wash the other screens use: dark enough in the middle to keep the menu legible,
+     clear at the edges so you can see the ocean living out there. */
+  #title { gap: 20px; z-index: 10;
+    background: radial-gradient(ellipse at 50% 45%, rgba(3,14,18,.93) 0%, rgba(3,14,18,.8) 38%,
+                                rgba(3,14,18,.55) 70%, rgba(3,14,18,.35) 100%);
+    backdrop-filter: blur(1.5px); }
+  /* Attract-mode caption: one line of narration under the ocean's midline, above the water,
+     below the menu. */
+  /* z-index 11 = above the title's dimming gradient (10), below nothing that matters — the menu is
+     centred and the caption hugs the floor, so they never collide. */
+  #demoCap { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%);
+    z-index: 11; width: min(560px, 88%); text-align: center; pointer-events: none;
+    background: rgba(4,17,21,.82); border: 1px solid rgba(87,224,192,.28); border-radius: 10px;
+    padding: 7px 14px; backdrop-filter: blur(2px); }
+  #demoCap.hidden { display: none !important; }
+  #demoCap i { display: block; font-style: normal; font-size: 10px; letter-spacing: 1.4px;
+    text-transform: uppercase; color: var(--accent); opacity: .75; margin-bottom: 2px; }
+  #demoCap span { font-size: 13px; line-height: 1.45; color: var(--ink); }
+  #demoCap b { color: var(--accent); }
   .titlecard { text-align: center; }
   .titlecard h1 { margin: 0; font-size: 68px; letter-spacing: 2px;
     background: linear-gradient(180deg, #b8ffec, #57e0c0 55%, #2a9d84);
@@ -420,6 +438,9 @@
     /* Menus break out of the short game stage to fill the viewport, so their
        content fits the tall phone screen instead of scrolling in a tiny box. */
     .screen { position: fixed; z-index: 50; gap: 10px; padding: 14px; }
+    /* the menus go position:fixed here, which would bury the attract caption inside the stage —
+       lift it out to the viewport too, above the title's backdrop */
+    #demoCap { position: fixed; z-index: 55; bottom: 10px; }
     #help, #science { z-index: 60; } /* stay above the screen they were opened from */
     .screen h1 { font-size: 30px; }
     #title .lede { font-size: 13px; line-height: 1.45; }
@@ -472,6 +493,9 @@
       </div>
     </div>
     <div id="toast"></div>
+    <!-- Attract-mode caption. Sits over the ocean but UNDER the title screen's menu, so the demo
+         narrates itself without fighting the buttons for space. -->
+    <div id="demoCap" class="hidden"></div>
     <div id="title" class="screen">
       <div class="titlecard">
         <h1>Bacteria!</h1>

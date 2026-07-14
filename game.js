@@ -223,6 +223,7 @@
     dayLen: document.getElementById("dayLen"),   // filled from CFG.day.lengthSec — it's a tunable knob
     circosPop: document.getElementById("circosPop"), circosCanvas: document.getElementById("circosCanvas"),
     circosCap: document.getElementById("circosCap"), detailCircos: document.getElementById("detailCircos"),
+    demoCap: document.getElementById("demoCap"),   // attract-mode caption, over the ocean
     science: document.getElementById("science"), sciBody: document.getElementById("sciBody"), sciBack: document.getElementById("sciBack"),
     sciBtn: document.getElementById("sciBtn"), sciBtn2: document.getElementById("sciBtn2"), sciBtn3: document.getElementById("sciBtn3"),
     analysisChart: document.getElementById("analysisChart"), analysisStats: document.getElementById("analysisStats"),
@@ -445,8 +446,14 @@
     // match e.code too: on non-US layouts the key left of "1" doesn't emit a backtick
     if (e.key === "`" || e.code === "Backquote") { e.preventDefault(); toggleAdmin(); return; } // live-tuning panel
     if (adminOpen && e.key === "/" && el.adminSearch) { e.preventDefault(); el.adminSearch.focus(); el.adminSearch.select(); return; }
-    if (e.key === "Escape") { if (adminOpen) { toggleAdmin(false); return; } if (sciOpen) { hideScience(); return; } if (helpOpen) { hideHelp(); return; } togglePause(); return; }
+    if (e.key === "Escape") { if (adminOpen) { toggleAdmin(false); return; } if (sciOpen) { hideScience(); return; } if (helpOpen) { hideHelp(); return; } if (!(state && state.demo)) togglePause(); return; }
     if (e.key.toLowerCase() === "m") { cycleAudio(); return; } // cycle: all on → music off → effects off → muted
+    // Attract mode is running behind the title: any real keypress means "let me play", so drop
+    // straight into a run rather than making them find the button.
+    if (demo && !helpOpen && !sciOpen && !adminOpen && el.title && !el.title.classList.contains("hidden")
+        && (e.key === "Enter" || e.key === " " || e.key.startsWith("Arrow") || "wasd".includes(e.key.toLowerCase()))) {
+      e.preventDefault(); start(); return;
+    }
     if (helpOpen || sciOpen || paused) return; // swallow gameplay input while a menu is up
     if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," ","Tab"].includes(e.key)) e.preventDefault();
     keys[e.key.toLowerCase()] = true;
@@ -704,12 +711,17 @@
       reproCd: CFG.predator.reproCooldown, toxT: 0, turboT: 0, dead: false };
   }
 
-  function newGame() {
+  function newGame(isDemo) {
     const first = makeCell(WORLD_W/2, WORLD_H/2, CFG.cell.startEnergy, -Math.PI/2, 1);
     for (let i = 0; i < Math.round(CFG.cell.startUpgrades); i++) grantRandomUpgrade(first); // testing aid
-    first.controlled = true; cells = [first]; // start as a single founder cell
+    // In the demo NOTHING is controlled: the attract mode is the simulation running itself, and a
+    // cell left "controlled" with no one at the keys would just sit there tumbling in place.
+    first.controlled = !isDemo; cells = [first]; // start as a single founder cell
     substrates = [];
-    const seedFood = foodTargetFor(dielLight(0));   // start at the food the STARTING hour supports
+    // A run opens at day.startHour (midnight by default). The DEMO opens at midday instead: a dark,
+    // empty, becalmed midnight sea is the worst possible advert for the game. Noon is the bloom.
+    const tod0 = isDemo ? 0.5 : 0;
+    const seedFood = foodTargetFor(dielLight(tod0));   // start at the food the STARTING hour supports
     for (let i = 0; i < seedFood; i++) substrates.push(makeSubstrate());
     predators = [];
     for (let i = 0; i < CFG.predator.count; i++) {
@@ -725,20 +737,129 @@
     }
     // first gold is spawned by the always-on-board respawn logic (same buried-in-particle rule)
     cam.x = first.x; cam.y = first.y;
-    state = { gen: 1, score: 0, running: true, elapsed: 0, activeEnzyme: 2, role: "bacterium", // start with carbohydrase, as a bacterium
+    state = { gen: 1, score: 0, running: true, elapsed: tod0*CFG.day.lengthSec, activeEnzyme: 2, role: "bacterium", // start with carbohydrase, as a bacterium
       day: 1, runId: Date.now(),   // runId is stable across days: continuing UPDATES the leaderboard entry, never adds a second one
       greenSeedT: rand(CFG.phage.greenSeed[0], CFG.phage.greenSeed[1]),
       predImmigrateT: CFG.predator.immigrateEvery, preyT: 0, turboBonus: 0,
       predRespawn: CFG.predator.immigrateEvery, predExtinct: false, // respawn interval halves each time protists go fully extinct
       mortLive: [0, 0, 0, 0], mortFull: [0, 0, 0, 0], // cause-of-death tallies (grazing/viral/starvation/antibiotic) per sample interval
-      tod: 0, light: 0, foodTarget: foodTargetFor(dielLight(0)), graze: 1, foodT: 0, // diel state (updateDiel refreshes each frame)
-      chartT: 0, history: [], fullT: 0, fullHist: [], fullInterval: 1, upgrades: [] };
+      tod: tod0, light: dielLight(tod0), foodTarget: seedFood, graze: 1, foodT: 0, // diel state (updateDiel refreshes each frame)
+      chartT: 0, history: [], fullT: 0, fullHist: [], fullInterval: 1, upgrades: [],
+      demo: !!isDemo };
     updateDiel();
-    Audio.play("spawn", 0.5);
+    if (!isDemo) Audio.play("spawn", 0.5);
   }
 
   function controlledCell() { return cells.find((c) => c.controlled && c.alive); }
   function controlledProtist() { return predators.find((p) => p.controlled); }
+
+  // ------------------------------------------------------------------- attract mode
+  // The sim already plays itself — cells forage, divide, encyst, get eaten and lyse with nobody at
+  // the keys. So the tutorial is not a second simulation: it's a DIRECTOR. Each beat STAGES its
+  // mechanic (put a grazer next to a cell; hand a cell a gene), points the camera at it, and
+  // captions it. Staging beats waiting: left to chance a phage might not lyse anything for 30s, and
+  // a tutorial that might not happen is not a tutorial.
+  // When the beats run out it doesn't stop — it drifts on as a screensaver behind the title menu.
+  let demo = null;
+  const alive = (e) => e && e.alive !== false && !e.dead;
+  const anyCell = () => cells.find((c) => c.alive && !c.cyst) || cells[0];
+  function demoFocus(e, secs) { if (e) { demo.focus = e; demo.hold = secs || 0; } }
+  const DEMO_BEATS = [
+    { cap: "A bacterium cannot steer. It swims in a straight line — a <b>run</b> — then <b>tumbles</b> to a random new heading.",
+      secs: 8, setup: () => anyCell() },
+    { cap: "It is far too small to swallow a particle, so it digests one from the outside: an <b>enzyme</b> dissolves the particle, and the cell absorbs what comes loose.",
+      secs: 11, setup: () => {                       // park a cell on the doorstep of a particle
+        const c = anyCell(), s = substrates.find((p) => p.phase === "live");
+        if (c && s) { const a = rand(0, TAU); c.x = wrapX(s.x + Math.cos(a)*(s.R + 26)); c.y = wrapY(s.y + Math.sin(a)*(s.R + 26));
+          c.angle = Math.atan2(dy(s.y, c.y), dx(s.x, c.x)); c.tumbling = false; c.enzCd = 0.2; }
+        return c;
+      } },
+    { cap: "Fed well enough, it <b>elongates and divides</b>. Every cell becomes two, so a colony goes exponential — 1, 2, 4, 8…",
+      secs: 9, setup: () => anyCell(),
+      tick: (c, t) => { if (alive(c) && t > 2.5) c.energy = CFG.cell.divideThreshold + 1; } },  // nudge it over the line, on camera
+    { cap: "Bacteria are prey. Single-celled <b>protists</b> graze on them — the link that carries all this carbon up the food web.",
+      secs: 10, setup: () => {
+        const c = anyCell(); if (!c) return null;
+        const a = rand(0, TAU);
+        const pr = makePredator(wrapX(c.x + Math.cos(a)*190), wrapY(c.y + Math.sin(a)*190), CFG.predator.startEnergy, 0);
+        predators.push(pr);
+        return c;
+      } },
+    { cap: "<b>Phages</b> hunt bacteria. One injects its DNA, hijacks the cell to copy itself, then bursts it open — a <b>lysis</b> that seeds the water with more phages.",
+      secs: 10, setup: () => {
+        const c = anyCell(); if (!c) return null;
+        c.infectedGreen = true; c.lysisT = 4.5;      // on a schedule, not on a dice roll
+        for (let i = 0; i < 3; i++) { const a = rand(0, TAU);
+          phages.push(makePhage("green", wrapX(c.x + Math.cos(a)*90), wrapY(c.y + Math.sin(a)*90), upgradeTier(c))); }
+        return c;
+      } },
+    { cap: "A rare <b>gold phage</b> rewrites the genome instead of killing. This cell just gained <b>lipase</b> — it can digest the fatty particles it used to swim past.",
+      secs: 10, setup: () => {
+        const c = anyCell(); if (!c) return null;
+        c.enzLvl[0] = Math.max(1, c.enzLvl[0]);      // lipase — deliberately, so it answers beat 2
+        burst(c.x, c.y, "#ffd24a", 18);
+        return c;
+      } },
+  ];
+  function startDemo() {
+    newGame(true);
+    demo = { i: -1, t: 0, secs: 0, focus: null, hold: 0, idle: false, idleT: 0 };
+    nextDemoBeat();
+  }
+  function stopDemo() { demo = null; if (el.demoCap) el.demoCap.classList.add("hidden"); }
+  function nextDemoBeat() {
+    if (!demo) return;
+    demo.i++; demo.t = 0;
+    if (demo.i >= DEMO_BEATS.length) {              // the lesson is over; keep the ocean alive
+      demo.idle = true; demo.idleT = 0; demo.secs = Infinity;
+      if (el.demoCap) el.demoCap.classList.add("hidden");
+      return;
+    }
+    const b = DEMO_BEATS[demo.i];
+    demo.secs = b.secs;
+    demo.focus = b.setup() || anyCell();
+    if (el.demoCap) {
+      el.demoCap.innerHTML = `<i>${demo.i + 1}/${DEMO_BEATS.length}</i><span>${b.cap}</span>`;
+      el.demoCap.classList.remove("hidden");
+    }
+  }
+  // Screensaver: no captions, just drift to whatever is worth watching — something dying loudly,
+  // a grazer mid-hunt, the gold phage, or failing all that the thick of the colony.
+  function demoInteresting() {
+    const lysing = cells.filter((c) => c.alive && c.infectedGreen);
+    if (lysing.length && Math.random() < 0.5) return lysing[(Math.random()*lysing.length)|0];
+    const gold = phages.find((p) => p.type === "gold" && !p.dead);
+    if (gold && Math.random() < 0.4) return gold;
+    if (predators.length && Math.random() < 0.5) return predators[(Math.random()*predators.length)|0];
+    return anyCell();
+  }
+  function updateDemo(dt) {
+    if (!demo || !state || !state.demo) return;
+    demo.t += dt;
+    const b = !demo.idle && DEMO_BEATS[demo.i];
+    if (b && b.tick) b.tick(demo.focus, demo.t);
+    if (!alive(demo.focus)) demo.focus = demo.idle ? demoInteresting() : anyCell();   // it died mid-shot
+    if (demo.idle) {
+      demo.idleT -= dt;
+      if (demo.idleT <= 0) { demo.idleT = rand(7, 12); demo.focus = demoInteresting(); }
+    } else if (demo.t >= demo.secs) nextDemoBeat();
+    // ease the camera on (toroidal: chase the SHORT way round, never across the whole world)
+    const f = demo.focus;
+    if (f) {
+      const k = 1 - Math.exp(-2.6*dt);
+      cam.x = wrapX(cam.x + dx(f.x, cam.x)*k);
+      cam.y = wrapY(cam.y + dy(f.y, cam.y)*k);
+    }
+  }
+  function drawDemoFocus() {                        // a soft ring so you know what you're being shown
+    if (!demo || !demo.focus || demo.idle || !alive(demo.focus)) return;
+    const f = demo.focus, r = (f.r || cellHalfLen(f) || 10) + 16 + Math.sin(state.elapsed*3)*2.5;
+    ctx.save();
+    ctx.strokeStyle = "rgba(87,224,192,.55)"; ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 5]); ctx.lineDashOffset = -state.elapsed*14;
+    ctx.beginPath(); ctx.arc(sx(f.x), sy(f.y), r, 0, TAU); ctx.stroke();   // drawn INSIDE the zoom transform, like the cells
+    ctx.restore();
+  }
   function controlledEntity() { return state && state.role === "protist" ? controlledProtist() : controlledCell(); }
   // ---- trophic role-swap: flip the player between bacterium and protist on extinction ----
   function immigrateBacteria(n) { // a diversity of bacteria drift in from offscreen (varied genomes)
@@ -1024,7 +1145,8 @@
     if (!state || !state.running) return;
     state.elapsed += dt; updateDiel();               // advance the day; drive light/temp/food/grazing
     // end of a day: you made it. Offer to carry on into the next one (see continueDay).
-    if (state.elapsed >= state.day * CFG.day.lengthSec) { gameOver(true); return; }
+    // The demo has no player to congratulate and no score to record — the sun just keeps going round.
+    if (state.elapsed >= state.day * CFG.day.lengthSec) { if (state.demo) state.day++; else { gameOver(true); return; } }
     // A locked run winds down instead of sticking on: the knob eases back to center and the
     // rim's glow fades, so you can watch it run out rather than being stuck swimming. Held
     // thumb pauses the countdown — that's you steering, not coasting.
@@ -1048,9 +1170,14 @@
     for (const c of cells) if (c.alive && c.energy >= CFG.cell.divideThreshold) divide(c);
     const hadControlled = cells.some((c) => c.controlled && c.alive);
     cells = cells.filter((c) => c.alive);
-    // trophic role-swap: bacteria extinct → you become a protist (not game over)
-    if (state.role === "bacterium" && !cells.length) { becomeProtist(); return; }
-    if (state.role === "bacterium" && cells.length && !hadControlled && !cells.some((c) => c.controlled)) cells[0].controlled = true;
+    // trophic role-swap: bacteria extinct → you become a protist (not game over). The demo has no
+    // one to promote, so it just restocks the sea and keeps running — an attract loop can't end.
+    if (state.role === "bacterium" && !cells.length) {
+      if (state.demo) immigrateBacteria(CFG.cycle.reseedBacteria);
+      else { becomeProtist(); return; }
+    }
+    // don't hand the demo a controlled cell behind our backs — that's what this guard is for
+    if (!state.demo && state.role === "bacterium" && cells.length && !hadControlled && !cells.some((c) => c.controlled)) cells[0].controlled = true;
     // particle lifecycle: drift slowly; when fully eaten or past its lifespan, respawn
     // (past-lifespan particles erode away voxel-by-voxel rather than vanishing)
     for (const s of substrates) {
@@ -1105,6 +1232,7 @@
     particles = particles.filter((q) => q.life > 0);
     // camera follows whichever entity you're controlling (cell or protist)
     const pc = controlledEntity(); if (pc) { cam.x = pc.x; cam.y = pc.y; }
+    updateDemo(dt);   // no player to follow in attract mode — the director drives the camera instead
     // sample per-ecotype abundances for the time-series chart
     const greenCount = phages.reduce((a, p) => a + (p.type === "green"), 0);
     const subTotals = [0, 0, 0]; // total available organic of each resource on the board (lipid/protein/carb)
@@ -1629,6 +1757,7 @@
     for (const ph of phages) drawPhage(ph);
     for (const pr of predators) drawPredator(pr);
     for (const c of cells) drawCell(c);
+    drawDemoFocus();      // inside the zoom transform, so the ring tracks the cell exactly
     ctx.restore();
     drawDayNight(); // time-of-day color wash (screen space, over the world, under the minimap)
     drawMinimap(); // HUD-space, never zoomed
@@ -2148,7 +2277,7 @@
     if (!el.scoresList) return;
     const arr = (globalScores || loadScores()).slice(); // shared list when we have it, else this browser's local runs
     // paused mid-game: drop the live run into the list so you can see exactly where it ranks
-    const liveLine = (state && state.running) ? currentRunLine() : null;
+    const liveLine = (state && state.running && !state.demo) ? currentRunLine() : null; // the attract loop is not a run
     if (liveLine) arr.push(liveLine);
     if (!arr.length) { el.scoresList.innerHTML = `<p class="empty">No runs yet. Play a game and your lineage's evolutionary history will appear here.</p>`; return; }
     // all-time leader per category → 🏆 badge on that run's value
@@ -2348,7 +2477,7 @@
   function toggleHelp() { helpOpen ? hideHelp() : showHelp(); }
   function pauseGame() { if (!state || !state.running || paused) return; paused = true; releaseStick(); showScores(); }
   function resumeGame() { paused = false; hideScores(); }
-  function endGame() { if (!state || !state.running) return; paused = false; hideScores(); gameOver(); }
+  function endGame() { if (!state || !state.running || state.demo) return; paused = false; hideScores(); gameOver(); } // the demo has no score to end
   let _toastTimer = null;
   function positionToast() { // anchor the announcement just above the controlled cell (was fixed at the top, over the HUD)
     const pc = controlledCell(); if (!pc || !el.toast) return;
@@ -2514,7 +2643,7 @@
     requestAnimationFrame(frame);
   }
 
-  function start() { Audio.init(); Music.start(Audio.ctx()); applyAudioMode(); justFinishedTs = null; el.title.classList.add("hidden"); el.over.classList.add("hidden"); newGame(); }
+  function start() { stopDemo(); Audio.init(); Music.start(Audio.ctx()); applyAudioMode(); justFinishedTs = null; el.title.classList.add("hidden"); el.over.classList.add("hidden"); newGame(); }
   el.startBtn.addEventListener("click", start);
   // Carry the SAME run into the next day: nothing is reset — the colony, the score, the genome and
   // the clock all continue. Only the day counter moves, which pushes the next end-of-day boundary a
@@ -3115,6 +3244,11 @@
   // temperature & salinity are held neutral for now (reserved for future levels:
   // estuary, sea ice, hydrothermal vent, ...)
   env.tempC = 20; env.salinity = 35; env.update();
+  // The title screen used to be an empty ocean. Run the attract mode behind it: the sim teaches
+  // itself, and the menu sits over a sea that's actually alive.
+  startDemo();
+  // Clicking the water (rather than a menu button) also means "let me play".
+  if (el.title) el.title.addEventListener("click", (e) => { if (e.target === el.title && demo) start(); });
   requestAnimationFrame(frame);
 
 })();
