@@ -1183,6 +1183,7 @@
       goal: "Press <b>Tab</b> — or tap/swipe the gene control — to load the <b style='color:#f05ad0'>antibiotic</b>",
       setup: () => { clearCast(); const c = centre(ctrlCell()); if (!c) return;
         demo.hero = c; c.antibiotic = Math.max(1, c.antibiotic || 0); state.activeEnzyme = 2; demo.focus = c; },
+      maintain: (c) => { if (c) c.antibiotic = Math.max(1, c.antibiotic || 0); },
       done: () => state.activeEnzyme === AB },
 
     { cap: "Many microbes make <b style='color:#f05ad0'>antibiotics</b> as chemical weapons. Yours poisons nearby protists and genetically distant bacteria, while close kin carrying the same resistance are spared.",
@@ -1194,6 +1195,8 @@
         const pole = cellPolesLocal(c), maxR = CFG.toxin.maxRadius * (1 + (c.antibiotic-1)*CFG.toxin.radiusPer);
         const pr = makePredator(wrapX(c.x + pole[0] + maxR*0.55), wrapY(c.y + pole[1]), CFG.predator.startEnergy, 0);
         predators.push(pr); tut.target = pr; demo.focus = pr; },
+      maintain: (c) => { if (c) { c.antibiotic = Math.max(1, c.antibiotic || 0);
+        c.energy = Math.max(c.energy, CFG.cell.antibioticCost + 10); c.invuln = Math.max(c.invuln, 0.5); } },
       done: () => !!tut.flags.usedAntibiotic },
   ];
   function startTutorial() {
@@ -1262,12 +1265,14 @@
       c.controlled = true; c.invuln = 1.5; cells.push(c);
       demo.hero = c;
     } else if (!ctrlCell()) { const c = cells.find((x) => x.alive); if (c) { c.controlled = true; demo.hero = c; } }
+    const st = TUT_STEPS[tut.i];
+    if (st.maintain) st.maintain(ctrlCell());       // tutorial-granted genes survive a replacement cell
     if (tut.done) {                              // held on "✓ done" for a beat, then move on
       tut.doneT -= dt;
       if (tut.doneT <= 0) tutNext();
       return;
     }
-    if (TUT_STEPS[tut.i].done()) {
+    if (st.done()) {
       tut.done = true; tut.doneT = 1.6;
       Audio.play("upgrade", 0.5);
       renderTutStep(true);

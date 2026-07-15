@@ -60,12 +60,14 @@ const antibioticStep = tutorial.indexOf("chemical weapons");
 assert(crisprStep >= 0 && swapStep > crisprStep && antibioticStep > swapStep,
   "antibiotic swap and release must be the final two tutorial events");
 assert.match(tutorial.slice(swapStep, antibioticStep),
-  /c\.antibiotic = Math\.max\(1,[^\n]*state\.activeEnzyme = 2[\s\S]*?done: \(\) => state\.activeEnzyme === AB/,
-  "the swap step must give the cell an antibiotic, load carbohydrase, and wait for antibiotic selection");
+  /c\.antibiotic = Math\.max\(1,[^\n]*state\.activeEnzyme = 2[\s\S]*?maintain:[\s\S]*?done: \(\) => state\.activeEnzyme === AB/,
+  "the swap step must preserve the antibiotic, load carbohydrase, and wait for antibiotic selection");
 assert.match(tutorial.slice(antibioticStep),
-  /state\.activeEnzyme = AB[\s\S]*?makePredator[\s\S]*?done: \(\) => !!tut\.flags\.usedAntibiotic/,
-  "the final step must stage a protist and wait for player antibiotic use");
+  /state\.activeEnzyme = AB[\s\S]*?makePredator[\s\S]*?maintain:[\s\S]*?done: \(\) => !!tut\.flags\.usedAntibiotic/,
+  "the final step must preserve the antibiotic, stage a protist, and wait for player antibiotic use");
 assert.match(game, /releaseAntibiotic\(c\)\) \{ tutDid\("usedAntibiotic"\)/,
   "a successful player antibiotic release must complete the tutorial event");
+assert.match(game, /const st = TUT_STEPS\[tut\.i\];[\s\S]*?st\.maintain\(ctrlCell\(\)\)/,
+  "tutorial-maintained genes must be restored after the controlled cell is replaced");
 
 console.log(`Static contracts OK: ${sounds.size} sounds and ${controls.length} control${controls.length === 1 ? "" : "s"} checked.`);
