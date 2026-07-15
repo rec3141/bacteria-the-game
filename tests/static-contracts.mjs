@@ -125,5 +125,10 @@ assert.doesNotMatch(game, /DEMO_BEATS|nextDemoBeat/,
 assert.match(game,
   /function startDemo\(\) \{[\s\S]*?newGame\(true\)[\s\S]*?idle: true[\s\S]*?openDemoWorld\(\)[\s\S]*?demoCap\) el\.demoCap\.classList\.add\("hidden"\)/,
   "the main menu must start directly in an uncaptioned autonomous ocean simulation");
+assert.match(help,
+  /<p class="lede"><b>One tiny cell\. One living ocean\.<\/b> Chase food, capture new genes, evade hungry protists/,
+  "the main menu must lead with a concise, player-first gameplay hook");
+assert.doesNotMatch(help, /A drop of seawater is a world/,
+  "the old explanatory main-menu copy must not return");
 
 console.log(`Static contracts OK: ${sounds.size} sounds and ${controls.length} control${controls.length === 1 ? "" : "s"} checked.`);
