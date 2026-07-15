@@ -67,6 +67,11 @@ assert.match(tutorial.slice(antibioticStep),
   "the final step must separate the bacterium and protist, preserve a vulnerable target, and require its antibiotic death");
 assert.doesNotMatch(tutorial, /usedAntibiotic/,
   "releasing an antibiotic without killing the protist must not complete the tutorial");
+assert.equal((tutorial.match(/pr\.tutorialGrace = TUTORIAL_PROTIST_GRACE/g) || []).length, 2,
+  "both interactive protist encounters must pause the grazer while their captions are read");
+assert.match(game,
+  /const tutorialWaiting = pr\.tutorialGrace > 0;[\s\S]*?const hunting = !tutorialWaiting && pr\.satiated <= 0;[\s\S]*?if \(tutorialWaiting\) \{[\s\S]*?pr\.vx = pr\.vy = 0/,
+  "a tutorial grace period must stop movement and grazing without changing normal protists");
 assert.match(game, /const st = TUT_STEPS\[tut\.i\];[\s\S]*?st\.maintain\(ctrlCell\(\)\)/,
   "tutorial-maintained genes must be restored after the controlled cell is replaced");
 assert.match(game, /function upperTutorialPoint[\s\S]*?y: WORLD_H\/2 - r\*0\.32/,

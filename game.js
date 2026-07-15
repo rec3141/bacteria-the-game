@@ -1114,6 +1114,7 @@
   // is gone. Back/Skip exist for anyone who wants out of a step, but the default path through is to
   // play it. Both share the dish, the director's control of the cast, and the still camera.
   let tut = null;
+  const TUTORIAL_PROTIST_GRACE = 10;           // let the caption land before a grazer starts hunting
   const ctrlCell = () => cells.find((c) => c.controlled && c.alive);
   function tutDid(flag) { if (tut && !tut.done) tut.flags[flag] = true; }
   function grantCrispr(c) {                     // the tutorial promises CRISPR, so it delivers CRISPR
@@ -1161,7 +1162,8 @@
     { cap: "This is a <b style='color:#ff9ec0'>protist</b> — a single-celled hunter, and bacteria are what it eats. It doesn't dissolve you from outside the way you eat a particle: it engulfs you whole. You cannot outswim it forever.<br><em style='opacity:.8'>There is something a bacterium can do about a grazer. You don't have it yet.</em>",
       goal: "Let it catch you. <b>Get eaten.</b>",
       setup: () => { clearCast(true); const c = centre(ctrlCell());
-        const pr = makePredator(0, 0, CFG.predator.startEnergy, 0); focusTutorial(pr);
+        const pr = makePredator(0, 0, CFG.predator.startEnergy, 0);
+        pr.tutorialGrace = TUTORIAL_PROTIST_GRACE; focusTutorial(pr);
         predators.push(pr); if (c) c.invuln = 0; },
       done: () => !!tut.flags.eaten },
 
@@ -1208,7 +1210,8 @@
         state.activeEnzyme = AB;
         const maxR = CFG.toxin.maxRadius * (1 + (c.antibiotic-1)*CFG.toxin.radiusPer);
         placeTutorial(c, -maxR*0.7);
-        const pr = makePredator(0, 0, Math.max(1, CFG.toxin.dose*0.9), 0); focusTutorial(pr, maxR*0.7);
+        const pr = makePredator(0, 0, Math.max(1, CFG.toxin.dose*0.9), 0);
+        pr.tutorialGrace = TUTORIAL_PROTIST_GRACE; focusTutorial(pr, maxR*0.7);
         predators.push(pr); tut.target = pr; },
       maintain: (c) => { if (c) { c.antibiotic = Math.max(1, c.antibiotic || 0);
         c.energy = Math.max(c.energy, CFG.cell.antibioticCost + 10); c.invuln = Math.max(c.invuln, 0.5); }
@@ -2316,8 +2319,12 @@
       if (pr.reproCd > 0) pr.reproCd -= dt;
       if (pr.toxT > 0) pr.toxT -= dt;
       if (pr.satiated > 0) pr.satiated -= dt;
-      const hunting = pr.satiated <= 0;
-      if (pr.controlled) {                              // YOU are steering this protist (trophic role-swap)
+      const tutorialWaiting = pr.tutorialGrace > 0;
+      if (tutorialWaiting) pr.tutorialGrace = Math.max(0, pr.tutorialGrace - dt);
+      const hunting = !tutorialWaiting && pr.satiated <= 0;
+      if (tutorialWaiting) {                            // tutorial captions get a calm reading window
+        pr.vx = pr.vy = 0;
+      } else if (pr.controlled) {                       // YOU are steering this protist (trophic role-swap)
         const a = axis();
         if (a.x !== 0 || a.y !== 0) {
           pr.heading = Math.atan2(a.y, a.x);
