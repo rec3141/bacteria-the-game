@@ -1201,18 +1201,20 @@
       done: () => state.activeEnzyme === AB },
 
     { cap: "Many microbes make <b style='color:#f05ad0'>antibiotics</b> as chemical weapons. Yours poisons nearby protists and genetically distant bacteria, while close kin carrying the same resistance are spared.",
-      goal: "Face the ringed <b style='color:#ff9ec0'>protist</b> and press <b>Space</b> — or tap release — to fire the antibiotic",
+      goal: "Swim into range and kill the ringed <b style='color:#ff9ec0'>protist</b> with your antibiotic",
       setup: () => { clearCast(); const c = ctrlCell(); if (!c) return;
         demo.hero = c; c.antibiotic = Math.max(1, c.antibiotic || 0); c.angle = 0; c.tumbling = false;
         c.energy = Math.max(c.energy, CFG.cell.antibioticCost + 10); c.invuln = Math.max(c.invuln, 3);
         state.activeEnzyme = AB;
         const maxR = CFG.toxin.maxRadius * (1 + (c.antibiotic-1)*CFG.toxin.radiusPer);
-        placeTutorial(c, -maxR*0.35);
-        const pr = makePredator(0, 0, CFG.predator.startEnergy, 0); focusTutorial(pr, maxR*0.35);
+        placeTutorial(c, -maxR*0.7);
+        const pr = makePredator(0, 0, Math.max(1, CFG.toxin.dose*0.9), 0); focusTutorial(pr, maxR*0.7);
         predators.push(pr); tut.target = pr; },
       maintain: (c) => { if (c) { c.antibiotic = Math.max(1, c.antibiotic || 0);
-        c.energy = Math.max(c.energy, CFG.cell.antibioticCost + 10); c.invuln = Math.max(c.invuln, 0.5); } },
-      done: () => !!tut.flags.usedAntibiotic },
+        c.energy = Math.max(c.energy, CFG.cell.antibioticCost + 10); c.invuln = Math.max(c.invuln, 0.5); }
+        const pr = tut.target;
+        if (pr && !pr.dead && pr.toxT <= 0) pr.energy = Math.max(pr.energy, Math.max(1, CFG.toxin.dose*0.9)); },
+      done: () => !!(tut.target && tut.target.dead && tut.target.toxT > 0) },
   ];
   function startTutorial() {
     stopDemo();
@@ -1627,7 +1629,7 @@
     const c = controlledCell(); if (!c) return;
     if (!ownedDeployables(c).includes(state.activeEnzyme)) state.activeEnzyme = ownedDeployables(c)[0] ?? 2;
     if (state.activeEnzyme === AB) {
-      if (releaseAntibiotic(c)) { tutDid("usedAntibiotic"); Audio.play("enzyme", 0.55); }
+      if (releaseAntibiotic(c)) Audio.play("enzyme", 0.55);
     }
     else if (releaseEnzyme(c, state.activeEnzyme)) Audio.play("enzyme", 0.7);
   }

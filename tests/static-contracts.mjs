@@ -63,10 +63,10 @@ assert.match(tutorial.slice(swapStep, antibioticStep),
   /c\.antibiotic = Math\.max\(1,[^\n]*state\.activeEnzyme = 2[\s\S]*?maintain:[\s\S]*?done: \(\) => state\.activeEnzyme === AB/,
   "the swap step must preserve the antibiotic, load carbohydrase, and wait for antibiotic selection");
 assert.match(tutorial.slice(antibioticStep),
-  /state\.activeEnzyme = AB[\s\S]*?makePredator[\s\S]*?maintain:[\s\S]*?done: \(\) => !!tut\.flags\.usedAntibiotic/,
-  "the final step must preserve the antibiotic, stage a protist, and wait for player antibiotic use");
-assert.match(game, /releaseAntibiotic\(c\)\) \{ tutDid\("usedAntibiotic"\)/,
-  "a successful player antibiotic release must complete the tutorial event");
+  /state\.activeEnzyme = AB[\s\S]*?placeTutorial\(c, -maxR\*0\.7\)[\s\S]*?makePredator\(0, 0, Math\.max\(1, CFG\.toxin\.dose\*0\.9\)[\s\S]*?focusTutorial\(pr, maxR\*0\.7\)[\s\S]*?maintain:[\s\S]*?done: \(\) => !!\(tut\.target && tut\.target\.dead && tut\.target\.toxT > 0\)/,
+  "the final step must separate the bacterium and protist, preserve a vulnerable target, and require its antibiotic death");
+assert.doesNotMatch(tutorial, /usedAntibiotic/,
+  "releasing an antibiotic without killing the protist must not complete the tutorial");
 assert.match(game, /const st = TUT_STEPS\[tut\.i\];[\s\S]*?st\.maintain\(ctrlCell\(\)\)/,
   "tutorial-maintained genes must be restored after the controlled cell is replaced");
 assert.match(game, /function upperTutorialPoint[\s\S]*?y: WORLD_H\/2 - r\*0\.32/,
