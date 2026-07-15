@@ -328,7 +328,7 @@
   #helpBody ul { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.7; opacity: .9; }
   .c-lip { color: #efd98a; } .c-pro { color: #ef8b3c; } .c-carb { color: #6fa8ff; }
   .c-gold { color: #ffd24a; } .c-vir { color: #8bf06a; } .c-cyst { color: #9aa6a0; } .c-prot { color: #ff9ec0; }
-  /* Circos genome popup (hover a run on the leaderboard) */
+  /* Lineage genome popup (hover a colored band on an analysis/detail chart) */
   /* opaque, not translucent: the ring's middle is empty, and the leaderboard behind it
      showed straight through the gap and muddied the plot */
   #circosPop { position: fixed; z-index: 200; pointer-events: none;
@@ -875,7 +875,7 @@
     <canvas id="subchart" width="800" height="64"></canvas>
   </div>
 </div>
-<!-- Hover a run on the high-score board and its genome is drawn here, as a circos ring. Lives outside
+<!-- Hover a lineage band on an analysis/detail chart and its genome is drawn here. Lives outside
      #stage so it can follow the cursor across the whole viewport without being clipped. -->
 <div id="circosPop" class="hidden">
   <canvas id="circosCanvas" width="230" height="230"></canvas>

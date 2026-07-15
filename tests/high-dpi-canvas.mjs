@@ -54,7 +54,7 @@ assert.match(game, /const logical = logicalCanvasSize\(canvas\);[\s\S]*?ecoBandA
 assert.match(html, /#scoresTable td\.chart canvas \{[^}]*width: 132px; height: 30px/,
   "mini charts retain their CSS footprint after backing-store growth");
 assert.match(html, /#circosPop canvas \{[^}]*width: 230px; height: 230px/,
-  "Circos popup retains its CSS footprint after backing-store growth");
+  "lineage popup retains its CSS footprint after backing-store growth");
 assert.match(html, /#helix \{[^}]*width: 100%; height: 100%/,
   "DNA helix overlay retains the genome row's CSS footprint after backing-store growth");
 
