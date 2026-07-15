@@ -1114,7 +1114,7 @@
   // is gone. Back/Skip exist for anyone who wants out of a step, but the default path through is to
   // play it. Both share the dish, the director's control of the cast, and the still camera.
   let tut = null;
-  const TUTORIAL_PROTIST_GRACE = 10;           // let the caption land before a grazer starts hunting
+  const TUTORIAL_PROTIST_GRACE = 4;            // let the caption land before a grazer starts hunting
   const ctrlCell = () => cells.find((c) => c.controlled && c.alive);
   function tutDid(flag) { if (tut && !tut.done) tut.flags[flag] = true; }
   function grantCrispr(c) {                     // the tutorial promises CRISPR, so it delivers CRISPR
