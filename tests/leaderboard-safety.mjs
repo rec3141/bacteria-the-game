@@ -24,7 +24,12 @@ const board = normalizeScoreList([
       { t: 2, label: "Lipase 1", abbr: "L1", color: "#efd98a", acquired: true },
       { t: "bad", label: {}, abbr: {}, color: "url(evil)", acquired: "yes" },
     ],
-    lineages: { 64: { t: 2, ups: [{ t: 2, label: "Lipase 1", abbr: "L1", color: "#efd98a", acquired: true }] } },
+    lineages: { 64: {
+      t: 2,
+      ups: [{ t: 2, label: "Lipase 1", abbr: "L1", color: "#efd98a", acquired: true }],
+      tree: [{ t: 2, label: "Lipase 1", abbr: "L1", color: "#efd98a", acquired: true }],
+      variants: [{ t: 3, ups: [], tree: [{ t: 3, label: "Lost lipase", abbr: "xL1", color: "#efd98a" }] }],
+    } },
     roleSwaps: [2, "bad", null],
   },
 ]);
@@ -38,6 +43,9 @@ assert.equal(board[1].hist[0].eco.length, 8);
 assert.deepEqual(board[1].hist[0].buckets, { 0: 2 });
 assert.equal(board[1].upgrades.length, 1);
 assert.equal(board[1].lineages[64].ups.length, 1);
+assert.equal(board[1].lineages[64].tree.length, 1);
+assert.equal(board[1].lineages[64].variants.length, 1);
+assert.equal(board[1].lineages[64].variants[0].tree[0].abbr, "xL1");
 assert.deepEqual(board[1].roleSwaps, [2]);
 assert.deepEqual(normalizeScoreList({ 0: board[0] }), [], "a board object must not masquerade as a list");
 

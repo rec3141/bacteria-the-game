@@ -23,6 +23,18 @@ check($board[0]['upgrades'] === [], 'upgrade object must not masquerade as a lis
 check((array)$board[0]['lineages'] === [], 'lineage list must not masquerade as an object map');
 check($board[0]['roleSwaps'] === [], 'role-swap object must not masquerade as a list');
 
+$phylo = json_decode('[{
+  "id":2,"score":20,"hist":[],"upgrades":[],
+  "lineages":{"64":{"t":2,"ups":[],"tree":[{"t":2,"label":"Lipase","abbr":"L1","color":"#efd98a"}],
+    "variants":[{"t":3,"ups":[],"tree":[{"t":3,"label":"Lost lipase","abbr":"xL1","color":"#efd98a"}]}]}},
+  "roleSwaps":[]
+}]');
+$phyloBoard = score_normalize_board($phylo, 1, 100000, 2 * 1024 * 1024, 192 * 1024);
+$lineage = (array)$phyloBoard[0]['lineages'];
+check(count($lineage[64]['tree']) === 1, 'lineage ancestry must survive server normalization');
+check(count($lineage[64]['variants']) === 1, 'same-band phylogenetic variants must survive server normalization');
+check($lineage[64]['variants'][0]['tree'][0]['abbr'] === 'xL1', 'gene-loss branches must retain their labels');
+
 $oversized = score_fit_board($board, 100, 10, 192 * 1024);
 check($oversized === [], 'aggregate byte budget must exclude records that do not fit');
 

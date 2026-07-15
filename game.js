@@ -720,30 +720,70 @@
     else if (pick === "chemo") { c.chemoLevel--; if (!c.chemoLevel) c.chemotaxis = false; locus = "T"; color = "#ffd24a"; }
     else { c.enzLvl[pick]--; locus = ["L","P","C"][pick]; color = RESOURCES[pick].color; }
     // drop the LAST log entry for that locus, so the genome and its history still agree
-    const ups = (c.ups || []).slice();
-    for (let k = ups.length - 1; k >= 0; k--) if (locusOf(ups[k]) === locus) { ups.splice(k, 1); break; }
+    const ancestry = (c.phylo || c.ups || []).slice(), ups = (c.ups || []).slice();
+    let lost = null;
+    for (let k = ups.length - 1; k >= 0; k--) if (locusOf(ups[k]) === locus) { lost = ups[k]; ups.splice(k, 1); break; }
     c.ups = ups;
-    return { color };
+    // The genome log above describes what the cell carries NOW. The phylogeny is an event history,
+    // so retain streamlining as an explicit branch instead of making a gene loss erase its ancestry.
+    const lostAbbr = (lost && lost.abbr) || locus;
+    const event = { t: state ? state.elapsed : 0, label: "Lost " + ((lost && lost.label) || lostAbbr),
+      abbr: ("x" + lostAbbr).slice(0, 12), color, acquired: false };
+    c.phylo = ancestry.concat([event]);
+    return { color, event };
   }
   // DRIFT. Your cell taking a gene is a single event in one lineage; on its own the population just
   // tracks you, and the chart becomes one colour marching up the screen. So every time you adapt,
   // somewhere else in the sea another cell also changes — it gains a random gene, or it loses one.
   // That keeps a spread of genomes alive around you, which is what makes the ecotype chart (and
   // kill-the-winner, which needs variety in adaptation level to bite) mean anything.
-  function driftAnotherCell(source) {
-    if (!CFG.cell.driftOnUpgrade) return;
+  function lineageSignature(path) { return (path || []).map((u) => u && u.abbr).filter(Boolean).join("|"); }
+  function rememberLineage(c) {
+    if (!state || !state.lineages || !c) return;
+    const key = ecoMask(c)*64 + Math.min(63, upgradeTier(c));
+    const snapshot = { t: +state.elapsed.toFixed(1), ups: (c.ups || []).slice(0, 32),
+      tree: (c.phylo || c.ups || []).slice(0, 32) };
+    const entry = state.lineages[key];
+    if (!entry) {
+      if (Object.keys(state.lineages).length < 64) state.lineages[key] = snapshot;
+      return;
+    }
+    // Several real genomes can share the chart's compact ecotype+tier bucket. Keep those terminal
+    // paths as variants so the phylogenetic tree does not collapse a mutation just because its band
+    // happens to have the same numeric tier as one already sampled.
+    const sig = lineageSignature(snapshot.tree), variants = entry.variants || [];
+    if (sig === lineageSignature(entry.tree || entry.ups) || variants.some((v) => sig === lineageSignature(v.tree || v.ups))) return;
+    if (variants.length < 4) entry.variants = variants.concat([snapshot]);
+  }
+  function driftAnotherCell(source, defer = true) {
+    if (!CFG.cell.driftOnUpgrade) return false;
     const pool = cells.filter((c) => c.alive && !c.cyst && c !== source);
-    if (!pool.length) return;
+    if (!pool.length) {
+      // The opening gold phage often arrives before the founder divides. Bank that mutation and
+      // apply it to the first sister cell instead of silently throwing the event away.
+      if (defer && state && !state.demo) state.pendingDrift = Math.min(8, (state.pendingDrift || 0) + 1);
+      return false;
+    }
     const c = pool[(Math.random()*pool.length)|0];
-    const gain = Math.random() < CFG.cell.driftGainChance;
-    const u = gain ? grantRandomUpgrade(c) : loseRandomUpgrade(c);
-    if (u) burst(c.x, c.y, u.color, gain ? 8 : 5);   // you can SEE diversity happening out there
+    let gain = Math.random() < CFG.cell.driftGainChance;
+    let u = gain ? grantRandomUpgrade(c) : loseRandomUpgrade(c);
+    if (!u) { gain = true; u = grantRandomUpgrade(c); } // a base genome has nothing it can lose
+    rememberLineage(c);                              // don't wait for the next chart sample to see it
+    burst(c.x, c.y, u.color, gain ? 8 : 5);          // you can SEE diversity happening out there
+    return true;
+  }
+  function applyPendingDrift() {
+    if (!state || !state.pendingDrift) return;
+    const source = controlledCell();
+    if (source && driftAnotherCell(source, false)) state.pendingDrift--;
   }
   function grantRandomUpgrade(c) {
     const u = grantRandomUpgrade_(c);
     // concat, not push: daughters share the parent's array by reference until one of them adapts, and
     // a push would rewrite the other lineage's history too.
-    c.ups = (c.ups || []).concat([{ t: state ? state.elapsed : 0, label: u.msg, abbr: u.abbr, color: u.color, acquired: u.acquired }]);
+    const event = { t: state ? state.elapsed : 0, label: u.msg, abbr: u.abbr, color: u.color, acquired: u.acquired };
+    c.phylo = (c.phylo || c.ups || []).concat([event]);
+    c.ups = (c.ups || []).concat([event]);
     return u;
   }
   function grantRandomUpgrade_(c) {
@@ -777,8 +817,9 @@
       infectedGreen: false, lysisT: 0, chemotaxis: false, chemoLevel: 0, crispr: false, antibiotic: 0, toxT: 0,
       // This cell's OWN adaptation log, in the order it was acquired — inherited whole by its
       // daughters. The player's run-level log (state.upgrades) only ever knew about the cell you were
-      // steering; this is what lets every lineage on the chart show its own genome.
-      ups: [],
+      // steering; this is what lets every lineage on the chart show its own genome. phylo preserves
+      // the full event ancestry too, including losses that correctly disappear from the current genome.
+      ups: [], phylo: [],
       enzLvl: [0, 0, 1] }; // per-enzyme expression level [lipase, protease, carbohydrase]; 0 = locked, carb starts at 1
   }
   // Build an adaptation log from a genome, for cells that were never *granted* anything — immigrants
@@ -994,7 +1035,8 @@
       mortLive: [0, 0, 0, 0], mortFull: [0, 0, 0, 0], // cause-of-death tallies (grazing/viral/starvation/antibiotic) per sample interval
       tod: tod0, light: dielLight(tod0), foodTarget: seedFood, graze: 1, foodT: 0, // diel state (updateDiel refreshes each frame)
       chartT: 0, history: [], fullT: 0, fullHist: [], fullInterval: 1, upgrades: [],
-      lineages: {},   // bucket key (ecotype+tier, i.e. one colored band) → that lineage's genome
+      lineages: {},   // chart bucket → current genome, ancestry, and any distinct same-band variants
+      pendingDrift: 0, // gold caught before division still mutates the first other cell that appears
       roleSwaps: [],  // when you flipped trophic level — the biggest event a run can have
       dead: [],       // seed bank: genomes of everything that has died, for cysts to revive from
 
@@ -1026,23 +1068,25 @@
   function tutDid(flag) { if (tut && !tut.done) tut.flags[flag] = true; }
   function grantCrispr(c) {                     // the tutorial promises CRISPR, so it delivers CRISPR
     c.crispr = true;
-    c.ups = (c.ups || []).concat([{ t: state ? state.elapsed : 0, label: "CRISPR", abbr: "Cr", color: CRISPR_COLOR, acquired: true }]);
+    const event = { t: state ? state.elapsed : 0, label: "CRISPR", abbr: "Cr", color: CRISPR_COLOR, acquired: true };
+    c.phylo = (c.phylo || c.ups || []).concat([event]);
+    c.ups = (c.ups || []).concat([event]);
     return { msg: "CRISPR", color: CRISPR_COLOR, abbr: "Cr", acquired: true };
   }
   function clearCast(keepFood) {                // each step stages its own scene, and only its own
     predators.length = 0; phages.length = 0; toxins.length = 0;
     if (!keepFood) substrates.length = 0;
   }
-  // Tutorial captions occupy the bottom of the dish. Stage every ringed subject above the
-  // midline so the highlight and the thing it names can never hide behind the explainer.
-  function upperTutorialPoint(xOffset = 0, yOffset = 0) {
+  // Tutorial captions occupy opposite edges: top on touch, bottom on desktop. Keep each ringed
+  // subject in the open half of the dish so the thing being explained never sits under its caption.
+  function tutorialPoint(xOffset = 0, yOffset = 0) {
     const r = dishRadius();
     return { x: WORLD_W/2 + clamp(xOffset, -r*0.45, r*0.45),
-      y: WORLD_H/2 - r*0.32 + clamp(yOffset, -r*0.14, r*0.14) };
+      y: WORLD_H/2 + (isTouch ? r*0.20 : -r*0.32) + clamp(yOffset, -r*0.12, r*0.12) };
   }
   function placeTutorial(e, xOffset, yOffset) {
     if (!e) return e;
-    const p = upperTutorialPoint(xOffset, yOffset); e.x = p.x; e.y = p.y; return e;
+    const p = tutorialPoint(xOffset, yOffset); e.x = p.x; e.y = p.y; return e;
   }
   function focusTutorial(e, xOffset, yOffset) {
     placeTutorial(e, xOffset, yOffset); demo.focus = e; return e;
@@ -1054,20 +1098,26 @@
     return s;
   }
   const TUT_STEPS = [
-    { cap: "You are this <b>bacterium</b>. Swim with the <b>arrow keys</b> or <b>WASD</b> — and notice that you stop the instant you let go. At this size, water is as thick as honey.",
-      goal: "Swim to the <b>ringed</b> particle — the <b class='c-carb'>blue</b> blocks in it are carbohydrate",
+    { capDesktop: "You are this <b>bacterium</b>. Swim with the <b>arrow keys</b> or <b>WASD</b> — and notice that you stop the instant you let go. At this size, water is as thick as honey.",
+      capTouch: "You are this <b>bacterium</b>. Push the <b>joystick</b> to swim — and notice that you stop the instant you release it. At this size, water is as thick as honey.",
+      goalDesktop: "Use <b>WASD</b> or the <b>arrow keys</b> to reach the <b>ringed</b> particle — its <b class='c-carb'>blue</b> blocks are carbohydrate",
+      goalTouch: "Push the <b>joystick</b> toward the <b>ringed</b> particle — its <b class='c-carb'>blue</b> blocks are carbohydrate",
       setup: () => { clearCast(); const s = spawnCarbParticle(); tut.target = s; demo.focus = s; centre(ctrlCell()); },
       done: () => { const c = ctrlCell(), s = tut.target;
         return !!(c && s && Math.hypot(dx(c.x, s.x), dy(c.y, s.y)) < s.R + 46); } },
 
-    { cap: "You are far too small to swallow it. So you digest it from the OUTSIDE: <b>Space</b> releases your <b class='c-carb'>carbohydrase</b>, the <b class='c-carb'>blue</b> blocks dissolve, and you absorb what comes loose.",
-      goal: "Approach the particle and press <b>Space</b> — eat something",
+    { capDesktop: "You are far too small to swallow it. So you digest it from the OUTSIDE: <b>Space</b> releases your <b class='c-carb'>carbohydrase</b>, the <b class='c-carb'>blue</b> blocks dissolve, and you absorb what comes loose.",
+      capTouch: "You are far too small to swallow it. So you digest it from the OUTSIDE: the large <b>enzyme button</b> releases your <b class='c-carb'>carbohydrase</b>, the <b class='c-carb'>blue</b> blocks dissolve, and you absorb what comes loose.",
+      goalDesktop: "Approach the particle and press <b>Space</b> — eat something",
+      goalTouch: "Approach with the <b>joystick</b>, then tap the large <b>enzyme button</b> — eat something",
       setup: () => { if (!tut.target || tut.target.organic <= 0) { clearCast(); tut.target = spawnCarbParticle(); }
         demo.focus = tut.target; tut.score0 = state.score; },
       done: () => state.score > (tut.score0 || 0) + 2 },
 
-    { cap: "This is a <b class='c-prot'>protist</b> — a single-celled hunter, and bacteria are what it eats. It doesn't dissolve you from outside the way you eat a particle: it engulfs you whole.",
-      goal: "Avoid getting eaten for <b>4 seconds</b>",
+    { capDesktop: "This is a <b class='c-prot'>protist</b> — a single-celled hunter, and bacteria are what it eats. It doesn't dissolve you from outside the way you eat a particle: it engulfs you whole.",
+      capTouch: "This is a <b class='c-prot'>protist</b> — a single-celled hunter, and bacteria are what it eats. It doesn't dissolve you from outside the way you eat a particle: it engulfs you whole.",
+      goalDesktop: "Use <b>WASD</b> or the <b>arrow keys</b> to avoid getting eaten for <b>4 seconds</b>",
+      goalTouch: "Use the <b>joystick</b> to avoid getting eaten for <b>4 seconds</b>",
       setup: () => { clearCast(true); const c = centre(ctrlCell());
         const pr = makePredator(0, 0, CFG.predator.startEnergy, 0);
         pr.tutorialGrace = TUTORIAL_PROTIST_GRACE; focusTutorial(pr);
@@ -1079,16 +1129,20 @@
         if (c && pr.tutorialGrace <= 0 && (pr.vx !== 0 || pr.vy !== 0)) tut.surviveT += dt; },
       done: () => tut.surviveT >= 4 },
 
-    { cap: "Not every phage kills. The <b class='c-gold'>gold</b> one provides <b>ADAPTATIONS</b> that you can pass on to your descendants.",
-      goal: "Catch the <b class='c-gold'>gold phage</b> — it carries <b class='c-crispr'>CRISPR</b>",
+    { capDesktop: "Not every phage kills. The <b class='c-gold'>gold</b> one provides <b>ADAPTATIONS</b> that you can pass on to your descendants.",
+      capTouch: "Not every phage kills. The <b class='c-gold'>gold</b> one provides <b>ADAPTATIONS</b> that you can pass on to your descendants.",
+      goalDesktop: "Use <b>WASD</b> or the <b>arrow keys</b> to catch the <b class='c-gold'>gold phage</b> — it carries <b class='c-crispr'>CRISPR</b>",
+      goalTouch: "Push the <b>joystick</b> toward the <b class='c-gold'>gold phage</b> — it carries <b class='c-crispr'>CRISPR</b>",
       setup: () => { clearCast(true); const c = centre(ctrlCell()); if (!c) return;
         c.infectedGreen = false; c.crispr = false;      // a clean slate, so the gene is the news
         const ph = makePhage("gold", 0, 0); focusTutorial(ph); ph.vx = ph.vy = 0;
         phages.push(ph); },
       done: () => { const c = ctrlCell(); return !!(tut.flags.adapted || (c && c.crispr)); } },
 
-    { cap: "<b class='c-crispr'>CRISPR</b> is a bacterial immune system that shreds viral DNA. <b class='c-vir'>Green phages</b> cannot infect you and become lunch.",
-      goal: "Swim into a <b class='c-vir'>green phage</b> to eat it.",
+    { capDesktop: "<b class='c-crispr'>CRISPR</b> is a bacterial immune system that shreds viral DNA. <b class='c-vir'>Green phages</b> cannot infect you and become lunch.",
+      capTouch: "<b class='c-crispr'>CRISPR</b> is a bacterial immune system that shreds viral DNA. <b class='c-vir'>Green phages</b> cannot infect you and become lunch.",
+      goalDesktop: "Use <b>WASD</b> or the <b>arrow keys</b> to swim into a <b class='c-vir'>green phage</b> and eat it",
+      goalTouch: "Push the <b>joystick</b> to swim into a <b class='c-vir'>green phage</b> and eat it",
       setup: () => { clearCast(true); const c = centre(ctrlCell()); if (!c) return;
         demo.hero = c; if (!c.crispr) grantCrispr(c);   // Skip'd past the last step? You still get the gene.
         c.antibiotic = 0; if (state.activeEnzyme === AB) state.activeEnzyme = 2;
@@ -1098,15 +1152,19 @@
           if (i === 0) focusTutorial(ph); ph.vx = ph.vy = 0; phages.push(ph); } },
       done: () => !!tut.flags.atePhage },
 
-    { cap: "One cell can carry multiple adaptive genes, but only one is expressed at a time. This cell has an <b class='c-ab'>antibiotic biosynthesis gene</b>.",
-      goal: "Press <b>Tab</b> — or tap/swipe the gene control — to load the <b class='c-ab'>antibiotic</b>",
+    { capDesktop: "One cell can carry multiple adaptive genes, but only one is expressed at a time. This cell has an <b class='c-ab'>antibiotic biosynthesis gene</b>.",
+      capTouch: "One cell can carry multiple adaptive genes, but only one is expressed at a time. This cell has an <b class='c-ab'>antibiotic biosynthesis gene</b>.",
+      goalDesktop: "Press <b>Tab</b> to load the <b class='c-ab'>antibiotic</b>",
+      goalTouch: "Tap the magenta <b class='c-ab'>antibiotic</b> gene button to load it",
       setup: () => { clearCast(); const c = placeTutorial(ctrlCell()); if (!c) return;
         demo.hero = c; c.antibiotic = Math.max(1, c.antibiotic || 0); state.activeEnzyme = 2; demo.focus = c; },
       maintain: (c) => { if (c) c.antibiotic = Math.max(1, c.antibiotic || 0); },
       done: () => state.activeEnzyme === AB },
 
-    { cap: "Many microbes make <b class='c-ab'>antibiotics</b> as chemical weapons. Yours poisons nearby protists and genetically distant bacteria, while close kin carrying the same resistance are spared.",
-      goal: "Press <b>Space</b> to release the antibiotic and kill the <b class='c-prot'>protist</b>",
+    { capDesktop: "Many microbes make <b class='c-ab'>antibiotics</b> as chemical weapons. Yours poisons nearby protists and genetically distant bacteria, while close kin carrying the same resistance are spared.",
+      capTouch: "Many microbes make <b class='c-ab'>antibiotics</b> as chemical weapons. Yours poisons nearby protists and genetically distant bacteria, while close kin carrying the same resistance are spared.",
+      goalDesktop: "Press <b>Space</b> to release the antibiotic and kill the <b class='c-prot'>protist</b>",
+      goalTouch: "Tap the large <b class='c-ab'>enzyme button</b> to release the antibiotic and kill the <b class='c-prot'>protist</b>",
       setup: () => { clearCast(); const c = ctrlCell(); if (!c) return;
         demo.hero = c; c.antibiotic = Math.max(1, c.antibiotic || 0); c.angle = 0; c.tumbling = false;
         c.energy = Math.max(c.energy, CFG.cell.antibioticCost + 10); c.invuln = Math.max(c.invuln, 3);
@@ -1130,6 +1188,7 @@
     demo = { t: 0, focus: null, idle: false, idleT: 0, manualT: 0,
              dish: true, rim: 0, hero: first, gold: null, watch: true, interactive: true };
     tut = { i: -1, flags: {}, done: false, doneT: 0, complete: false, completeT: 0, target: null, score0: 0 };
+    document.body.classList.add("tutorial-active");
     if (el.title) el.title.classList.add("hidden");
     if (el.demoExit) el.demoExit.classList.remove("hidden");
     if (el.tutBar) el.tutBar.classList.remove("hidden");
@@ -1137,6 +1196,8 @@
   }
   function stopTutorial() {
     tut = null;
+    document.body.classList.remove("tutorial-active");
+    if (el.stage) el.stage.style.removeProperty("--tutorial-caption-space");
     if (el.tutBar) el.tutBar.classList.add("hidden");
     if (el.demoCap) el.demoCap.classList.remove("complete");
   }
@@ -1151,13 +1212,16 @@
   }
   function renderTutStep(done) {
     const st = TUT_STEPS[tut.i];
+    const cap = isTouch ? st.capTouch : st.capDesktop;
+    const goal = isTouch ? st.goalTouch : st.goalDesktop;
     if (el.demoCap) {
       el.demoCap.classList.remove("complete");
       el.demoCap.innerHTML =
-        `<i>step ${tut.i + 1} / ${TUT_STEPS.length}</i><span>${st.cap}</span>` +
-        (done ? `<b class="tutgoal ok">✓ done</b>` : `<b class="tutgoal">▸ ${st.goal}</b>`);
+        `<i>step ${tut.i + 1} / ${TUT_STEPS.length}</i><span>${cap}</span>` +
+        (done ? `<b class="tutgoal ok">✓ done</b>` : `<b class="tutgoal">▸ ${goal}</b>`);
       el.demoCap.classList.remove("hidden");
       el.demoCap.classList.add("tut");        // sits above the Back/Skip bar
+      sizeTouchTutorialHeader();
     }
     if (el.tutPrev) { el.tutPrev.textContent = "◀ Back"; el.tutPrev.disabled = tut.i === 0; }
     if (el.tutNext) el.tutNext.textContent = tut.i === TUT_STEPS.length - 1 ? "Finish ▶" : "Skip ▶";
@@ -1174,9 +1238,19 @@
     if (el.demoCap) {
       el.demoCap.innerHTML = "<i>tutorial complete</i><span><b>Congratulations!</b>You're ready for the real world.</span>";
       el.demoCap.classList.remove("hidden"); el.demoCap.classList.add("tut", "complete");
+      sizeTouchTutorialHeader();
     }
     if (el.tutPrev) { el.tutPrev.disabled = false; el.tutPrev.textContent = "Just watch"; }
     if (el.tutNext) el.tutNext.textContent = "Enter the real world ▶";
+  }
+  function sizeTouchTutorialHeader() {
+    if (!el.stage) return;
+    if (!isTouch || !tut || tut.complete || !el.demoCap) {
+      el.stage.style.removeProperty("--tutorial-caption-space"); return;
+    }
+    // The wording wraps differently on a narrow portrait phone and a short landscape phone. Measure
+    // the rendered card so health/exit controls always begin below it instead of trusting one guess.
+    el.stage.style.setProperty("--tutorial-caption-space", Math.ceil(el.demoCap.offsetHeight + 12) + "px");
   }
   // The reward for finishing is the ocean itself: the glass dissolves, the dish opens out, and the
   // sea runs on by itself. Control is handed back to the cells — from here you're watching, and the
@@ -1418,7 +1492,8 @@
     if (!state || c.cyst === undefined) return;
     state.dead = state.dead || [];
     state.dead.push({ enzLvl: c.enzLvl.slice(), chemotaxis: !!c.chemotaxis, chemoLevel: c.chemoLevel || 0,
-                      crispr: !!c.crispr, antibiotic: c.antibiotic || 0, ups: (c.ups || []).slice(0, 32) });
+                      crispr: !!c.crispr, antibiotic: c.antibiotic || 0, ups: (c.ups || []).slice(0, 32),
+                      phylo: (c.phylo || c.ups || []).slice(0, 32) });
     if (state.dead.length > 400) state.dead.shift();   // a rolling bank, not an ever-growing one
   }
   function reviveGenome(c) {                            // returns false if the bank is empty
@@ -1427,6 +1502,7 @@
     const g = bank[(Math.random()*bank.length)|0];
     c.enzLvl = g.enzLvl.slice(); c.chemotaxis = g.chemotaxis; c.chemoLevel = g.chemoLevel;
     c.crispr = g.crispr; c.antibiotic = g.antibiotic; c.ups = (g.ups || []).slice();
+    c.phylo = (g.phylo || g.ups || []).slice();
     return true;
   }
   function immigrateBacteria(n) { // a diversity of bacteria drift in from offscreen (varied genomes)
@@ -1443,6 +1519,7 @@
         if (Math.random() < 0.22) c.crispr = true;
         if (Math.random() < 0.30) c.antibiotic = 1;
         c.ups = genomeUps(c);   // it arrived already carrying these — read the log off the genome
+        c.phylo = c.ups.slice();
       }
       c.invuln = 2.5;
       cells.push(c);
@@ -1647,6 +1724,7 @@
     d1.antibiotic = d2.antibiotic = c.antibiotic;
     d1.enzLvl = c.enzLvl.slice(); d2.enzLvl = c.enzLvl.slice();
     d1.ups = d2.ups = c.ups || [];   // the adaptation log is heritable too (shared until one of them adapts)
+    d1.phylo = d2.phylo = c.phylo || c.ups || []; // event ancestry survives gain and gene loss alike
     if (c.infectedGreen) { d2.infectedGreen = true; d2.lysisT = c.lysisT; burst(c.x, c.y, "#7CFC5A", 8); } // virus segregates into one daughter; d1 (your lineage) stays clean
     cells.splice(cells.indexOf(c), 1, d1, d2);
     if (c.controlled) state.gen++; // count a generation only when the cell YOU are steering divides
@@ -1835,6 +1913,7 @@
     for (const c of cells) if (c.alive && c.energy >= CFG.cell.divideThreshold) divide(c);
     const hadControlled = cells.some((c) => c.controlled && c.alive);
     cells = cells.filter((c) => c.alive);
+    applyPendingDrift(); // the founder may just have produced the first eligible sister cell
     // trophic role-swap: bacteria extinct → you become a protist (not game over). The demo has no
       // one to promote, so it just restocks the sea and keeps running — a background sim can't end.
     if (state.role === "bacterium" && !cells.length) {
@@ -2365,6 +2444,7 @@
           // The tutorial promises CRISPR by name, and then has to teach eating a phage with it — so
           // there it grants CRISPR outright rather than rolling the dice on the lesson.
           const { msg, color, abbr, acquired } = (tut && !c.crispr) ? grantCrispr(c) : grantRandomUpgrade(c);
+          rememberLineage(c);                         // the captured adaptation is a branch immediately
           if (c.controlled) tutDid("adapted");
           ph.dead = true;
           burst(c.x, c.y, "#ffd24a", 16);
@@ -2855,12 +2935,9 @@
       const m = ecoMask(c); eco[m]++;          // cysts included in their generation bucket (colored, not a separate gray band)
       const key = m*64 + Math.min(63, upgradeTier(c)); // mask (0-7) high bits, tier low bits
       buckets[key] = (buckets[key] || 0) + 1;
-      // Remember what each colored band on the chart actually IS, the first time we see it: the band
-      // is a lineage (an ecotype at an adaptation level), and this is the genome behind that color.
-      // Recorded once per lineage, not per sample — a per-sample copy would balloon the saved run.
-      if (state && state.lineages && !state.lineages[key] && Object.keys(state.lineages).length < 64) {
-        state.lineages[key] = { t: +state.elapsed.toFixed(1), ups: (c.ups || []).slice(0, 32) };
-      }
+      // Remember the genomes behind every colored band. Same-band variants are deduplicated by their
+      // ancestry, so sampling can discover real diversity without copying it into every history row.
+      rememberLineage(c);
     }
     return { eco, buckets };
   }
@@ -3074,7 +3151,15 @@
     for (const [rawKey, lineage] of Object.entries(value).slice(0, SCORE_CLIENT_LIMITS.lineages)) {
       const key = Number(rawKey);
       if (!Number.isInteger(key) || key < 0 || key > 511 || !scoreClientObject(lineage)) continue;
-      out[key] = { t: scoreClientNumber(lineage.t, 0, 86400), ups: normalizeClientUpgrades(lineage.ups, 32) };
+      const entry = { t: scoreClientNumber(lineage.t, 0, 86400), ups: normalizeClientUpgrades(lineage.ups, 32) };
+      if (Array.isArray(lineage.tree)) entry.tree = normalizeClientUpgrades(lineage.tree, 32);
+      if (Array.isArray(lineage.variants)) entry.variants = lineage.variants.slice(0, 4)
+        .filter(scoreClientObject).map((variant) => {
+          const clean = { t: scoreClientNumber(variant.t, 0, 86400), ups: normalizeClientUpgrades(variant.ups, 32) };
+          if (Array.isArray(variant.tree)) clean.tree = normalizeClientUpgrades(variant.tree, 32);
+          return clean;
+        });
+      out[key] = entry;
     }
     return out;
   }
@@ -3291,10 +3376,9 @@
   const runMid = (rec) => ({ top: "gen " + (rec && rec.gen != null ? rec.gen : "—"),
                              bot: Math.round((rec && rec.score) || 0).toLocaleString() + " cal" });
   // ---------------------------------------------------------------- cladogram
-  // A run's phylogeny. Every lineage carries its adaptations in the order it got them, so two
-  // lineages that share a prefix share an ancestor — the set of paths IS a tree, and building it is
-  // just a trie over those logs. No extra bookkeeping, no guessing: the branch points are the moments
-  // a lineage adapted away from its parent.
+  // A run's phylogeny. Every lineage carries its mutation events in order, so two lineages that share
+  // a prefix share an ancestor — the set of paths IS a tree, built as a trie over those logs. A
+  // separate current-genome list keeps gene losses honest in both the tree and the genome display.
   // Caveat worth knowing: immigrant lineages drift in with a ready-made genome and no true history
   // (genomeUps synthesises a canonical order), so they hang off the root by what they CARRY rather
   // than by descent. In a game where genes also move sideways, that is arguably the honest picture.
@@ -3304,13 +3388,16 @@
     if (!keys.length) return null;
     const root = { abbr: null, color: null, depth: 0, children: [], leaves: [] };
     for (const k of keys) {
-      let node = root;
-      for (const u of (lin[k].ups || [])) {
-        let ch = node.children.find((c) => c.abbr === u.abbr);
-        if (!ch) { ch = { abbr: u.abbr, color: u.color, depth: node.depth + 1, children: [], leaves: [] }; node.children.push(ch); }
-        node = ch;
+      const paths = [lin[k]].concat(Array.isArray(lin[k].variants) ? lin[k].variants : []);
+      for (const path of paths) {
+        let node = root;
+        for (const u of (path.tree || path.ups || [])) {
+          let ch = node.children.find((c) => c.abbr === u.abbr);
+          if (!ch) { ch = { abbr: u.abbr, color: u.color, depth: node.depth + 1, children: [], leaves: [] }; node.children.push(ch); }
+          node = ch;
+        }
+        node.leaves.push(+k);                     // every distinct genome/path gets a terminal row
       }
-      node.leaves.push(+k);                       // this lineage ends here
     }
     return root;
   }
@@ -3822,6 +3909,7 @@
       // when the canvas was a fixed 800px being CSS-scaled down) composites with the responsive
       // canvas and the world is magnified twice over.
       if (isTouch) ZOOM = touchZoom() * viewScale();
+      sizeTouchTutorialHeader(); // rotation can add/remove lines; keep the tutorial header stacked
     }
   }
   let last = 0;
@@ -4626,6 +4714,7 @@
       if (el.chartwrap) el.chartwrap.classList.remove("collapsed");
     }
     syncShortLandscapeLayout();
+    if (tut && !tut.complete) renderTutStep(tut.done); // convertible devices get the controls they now have
     if (el.scores && !el.scores.classList.contains("hidden")) renderScoreList();
     if (typeof requestAnimationFrame === "function") requestAnimationFrame(resizeCanvas);
   }

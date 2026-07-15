@@ -54,8 +54,15 @@ const tutorialStart = game.indexOf("const TUT_STEPS = [");
 const tutorialEnd = game.indexOf("function startTutorial()", tutorialStart);
 assert(tutorialStart >= 0 && tutorialEnd > tutorialStart, "interactive tutorial steps are missing");
 const tutorial = game.slice(tutorialStart, tutorialEnd);
-assert.equal((tutorial.match(/\n    \{ cap:/g) || []).length, 7,
+assert.equal((tutorial.match(/\n    \{ capDesktop:/g) || []).length, 7,
   "the interactive tutorial must retain the revised seven-step sequence");
+assert.equal((tutorial.match(/\n      capTouch:/g) || []).length, 7,
+  "every tutorial step must have touch-specific explanatory copy");
+assert.equal((tutorial.match(/\n      goalDesktop:/g) || []).length, 7);
+assert.equal((tutorial.match(/\n      goalTouch:/g) || []).length, 7,
+  "every tutorial step must name only the controls available on that device");
+assert.doesNotMatch(tutorial, /tap\/swipe|— or tap|or tap\/swipe/,
+  "desktop and touch controls must not be combined into one tutorial instruction");
 assert.doesNotMatch(tutorial, /Get infected|Red<\/b> phages can infect/,
   "the standalone red-phage infection event must not remain in the seven-step tutorial");
 const tutorialPalette = {
@@ -81,10 +88,12 @@ assert.match(tutorial, /class='c-crispr'>CRISPR<\/b>/,
   "CRISPR tutorial labels must use the violet gene-bar color class");
 assert.doesNotMatch(tutorial, /style='color:#[0-9a-fA-F]+'/,
   "tutorial biological colors must use the audited semantic palette rather than inline values");
-assert.match(tutorial, /goal: "Approach the particle and press <b>Space<\/b>/,
+assert.match(tutorial, /goalDesktop: "Approach the particle and press <b>Space<\/b>/,
   "the digestion step must tell the player to approach rather than face the particle");
+assert.match(tutorial, /goalTouch: "Approach with the <b>joystick<\/b>, then tap the large <b>enzyme button<\/b>/,
+  "the touch digestion step must identify the joystick and enzyme button directly");
 assert.match(tutorial,
-  /Avoid getting eaten for <b>4 seconds<\/b>[\s\S]*?tut\.surviveT = 0[\s\S]*?pr\.tutorialGrace <= 0 && \(pr\.vx !== 0 \|\| pr\.vy !== 0\)\) tut\.surviveT \+= dt;[\s\S]*?done: \(\) => tut\.surviveT >= 4/,
+  /avoid getting eaten for <b>4 seconds<\/b>[\s\S]*?tut\.surviveT = 0[\s\S]*?pr\.tutorialGrace <= 0 && \(pr\.vx !== 0 \|\| pr\.vy !== 0\)\) tut\.surviveT \+= dt;[\s\S]*?done: \(\) => tut\.surviveT >= 4/,
   "the protist challenge must count four seconds of survival only after the grazer starts moving");
 const crisprStep = tutorial.indexOf("CRISPR</b> is a bacterial immune system");
 const swapStep = tutorial.indexOf("multiple adaptive genes");
@@ -106,8 +115,8 @@ assert.match(game,
   "a tutorial grace period must stop movement and grazing without changing normal protists");
 assert.match(game, /const st = TUT_STEPS\[tut\.i\];[\s\S]*?st\.maintain\(ctrlCell\(\), dt\)/,
   "tutorial-maintained genes must be restored after the controlled cell is replaced");
-assert.match(game, /function upperTutorialPoint[\s\S]*?y: WORLD_H\/2 - r\*0\.32/,
-  "tutorial highlights must be staged in the upper half of the dish");
+assert.match(game, /function tutorialPoint[\s\S]*?isTouch \? r\*0\.20 : -r\*0\.32/,
+  "tutorial highlights must stay opposite the top touch caption and bottom desktop caption");
 assert.match(game, /function spawnCarbParticle[\s\S]*?placeTutorial\(s\)/,
   "the tutorial's ringed food particle must use upper-dish staging");
 const tutorialParticle = game.slice(game.indexOf("function spawnCarbParticle"), game.indexOf("const TUT_STEPS"));
@@ -124,6 +133,27 @@ assert.match(game, /function tutPrev\(\) \{ if \(tut && tut\.complete\) finishTu
   "Just watch must open the autonomous simulation");
 assert.match(game, /if \(tut\.complete\) \{[\s\S]*?tut\.completeT -= dt;[\s\S]*?if \(tut\.completeT <= 0\) finishTutorial\(\)/,
   "the completion page must default to the autonomous simulation after five seconds");
+assert.match(game, /const cap = isTouch \? st\.capTouch : st\.capDesktop;[\s\S]*?const goal = isTouch \? st\.goalTouch : st\.goalDesktop/,
+  "tutorial rendering must switch the full instruction set with the active input mode");
+assert.match(game, /document\.body\.classList\.add\("tutorial-active"\)[\s\S]*?document\.body\.classList\.remove\("tutorial-active"\)/,
+  "the touch tutorial layout must be scoped to the interactive lesson");
+assert.match(help, /body\.touch\.tutorial-active #demoCap\.tut:not\(\.complete\) \{[\s\S]*?position: absolute; top: 6px; bottom: auto/,
+  "touch tutorial instructions must be anchored at the top of the stage, not over the control deck");
+assert.match(help, /body\.touch\.tutorial-active #hud \{ padding: var\(--tutorial-caption-space\)/,
+  "the touch health row must reserve space below the top tutorial instructions");
+assert.match(help, /body\.touch\.tutorial-active \.topline \.stats-inline,[\s\S]*?display: none/,
+  "nonessential colony statistics must get out of the compact touch tutorial header");
+
+assert.match(game, /if \(!pool\.length\) \{[\s\S]*?state\.pendingDrift = Math\.min\(8/,
+  "a gold-phage mutation must be deferred when the founder has no other cell yet");
+assert.match(game, /if \(!u\) \{ gain = true; u = grantRandomUpgrade\(c\); \}/,
+  "an impossible gene-loss roll must fall back to a real mutation");
+assert.match(game, /function applyPendingDrift\(\)[\s\S]*?driftAnotherCell\(source, false\)[\s\S]*?applyPendingDrift\(\);/,
+  "the deferred mutation must be applied once a sister cell exists");
+assert.match(game, /function rememberLineage\(c\)[\s\S]*?entry\.variants = variants\.concat\(\[snapshot\]\)/,
+  "distinct genomes that share a chart band must remain distinct phylogenetic terminals");
+assert.match(game, /const paths = \[lin\[k\]\]\.concat\([\s\S]*?path\.tree \|\| path\.ups/,
+  "the phylogenetic tree must render recorded variants and gene-loss ancestry");
 assert.doesNotMatch(game, /DEMO_BEATS|nextDemoBeat/,
   "the obsolete scripted tutorial must not play behind the main menu");
 assert.match(game,
