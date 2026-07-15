@@ -1172,11 +1172,29 @@
       goal: "Swim into a <b style='color:#8bf06a'>green</b> phage. <b>Eat it.</b>",
       setup: () => { clearCast(true); const c = centre(ctrlCell()); if (!c) return;
         demo.hero = c; if (!c.crispr) grantCrispr(c);   // Skip'd past the last step? You still get the gene.
+        c.antibiotic = 0; if (state.activeEnzyme === AB) state.activeEnzyme = 2;
         const tier = upgradeTier(c);
         for (let i = 0; i < 8; i++) { const p = near(c, rand(110, 200));
           const ph = makePhage("green", p.x, p.y, tier + CFG.phage.hostTolerance + 4);  // immune to you = edible
           ph.vx = ph.vy = 0; phages.push(ph); if (i === 0) demo.focus = ph; } },
       done: () => !!tut.flags.atePhage },
+
+    { cap: "One cell can carry several deployable genes, but only one is loaded at a time. This cell has an <b style='color:#f05ad0'>antibiotic</b> as well as carbohydrase — swap what is loaded before you need it.",
+      goal: "Press <b>Tab</b> — or tap/swipe the gene control — to load the <b style='color:#f05ad0'>antibiotic</b>",
+      setup: () => { clearCast(); const c = centre(ctrlCell()); if (!c) return;
+        demo.hero = c; c.antibiotic = Math.max(1, c.antibiotic || 0); state.activeEnzyme = 2; demo.focus = c; },
+      done: () => state.activeEnzyme === AB },
+
+    { cap: "Many microbes make <b style='color:#f05ad0'>antibiotics</b> as chemical weapons. Yours poisons nearby protists and genetically distant bacteria, while close kin carrying the same resistance are spared.",
+      goal: "Face the ringed <b style='color:#ff9ec0'>protist</b> and press <b>Space</b> — or tap release — to fire the antibiotic",
+      setup: () => { clearCast(); const c = centre(ctrlCell()); if (!c) return;
+        demo.hero = c; c.antibiotic = Math.max(1, c.antibiotic || 0); c.angle = 0; c.tumbling = false;
+        c.energy = Math.max(c.energy, CFG.cell.antibioticCost + 10); c.invuln = Math.max(c.invuln, 3);
+        state.activeEnzyme = AB;
+        const pole = cellPolesLocal(c), maxR = CFG.toxin.maxRadius * (1 + (c.antibiotic-1)*CFG.toxin.radiusPer);
+        const pr = makePredator(wrapX(c.x + pole[0] + maxR*0.55), wrapY(c.y + pole[1]), CFG.predator.startEnergy, 0);
+        predators.push(pr); tut.target = pr; demo.focus = pr; },
+      done: () => !!tut.flags.usedAntibiotic },
   ];
   function startTutorial() {
     stopDemo();
@@ -1588,7 +1606,9 @@
     if (state.role === "protist") { protistTurbo(); return; }   // Space = turbo when you're the grazer
     const c = controlledCell(); if (!c) return;
     if (!ownedDeployables(c).includes(state.activeEnzyme)) state.activeEnzyme = ownedDeployables(c)[0] ?? 2;
-    if (state.activeEnzyme === AB) { if (releaseAntibiotic(c)) Audio.play("enzyme", 0.55); }
+    if (state.activeEnzyme === AB) {
+      if (releaseAntibiotic(c)) { tutDid("usedAntibiotic"); Audio.play("enzyme", 0.55); }
+    }
     else if (releaseEnzyme(c, state.activeEnzyme)) Audio.play("enzyme", 0.7);
   }
   // TOUCH ONLY. On a phone the interesting decision is WHERE TO SWIM, not when to press a button —
@@ -2138,7 +2158,7 @@
     // autonomous chemical defense: a cell that evolved the antibiotic zaps protists that close in.
     // Kept deliberately sparing — it's a last-ditch defense, not a constant kill field, so protists
     // aren't wiped out around every colony (long cooldown + fires only when a grazer is right on top).
-    if (c.antibiotic > 0 && c.energy > CFG.cell.antibioticCost*3.5) {
+    if (c.antibiotic > 0 && c.energy > CFG.cell.antibioticCost*3.5 && !(tut && c.controlled)) {
       c.toxCd = (c.toxCd || 0) - dt;
       if (c.toxCd <= 0) {
         const maxR = CFG.toxin.maxRadius * (1 + (c.antibiotic-1)*CFG.toxin.radiusPer), rr = (maxR*0.6)**2;

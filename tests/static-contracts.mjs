@@ -50,4 +50,22 @@ assert.doesNotMatch(scoreRowBindings, /mouseenter|mousemove|mouseleave|showCirco
 assert.match(game, /if \(el\.detailCircos\) \{[\s\S]*?renderCircos\([^\n]*rec\.upgrades/,
   "the detailed run view must retain its Circos genome map");
 
+const tutorialStart = game.indexOf("const TUT_STEPS = [");
+const tutorialEnd = game.indexOf("function startTutorial()", tutorialStart);
+assert(tutorialStart >= 0 && tutorialEnd > tutorialStart, "interactive tutorial steps are missing");
+const tutorial = game.slice(tutorialStart, tutorialEnd);
+const crisprStep = tutorial.indexOf("Eat it.</b>");
+const swapStep = tutorial.indexOf("swap what is loaded");
+const antibioticStep = tutorial.indexOf("chemical weapons");
+assert(crisprStep >= 0 && swapStep > crisprStep && antibioticStep > swapStep,
+  "antibiotic swap and release must be the final two tutorial events");
+assert.match(tutorial.slice(swapStep, antibioticStep),
+  /c\.antibiotic = Math\.max\(1,[^\n]*state\.activeEnzyme = 2[\s\S]*?done: \(\) => state\.activeEnzyme === AB/,
+  "the swap step must give the cell an antibiotic, load carbohydrase, and wait for antibiotic selection");
+assert.match(tutorial.slice(antibioticStep),
+  /state\.activeEnzyme = AB[\s\S]*?makePredator[\s\S]*?done: \(\) => !!tut\.flags\.usedAntibiotic/,
+  "the final step must stage a protist and wait for player antibiotic use");
+assert.match(game, /releaseAntibiotic\(c\)\) \{ tutDid\("usedAntibiotic"\)/,
+  "a successful player antibiotic release must complete the tutorial event");
+
 console.log(`Static contracts OK: ${sounds.size} sounds and ${controls.length} control${controls.length === 1 ? "" : "s"} checked.`);
