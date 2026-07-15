@@ -1141,7 +1141,7 @@
   }
   function spawnCarbParticle() {                // chitin is 70% carbohydrate — the one you can already eat
     const s = makeSubstrate("chitin");
-    placeTutorial(s); s.vx = s.vy = 0;
+    placeTutorial(s);                            // keep makeSubstrate's natural drift
     substrates.push(s);
     return s;
   }

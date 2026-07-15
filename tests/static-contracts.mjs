@@ -73,6 +73,9 @@ assert.match(game, /function upperTutorialPoint[\s\S]*?y: WORLD_H\/2 - r\*0\.32/
   "tutorial highlights must be staged in the upper half of the dish");
 assert.match(game, /function spawnCarbParticle[\s\S]*?placeTutorial\(s\)/,
   "the tutorial's ringed food particle must use upper-dish staging");
+const tutorialParticle = game.slice(game.indexOf("function spawnCarbParticle"), game.indexOf("const TUT_STEPS"));
+assert.doesNotMatch(tutorialParticle, /s\.vx\s*=|s\.vy\s*=/,
+  "the initial tutorial particle must retain its natural drift instead of lingering in place");
 assert.doesNotMatch(tutorial, /demo\.focus = (?:ph|pr)/,
   "ringed tutorial phages and protists must use upper-dish staging rather than raw spawn positions");
 
