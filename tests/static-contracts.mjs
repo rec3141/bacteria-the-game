@@ -116,10 +116,14 @@ assert.doesNotMatch(tutorialParticle, /s\.vx\s*=|s\.vy\s*=/,
 assert.doesNotMatch(tutorial, /demo\.focus = (?:ph|pr)/,
   "ringed tutorial phages and protists must use upper-dish staging rather than raw spawn positions");
 assert.match(game,
-  /function showTutorialComplete\(\)[\s\S]*?Congratulations![\s\S]*?ready for the real world[\s\S]*?Enter the real world/,
+  /function showTutorialComplete\(\)[\s\S]*?completeT = 5[\s\S]*?Congratulations![\s\S]*?Just watch[\s\S]*?Enter the real world/,
   "finishing step seven must show a brief congratulations page before entering the real world");
-assert.match(game, /if \(tut\.complete\) \{ finishTutorial\(\); return; \}[\s\S]*?showTutorialComplete\(\)/,
-  "the congratulations page must require a separate action before opening the simulation");
+assert.match(game, /if \(tut\.complete\) \{ start\(\); return; \}[\s\S]*?showTutorialComplete\(\)/,
+  "Enter the real world must start a fresh playable game");
+assert.match(game, /function tutPrev\(\) \{ if \(tut && tut\.complete\) finishTutorial\(\)/,
+  "Just watch must open the autonomous simulation");
+assert.match(game, /if \(tut\.complete\) \{[\s\S]*?tut\.completeT -= dt;[\s\S]*?if \(tut\.completeT <= 0\) finishTutorial\(\)/,
+  "the completion page must default to the autonomous simulation after five seconds");
 assert.doesNotMatch(game, /DEMO_BEATS|nextDemoBeat/,
   "the obsolete scripted tutorial must not play behind the main menu");
 assert.match(game,

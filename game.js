@@ -1129,7 +1129,7 @@
     first.controlled = true;                    // ...but YOU drive this one
     demo = { t: 0, focus: null, idle: false, idleT: 0, manualT: 0,
              dish: true, rim: 0, hero: first, gold: null, watch: true, interactive: true };
-    tut = { i: -1, flags: {}, done: false, doneT: 0, complete: false, target: null, score0: 0 };
+    tut = { i: -1, flags: {}, done: false, doneT: 0, complete: false, completeT: 0, target: null, score0: 0 };
     if (el.title) el.title.classList.add("hidden");
     if (el.demoExit) el.demoExit.classList.remove("hidden");
     if (el.tutBar) el.tutBar.classList.remove("hidden");
@@ -1143,7 +1143,7 @@
   function gotoTutStep(i) {
     if (!tut) return;
     tut.i = clamp(i, 0, TUT_STEPS.length - 1);
-    tut.flags = {}; tut.done = false; tut.doneT = 0; tut.complete = false;
+    tut.flags = {}; tut.done = false; tut.doneT = 0; tut.complete = false; tut.completeT = 0;
     const c = ctrlCell();
     if (c) { c.energy = Math.max(c.energy, CFG.cell.startEnergy); c.infectedGreen = false; }
     TUT_STEPS[tut.i].setup();
@@ -1159,23 +1159,23 @@
       el.demoCap.classList.remove("hidden");
       el.demoCap.classList.add("tut");        // sits above the Back/Skip bar
     }
-    if (el.tutPrev) el.tutPrev.disabled = tut.i === 0;
+    if (el.tutPrev) { el.tutPrev.textContent = "◀ Back"; el.tutPrev.disabled = tut.i === 0; }
     if (el.tutNext) el.tutNext.textContent = tut.i === TUT_STEPS.length - 1 ? "Finish ▶" : "Skip ▶";
   }
   function tutNext() {
     if (!tut) return;
-    if (tut.complete) { finishTutorial(); return; }
+    if (tut.complete) { start(); return; }
     if (tut.i >= TUT_STEPS.length - 1) { showTutorialComplete(); return; }
     gotoTutStep(tut.i + 1);
   }
   function showTutorialComplete() {
     if (!tut) return;
-    tut.complete = true; tut.done = false;
+    tut.complete = true; tut.completeT = 5; tut.done = false;
     if (el.demoCap) {
       el.demoCap.innerHTML = "<i>tutorial complete</i><span><b>Congratulations!</b>You're ready for the real world.</span>";
       el.demoCap.classList.remove("hidden"); el.demoCap.classList.add("tut", "complete");
     }
-    if (el.tutPrev) el.tutPrev.disabled = true;
+    if (el.tutPrev) { el.tutPrev.disabled = false; el.tutPrev.textContent = "Just watch"; }
     if (el.tutNext) el.tutNext.textContent = "Enter the real world ▶";
   }
   // The reward for finishing is the ocean itself: the glass dissolves, the dish opens out, and the
@@ -1191,10 +1191,14 @@
       demo.rim = 0; demo.focus = demoInteresting(); demo.idleT = rand(9, 15);
     }
   }
-  function tutPrev() { if (tut) gotoTutStep(tut.i - 1); }
+  function tutPrev() { if (tut && tut.complete) finishTutorial(); else if (tut) gotoTutStep(tut.i - 1); }
   function updateTutorial(dt) {
     if (!tut || !demo) return;
-    if (tut.complete) return;
+    if (tut.complete) {
+      tut.completeT -= dt;
+      if (tut.completeT <= 0) finishTutorial();
+      return;
+    }
     // Being eaten during the step-3 survival challenge is a retry, not a role swap, so the sea
     // hands you another cell and the step restarts its movement grace period.
     if (!cells.some((c) => c.alive)) {
