@@ -58,8 +58,29 @@ assert.equal((tutorial.match(/\n    \{ cap:/g) || []).length, 7,
   "the interactive tutorial must retain the revised seven-step sequence");
 assert.doesNotMatch(tutorial, /Get infected|Red<\/b> phages can infect/,
   "the standalone red-phage infection event must not remain in the seven-step tutorial");
-assert.match(help, /#demoCap \.c-carb \{ color: #6fa8ff; \}/,
-  "bold tutorial carbohydrate labels must match the blue carbohydrate blocks");
+const tutorialPalette = {
+  "c-lip": "#efd98a", "c-pro": "#ef8b3c", "c-carb": "#6fa8ff", "c-gold": "#ffd24a",
+  "c-crispr": "#c39bff", "c-ab": "#f05ad0", "c-vir": "#8bf06a", "c-prot": "#ff9ec0",
+};
+for (const [className, color] of Object.entries(tutorialPalette))
+  assert.match(help, new RegExp(`#demoCap \\.${className} \\{ color: ${color}; \\}`),
+    `${className} tutorial labels must match their gene-bar or world-object color`);
+assert.match(game, /abilCrispr[^\n]*setProperty\("--gc", "#c39bff"\)/,
+  "the CRISPR bar locus must use the audited violet color");
+assert.match(game, /enzTox[^\n]*setProperty\("--gc", "#f05ad0"\)/,
+  "the antibiotic bar locus must use the audited magenta color");
+assert.match(game, /key: "lipid"[^\n]*color: "#efd98a"/,
+  "lipid labels must match the lipase bar locus and lipid blocks");
+assert.match(game, /key: "protein"[^\n]*color: "#ef8b3c"/,
+  "protein labels must match the protease bar locus and protein blocks");
+assert.match(game, /key: "carb"[^\n]*color: "#6fa8ff"/,
+  "carbohydrate labels must match the carbohydrase bar locus and carbohydrate blocks");
+assert.match(game, /PROTIST_COLOR = "#ff9ec0", VIRUS_COLOR = "#8bf06a"[^\n]*CRISPR_COLOR = "#c39bff", TOXIN_COLOR = "#f05ad0"/,
+  "world objects and non-enzyme gene loci must retain the audited semantic palette");
+assert.match(tutorial, /class='c-crispr'>CRISPR<\/b>/,
+  "CRISPR tutorial labels must use the violet gene-bar color class");
+assert.doesNotMatch(tutorial, /style='color:#[0-9a-fA-F]+'/,
+  "tutorial biological colors must use the audited semantic palette rather than inline values");
 assert.match(tutorial, /goal: "Approach the particle and press <b>Space<\/b>/,
   "the digestion step must tell the player to approach rather than face the particle");
 assert.match(tutorial,
@@ -94,5 +115,15 @@ assert.doesNotMatch(tutorialParticle, /s\.vx\s*=|s\.vy\s*=/,
   "the initial tutorial particle must retain its natural drift instead of lingering in place");
 assert.doesNotMatch(tutorial, /demo\.focus = (?:ph|pr)/,
   "ringed tutorial phages and protists must use upper-dish staging rather than raw spawn positions");
+assert.match(game,
+  /function showTutorialComplete\(\)[\s\S]*?Congratulations![\s\S]*?ready for the real world[\s\S]*?Enter the real world/,
+  "finishing step seven must show a brief congratulations page before entering the real world");
+assert.match(game, /if \(tut\.complete\) \{ finishTutorial\(\); return; \}[\s\S]*?showTutorialComplete\(\)/,
+  "the congratulations page must require a separate action before opening the simulation");
+assert.doesNotMatch(game, /DEMO_BEATS|nextDemoBeat/,
+  "the obsolete scripted tutorial must not play behind the main menu");
+assert.match(game,
+  /function startDemo\(\) \{[\s\S]*?newGame\(true\)[\s\S]*?idle: true[\s\S]*?openDemoWorld\(\)[\s\S]*?demoCap\) el\.demoCap\.classList\.add\("hidden"\)/,
+  "the main menu must start directly in an uncaptioned autonomous ocean simulation");
 
 console.log(`Static contracts OK: ${sounds.size} sounds and ${controls.length} control${controls.length === 1 ? "" : "s"} checked.`);

@@ -293,7 +293,7 @@
     dayLen: document.getElementById("dayLen"),   // filled from CFG.day.lengthSec — it's a tunable knob
     circosPop: document.getElementById("circosPop"), circosCanvas: document.getElementById("circosCanvas"),
     circosCap: document.getElementById("circosCap"), detailCircos: document.getElementById("detailCircos"),
-    demoCap: document.getElementById("demoCap"),   // attract-mode caption, over the ocean
+    demoCap: document.getElementById("demoCap"),   // interactive tutorial caption, over the ocean
     scoreTabs: document.getElementById("scoreTabs"),   // desktop / mobile leaderboard switch
     themeMeta: document.querySelector('meta[name="theme-color"]'),
     analysisClado: document.getElementById("analysisClado"), detailClado: document.getElementById("detailClado"),
@@ -1009,110 +1009,17 @@
   function controlledCell() { return cells.find((c) => c.controlled && c.alive); }
   function controlledProtist() { return predators.find((p) => p.controlled); }
 
-  // ------------------------------------------------------------------- attract mode
-  // The sim already plays itself — cells forage, divide, encyst, get eaten and lyse with nobody at
-  // the keys. So the tutorial is not a second simulation: it's a DIRECTOR. Each beat STAGES its
-  // mechanic (put a grazer next to a cell; hand a cell a gene), points the camera at it, and
-  // captions it. Staging beats waiting: left to chance a phage might not lyse anything for 30s, and
-  // a tutorial that might not happen is not a tutorial.
-  // When the beats run out it doesn't stop — it drifts on as a screensaver behind the title menu.
+  // ---------------------------------------------------------------- background simulation / tutorial
+  // The title needs only the autonomous simulation as a living background. The interactive
+  // tutorial is a separate, player-driven petri dish entered explicitly from the menu.
   let demo = null;
   const alive = (e) => e && e.alive !== false && !e.dead;
   const anyCell = () => cells.find((c) => c.alive && !c.cyst) || cells[0];
-  function demoFocus(e, secs) { if (e) { demo.focus = e; demo.hold = secs || 0; } }
-  // Put a fresh entity somewhere sensible inside the dish, near the middle, clear of the rim.
-  function dishSpot(distFromCentre) {
-    const a = rand(0, TAU), d = distFromCentre != null ? distFromCentre : rand(60, dishRadius()*0.55);
-    return { x: WORLD_W/2 + Math.cos(a)*d, y: WORLD_H/2 + Math.sin(a)*d };
-  }
   const near = (e, dist) => { const a = rand(0, TAU); return { x: e.x + Math.cos(a)*dist, y: e.y + Math.sin(a)*dist }; };
   const centre = (e) => { if (e) { e.x = WORLD_W/2; e.y = WORLD_H/2; } return e; };
-  const DEMO_BEATS = [
-    { cap: "This is one <b>bacterium</b>. It cannot steer: it swims in a straight line — a <b>run</b> — then <b>tumbles</b> to a random new heading, and repeats. It is not looking for anything. It cannot.",
-      secs: 9, setup: () => centre(anyCell()) },
-    // THE FOOD. Introduce the three resources by colour, on an actual particle, before anything eats one.
-    { cap: "Its food is <b>marine snow</b> — dead plankton and waste, sinking. Each particle is a patchwork of three things: <b class='c-lip'>lipid</b>, <b class='c-pro'>protein</b> and <b class='c-carb'>carbohydrate</b>. Watch the colours.",
-      secs: 10, setup: () => centre(substrates.find((p) => p.phase === "live")) || null },
-    { cap: "A bacterium is far too small to swallow any of it. So it digests from the OUTSIDE: it releases an <b>enzyme</b>, the matching blocks dissolve, and it absorbs what comes loose. One enzyme per resource — and it starts with only <b class='c-carb'>carbohydrase</b>.",
-      secs: 12, setup: () => {                       // park a cell on the doorstep of a particle
-        const c = anyCell(), s = centre(substrates.find((p) => p.phase === "live"));
-        if (c && s) { const a = rand(0, TAU); c.x = s.x + Math.cos(a)*(s.R + 24); c.y = s.y + Math.sin(a)*(s.R + 24);
-          c.angle = Math.atan2(dy(s.y, c.y), dx(s.x, c.x)); c.tumbling = false; c.enzCd = 0.2; }
-        return c;
-      } },
-    { cap: "Fed well enough, it <b>elongates and divides</b>. Every cell becomes two, so a colony goes exponential — 1, 2, 4, 8…",
-      secs: 9, setup: () => centre(anyCell()),
-      tick: (c, t) => { if (alive(c) && t > 2.5) c.energy = CFG.cell.divideThreshold + 1; } },  // nudge it over the line, on camera
-    // THE PREDATOR. Focus the PROTIST, not the cell — it's the thing being introduced.
-    { cap: "This is a <b style='color:#ff9ec0'>protist</b>: a single-celled hunter one trophic level up. It doesn't dissolve its food — it engulfs bacteria whole. This is the link that carries all this carbon up the food web.",
-      secs: 11, setup: () => {
-        const c = anyCell(); if (!c) return null;
-        const pr = makePredator(WORLD_W/2, WORLD_H/2, CFG.predator.startEnergy, 0);
-        predators.push(pr);
-        const p = near(pr, 120); c.x = p.x; c.y = p.y;   // its dinner, beside it
-        return pr;                                       // the grazer is the subject
-      } },
-    // THE VIRUSES. Both colours, side by side, with the phage itself in the ring.
-    { cap: "<b style='color:#8bf06a'>Green</b> and <b style='color:#ff5a52'>red</b> are the same creature — a <b>phage</b> — coloured by what it can do to YOU. <b style='color:#8bf06a'>Green</b> can't infect this cell. <b style='color:#ff5a52'>Red</b> can. A phage cannot chase: it drifts until it collides.",
-      secs: 12, setup: () => {
-        const c = centre(anyCell()); if (!c) return null;
-        demo.hero = c;                                // red/green is judged against this cell
-        const tier = upgradeTier(c);
-        let shown = null;
-        for (let i = 0; i < 3; i++) {                 // reds: tuned to this cell's tier
-          const p = near(c, rand(70, 130));
-          const ph = makePhage("green", p.x, p.y, tier);
-          phages.push(ph); if (!shown) shown = ph;
-        }
-        for (let i = 0; i < 3; i++) {                 // greens: tuned far away, harmless to it
-          const p = near(c, rand(70, 130));
-          phages.push(makePhage("green", p.x, p.y, tier + CFG.phage.hostTolerance + 3));
-        }
-        return shown;                                 // ring the virus, not the cell
-      } },
-    { cap: "A <b style='color:#ff5a52'>red</b> one that lands injects its DNA, turns the cell into a factory, and bursts it open — a <b>lysis</b> that seeds the water with more phages. This is the commonest death in the ocean.",
-      secs: 10, setup: () => {
-        const c = centre(anyCell()); if (!c) return null;
-        demo.hero = c;
-        c.infectedGreen = true; c.lysisT = 5;         // on a schedule, not on a dice roll
-        return c;
-      } },
-    // THE GOLD. Ring the phage first — it's the thing you'll spend the game chasing.
-    { cap: "And this one — the <b style='color:#ffd24a'>gold phage</b> — doesn't kill. It rewrites: it carries a new gene INTO the cell. It is the only thing in this sea that changes what you can do, and it is rare.",
-      secs: 8, setup: () => {
-        const c = anyCell(); if (!c) return null;
-        demo.hero = c;
-        const ph = makePhage("gold", WORLD_W/2, WORLD_H/2);
-        ph.vx = ph.vy = 0;
-        phages.push(ph);
-        demo.gold = ph;
-        const p = near(ph, 150); c.x = p.x; c.y = p.y;
-        return ph;                                     // the gold is the subject; the cell comes to it
-      },
-      tick: (ph, t) => {                               // swim the cell in, on cue
-        const c = demo.hero;
-        if (ph && !ph.dead && alive(c) && t > 1.2) {
-          const k = 1 - Math.exp(-1.1*0.016);
-          c.x += (ph.x - c.x)*k; c.y += (ph.y - c.y)*k;
-          c.angle = Math.atan2(ph.y - c.y, ph.x - c.x);
-        }
-      } },
-    { cap: "Caught. This lineage just gained <b class='c-lip'>lipase</b> — it can dissolve the <b class='c-lip'>fatty</b> blocks it used to swim straight past. Everything it does from now on, its daughters inherit.",
-      secs: 9, setup: () => {
-        const c = centre((demo.hero && alive(demo.hero)) ? demo.hero : anyCell()); if (!c) return null;
-        if (demo.gold && !demo.gold.dead) demo.gold.dead = true;
-        c.enzLvl[0] = Math.max(1, c.enzLvl[0]);      // lipase — deliberately, so it answers the food beat
-        c.ups = (c.ups || []).concat([{ t: state.elapsed, label: "Lipase 1", abbr: "L1", color: RESOURCES[0].color, acquired: true }]);
-        burst(c.x, c.y, "#ffd24a", 22);
-        Audio.play("upgrade", 0.5);
-        return c;
-      } },
-  ];
   // ============================================================ interactive tutorial
-  // The attract loop is a film: it plays itself, on a timer, behind the menu. The TUTORIAL is not a
-  // film — you drive. Each step names one thing to do and waits for you to actually do it; the timer
-  // is gone. Back/Skip exist for anyone who wants out of a step, but the default path through is to
-  // play it. Both share the dish, the director's control of the cast, and the still camera.
+  // You drive. Each step names one thing to do and waits for you to actually do it. Back/Skip exist
+  // for anyone who wants out of a step, but the default path through is to play it.
   let tut = null;
   const TUTORIAL_PROTIST_GRACE = 4;            // let the caption land before a grazer starts hunting
   const ctrlCell = () => cells.find((c) => c.controlled && c.alive);
@@ -1159,7 +1066,7 @@
         demo.focus = tut.target; tut.score0 = state.score; },
       done: () => state.score > (tut.score0 || 0) + 2 },
 
-    { cap: "This is a <b style='color:#ff9ec0'>protist</b> — a single-celled hunter, and bacteria are what it eats. It doesn't dissolve you from outside the way you eat a particle: it engulfs you whole.",
+    { cap: "This is a <b class='c-prot'>protist</b> — a single-celled hunter, and bacteria are what it eats. It doesn't dissolve you from outside the way you eat a particle: it engulfs you whole.",
       goal: "Avoid getting eaten for <b>4 seconds</b>",
       setup: () => { clearCast(true); const c = centre(ctrlCell());
         const pr = makePredator(0, 0, CFG.predator.startEnergy, 0);
@@ -1172,16 +1079,16 @@
         if (c && pr.tutorialGrace <= 0 && (pr.vx !== 0 || pr.vy !== 0)) tut.surviveT += dt; },
       done: () => tut.surviveT >= 4 },
 
-    { cap: "Not every phage kills. The <b style='color:#ffd24a'>gold</b> one provides <b>ADAPTATIONS</b> that you can pass on to your descendants.",
-      goal: "Catch the <b style='color:#ffd24a'>gold phage</b> — it carries <b>CRISPR</b>",
+    { cap: "Not every phage kills. The <b class='c-gold'>gold</b> one provides <b>ADAPTATIONS</b> that you can pass on to your descendants.",
+      goal: "Catch the <b class='c-gold'>gold phage</b> — it carries <b class='c-crispr'>CRISPR</b>",
       setup: () => { clearCast(true); const c = centre(ctrlCell()); if (!c) return;
         c.infectedGreen = false; c.crispr = false;      // a clean slate, so the gene is the news
         const ph = makePhage("gold", 0, 0); focusTutorial(ph); ph.vx = ph.vy = 0;
         phages.push(ph); },
       done: () => { const c = ctrlCell(); return !!(tut.flags.adapted || (c && c.crispr)); } },
 
-    { cap: "<b>CRISPR</b> is a bacterial immune system that shreds viral DNA. <b style='color:#8bf06a'>Green phages</b> cannot infect you and become lunch.",
-      goal: "Swim into a <b style='color:#8bf06a'>green phage</b> to eat it.",
+    { cap: "<b class='c-crispr'>CRISPR</b> is a bacterial immune system that shreds viral DNA. <b class='c-vir'>Green phages</b> cannot infect you and become lunch.",
+      goal: "Swim into a <b class='c-vir'>green phage</b> to eat it.",
       setup: () => { clearCast(true); const c = centre(ctrlCell()); if (!c) return;
         demo.hero = c; if (!c.crispr) grantCrispr(c);   // Skip'd past the last step? You still get the gene.
         c.antibiotic = 0; if (state.activeEnzyme === AB) state.activeEnzyme = 2;
@@ -1191,15 +1098,15 @@
           if (i === 0) focusTutorial(ph); ph.vx = ph.vy = 0; phages.push(ph); } },
       done: () => !!tut.flags.atePhage },
 
-    { cap: "One cell can carry multiple adaptive genes, but only one is expressed at a time. This cell has an <b style='color:#f05ad0'>antibiotic biosynthesis gene</b>.",
-      goal: "Press <b>Tab</b> — or tap/swipe the gene control — to load the <b style='color:#f05ad0'>antibiotic</b>",
+    { cap: "One cell can carry multiple adaptive genes, but only one is expressed at a time. This cell has an <b class='c-ab'>antibiotic biosynthesis gene</b>.",
+      goal: "Press <b>Tab</b> — or tap/swipe the gene control — to load the <b class='c-ab'>antibiotic</b>",
       setup: () => { clearCast(); const c = placeTutorial(ctrlCell()); if (!c) return;
         demo.hero = c; c.antibiotic = Math.max(1, c.antibiotic || 0); state.activeEnzyme = 2; demo.focus = c; },
       maintain: (c) => { if (c) c.antibiotic = Math.max(1, c.antibiotic || 0); },
       done: () => state.activeEnzyme === AB },
 
-    { cap: "Many microbes make <b style='color:#f05ad0'>antibiotics</b> as chemical weapons. Yours poisons nearby protists and genetically distant bacteria, while close kin carrying the same resistance are spared.",
-      goal: "Press <b>Space</b> to release the antibiotic and kill the <b style='color:#ff9ec0'>protist</b>",
+    { cap: "Many microbes make <b class='c-ab'>antibiotics</b> as chemical weapons. Yours poisons nearby protists and genetically distant bacteria, while close kin carrying the same resistance are spared.",
+      goal: "Press <b>Space</b> to release the antibiotic and kill the <b class='c-prot'>protist</b>",
       setup: () => { clearCast(); const c = ctrlCell(); if (!c) return;
         demo.hero = c; c.antibiotic = Math.max(1, c.antibiotic || 0); c.angle = 0; c.tumbling = false;
         c.energy = Math.max(c.energy, CFG.cell.antibioticCost + 10); c.invuln = Math.max(c.invuln, 3);
@@ -1220,9 +1127,9 @@
     newGame(true);                              // demo state: dish world, no score, no leaderboard
     const first = cells[0];
     first.controlled = true;                    // ...but YOU drive this one
-    demo = { i: -1, t: 0, secs: Infinity, focus: null, idle: false, idleT: 0,
+    demo = { t: 0, focus: null, idle: false, idleT: 0, manualT: 0,
              dish: true, rim: 0, hero: first, gold: null, watch: true, interactive: true };
-    tut = { i: -1, flags: {}, done: false, doneT: 0, target: null, score0: 0 };
+    tut = { i: -1, flags: {}, done: false, doneT: 0, complete: false, target: null, score0: 0 };
     if (el.title) el.title.classList.add("hidden");
     if (el.demoExit) el.demoExit.classList.remove("hidden");
     if (el.tutBar) el.tutBar.classList.remove("hidden");
@@ -1231,11 +1138,12 @@
   function stopTutorial() {
     tut = null;
     if (el.tutBar) el.tutBar.classList.add("hidden");
+    if (el.demoCap) el.demoCap.classList.remove("complete");
   }
   function gotoTutStep(i) {
     if (!tut) return;
     tut.i = clamp(i, 0, TUT_STEPS.length - 1);
-    tut.flags = {}; tut.done = false; tut.doneT = 0;
+    tut.flags = {}; tut.done = false; tut.doneT = 0; tut.complete = false;
     const c = ctrlCell();
     if (c) { c.energy = Math.max(c.energy, CFG.cell.startEnergy); c.infectedGreen = false; }
     TUT_STEPS[tut.i].setup();
@@ -1244,6 +1152,7 @@
   function renderTutStep(done) {
     const st = TUT_STEPS[tut.i];
     if (el.demoCap) {
+      el.demoCap.classList.remove("complete");
       el.demoCap.innerHTML =
         `<i>step ${tut.i + 1} / ${TUT_STEPS.length}</i><span>${st.cap}</span>` +
         (done ? `<b class="tutgoal ok">✓ done</b>` : `<b class="tutgoal">▸ ${st.goal}</b>`);
@@ -1255,8 +1164,19 @@
   }
   function tutNext() {
     if (!tut) return;
-    if (tut.i >= TUT_STEPS.length - 1) { finishTutorial(); return; }
+    if (tut.complete) { finishTutorial(); return; }
+    if (tut.i >= TUT_STEPS.length - 1) { showTutorialComplete(); return; }
     gotoTutStep(tut.i + 1);
+  }
+  function showTutorialComplete() {
+    if (!tut) return;
+    tut.complete = true; tut.done = false;
+    if (el.demoCap) {
+      el.demoCap.innerHTML = "<i>tutorial complete</i><span><b>Congratulations!</b>You're ready for the real world.</span>";
+      el.demoCap.classList.remove("hidden"); el.demoCap.classList.add("tut", "complete");
+    }
+    if (el.tutPrev) el.tutPrev.disabled = true;
+    if (el.tutNext) el.tutNext.textContent = "Enter the real world ▶";
   }
   // The reward for finishing is the ocean itself: the glass dissolves, the dish opens out, and the
   // sea runs on by itself. Control is handed back to the cells — from here you're watching, and the
@@ -1267,13 +1187,14 @@
     cells.forEach((c) => (c.controlled = false));
     if (demo) {
       demo.interactive = false; demo.idle = true; demo.idleT = 0;
-      demo.i = DEMO_BEATS.length; demo.secs = Infinity;
       openDemoWorld();
+      demo.rim = 0; demo.focus = demoInteresting(); demo.idleT = rand(9, 15);
     }
   }
   function tutPrev() { if (tut) gotoTutStep(tut.i - 1); }
   function updateTutorial(dt) {
     if (!tut || !demo) return;
+    if (tut.complete) return;
     // Being eaten during the step-3 survival challenge is a retry, not a role swap, so the sea
     // hands you another cell and the step restarts its movement grace period.
     if (!cells.some((c) => c.alive)) {
@@ -1295,12 +1216,14 @@
     }
   }
 
-  // The attract film: plays itself, on a timer, behind the title menu.
+  // Start directly in the autonomous ocean: no scripted beats and no captions behind the menu.
   function startDemo() {
     newGame(true);
-    demo = { i: -1, t: 0, secs: 0, focus: null, hold: 0, idle: false, idleT: 0,
+    demo = { t: 0, focus: null, idle: true, idleT: 0, manualT: 0,
              dish: true, rim: 0, hero: null, gold: null };
-    nextDemoBeat();
+    openDemoWorld();
+    demo.rim = 0; demo.focus = demoInteresting(); demo.idleT = rand(9, 15);
+    if (el.demoCap) el.demoCap.classList.add("hidden");
   }
   function stopDemo() {
     stopTutorial();
@@ -1308,18 +1231,15 @@
     if (el.demoCap) el.demoCap.classList.add("hidden");
     if (el.demoExit) el.demoExit.classList.add("hidden");
   }
-  // The attract loop plays behind the title menu, which covers most of it — fine as a backdrop, no
-  // good as a lesson. WATCHING the tutorial pulls the menu away so you can actually see the ocean,
-  // and replays it from beat 1.
+  // The interactive tutorial is entered explicitly; the menu background remains an uncaptioned sim.
   function watchTutorial() { startTutorial(); }
-  function endTutorial() {                    // back to the menu; the attract loop resumes behind it
+  function endTutorial() {                    // back to the menu; the background sim resumes
     stopTutorial();
     if (el.demoExit) el.demoExit.classList.add("hidden");
     startDemo();                             // the title needs its living ocean back
     if (el.title) el.title.classList.remove("hidden");
   }
-  // Once you'd started a run there was NO WAY BACK to the title — so no way to reach the tutorial,
-  // or the attract loop, without reloading the page. Every screen you can be stuck on now has a door.
+  // Every screen has a route back to the title, its tutorial button, and its living background.
   function toTitle() {
     paused = false;
     if (el.demoExit) el.demoExit.classList.add("hidden");
@@ -1330,24 +1250,7 @@
     startDemo();                              // the sea goes back to playing itself behind the menu
     if (el.title) el.title.classList.remove("hidden");
   }
-  function nextDemoBeat() {
-    if (!demo) return;
-    demo.i++; demo.t = 0;
-    if (demo.i >= DEMO_BEATS.length) {              // the lesson is over — the dish becomes the ocean
-      demo.idle = true; demo.idleT = 0; demo.secs = Infinity;
-      openDemoWorld();
-      if (el.demoCap) el.demoCap.classList.add("hidden");
-      return;
-    }
-    const b = DEMO_BEATS[demo.i];
-    demo.secs = b.secs;
-    demo.focus = b.setup() || anyCell();
-    if (el.demoCap) {
-      el.demoCap.innerHTML = `<i>${demo.i + 1}/${DEMO_BEATS.length}</i><span>${b.cap}</span>`;
-      el.demoCap.classList.remove("hidden", "tut");
-    }
-  }
-  // Screensaver: no captions, just drift to whatever is worth watching — something dying loudly,
+  // No-caption background: drift to whatever is worth watching — something dying loudly,
   // a grazer mid-hunt, the gold phage, or failing all that the thick of the colony.
   // Pick the next thing to watch. The old version rolled dice over the whole ocean, so the camera
   // hurled itself across the world every few seconds — twitchy, and you lost the thread of whatever
@@ -1383,46 +1286,27 @@
       confineToDish();
       return;
     }
-    const b = !demo.idle && DEMO_BEATS[demo.i];
-    if (b && b.tick) b.tick(demo.focus, demo.t);
-    if (!alive(demo.focus)) demo.focus = demo.idle ? demoInteresting() : anyCell();   // it died mid-shot
-    if (demo.idle) {
-      // YOU can take the camera: hold a direction and it pans. Let go and, after a moment, it goes
-      // back to drifting on its own — the sim is never taken away from you, and never held hostage.
-      const a = demo.watch ? axis() : { x: 0, y: 0 };
-      if (a.x || a.y) {
-        const sp = CFG.demo.panSpeed*dt;
-        cam.x = wrapX(cam.x + a.x*sp); cam.y = wrapY(cam.y + a.y*sp);
-        demo.manualT = CFG.demo.panHold; demo.focus = null;
-        return;
-      }
-      if (demo.manualT > 0) {
-        demo.manualT -= dt;
-        if (demo.manualT <= 0) { demo.focus = demoInteresting(); demo.idleT = rand(9, 15); }
-        return;
-      }
-      demo.idleT -= dt;
-      if (demo.idleT <= 0 || !alive(demo.focus)) { demo.idleT = rand(9, 15); demo.focus = demoInteresting(); }
-    } else if (demo.t >= demo.secs) nextDemoBeat();
+    if (!alive(demo.focus)) demo.focus = demoInteresting();
+    // YOU can take the camera after graduation. Let go and it returns to drifting through the sim.
+    const a = demo.watch ? axis() : { x: 0, y: 0 };
+    if (a.x || a.y) {
+      const sp = CFG.demo.panSpeed*dt;
+      cam.x = wrapX(cam.x + a.x*sp); cam.y = wrapY(cam.y + a.y*sp);
+      demo.manualT = CFG.demo.panHold; demo.focus = null;
+      return;
+    }
+    if (demo.manualT > 0) {
+      demo.manualT -= dt;
+      if (demo.manualT <= 0) { demo.focus = demoInteresting(); demo.idleT = rand(9, 15); }
+      return;
+    }
+    demo.idleT -= dt;
+    if (demo.idleT <= 0 || !alive(demo.focus)) { demo.idleT = rand(9, 15); demo.focus = demoInteresting(); }
     if (demo.rim > 0) demo.rim = Math.max(0, demo.rim - dt/CFG.demo.rimFade);   // the glass dissolves
     if (demo.dish) {
       // Inside the dish the camera does not move AT ALL. The whole world is on screen, so there is
       // nothing to chase — and a still camera is what lets the eye follow the ring instead of fighting it.
       cam.x = WORLD_W/2; cam.y = WORLD_H/2;
-      // Instead the SUBJECT comes to the stage: whatever the beat is about is drawn gently to the
-      // middle of the glass and held there. A soft spring, not a clamp — the protist still hunts and
-      // the cell still swims, they just do it where you're looking.
-      const f = demo.focus;
-      if (f && !demo.idle && alive(f)) {
-        // A subject swims at 240px/s; a gentle tether just loses. Reel it in hard once it leaves the
-        // middle fifth, so it can still swim, hunt and drift — but always in front of you.
-        const lim = dishRadius()*0.2;
-        const ex = f.x - WORLD_W/2, ey = f.y - WORLD_H/2, d = Math.hypot(ex, ey);
-        if (d > lim) {
-          const pull = (d - lim)*(1 - Math.exp(-3.4*dt));
-          f.x -= ex/d*pull; f.y -= ey/d*pull;
-        }
-      }
       confineToDish();
       return;
     }
@@ -1948,7 +1832,7 @@
     const hadControlled = cells.some((c) => c.controlled && c.alive);
     cells = cells.filter((c) => c.alive);
     // trophic role-swap: bacteria extinct → you become a protist (not game over). The demo has no
-    // one to promote, so it just restocks the sea and keeps running — an attract loop can't end.
+      // one to promote, so it just restocks the sea and keeps running — a background sim can't end.
     if (state.role === "bacterium" && !cells.length) {
       if (tut) { /* updateTutorial hands you a fresh cell — being eaten is a lesson, not an ending */ }
       else if (state.demo) immigrateBacteria(CFG.cycle.reseedBacteria);
@@ -2011,7 +1895,7 @@
     particles = particles.filter((q) => q.life > 0);
     // camera follows whichever entity you're controlling (cell or protist)
     const pc = controlledEntity(); if (pc) { cam.x = pc.x; cam.y = pc.y; }
-    updateDemo(dt);   // no player to follow in attract mode — the director drives the camera instead
+    updateDemo(dt);   // no player in the menu background — the camera drifts through the sim
     rebuildSpatialIndexes(); // final positions feed rendering and any input between animation frames
     // sample per-ecotype abundances for the time-series chart
     const greenCount = phages.reduce((a, p) => a + (p.type === "green"), 0);
@@ -3291,7 +3175,7 @@
     arr = arr.filter((r) => deviceOf(r) === scoreDevice);
     renderDeviceTabs(counts);
     // paused mid-game: drop the live run into the list so you can see exactly where it ranks
-    const liveLine = (state && state.running && !state.demo && state.device === scoreDevice) ? currentRunLine() : null; // the attract loop is not a run
+    const liveLine = (state && state.running && !state.demo && state.device === scoreDevice) ? currentRunLine() : null; // the background sim is not a run
     if (liveLine) arr.push(liveLine);
     if (!arr.length) {
       el.scoresList.innerHTML = `<p class="empty">No ${scoreDevice === "touch" ? "mobile" : "desktop"} runs yet. Play a game and your lineage's evolutionary history will appear here.</p>`;
@@ -3685,7 +3569,7 @@
   // for a saved run, so pause just opens it on the live one. "← Back to list" from there still takes
   // you to the board, so nothing is lost.
   function showScores(opts) {
-    const active = !!(state && state.running && !state.demo); // paused mid-game — the attract loop isn't a game to end
+    const active = !!(state && state.running && !state.demo); // paused mid-game — the background sim isn't a game to end
     const live = !!(opts && opts.liveDetail) && active;
     if (el.scoresTitle) el.scoresTitle.textContent = paused ? "Paused" : "High Scores";
     if (el.scoresBack) el.scoresBack.textContent = paused ? "Resume" : "Back";
@@ -4781,8 +4665,7 @@
   // temperature & salinity are held neutral for now (reserved for future levels:
   // estuary, sea ice, hydrothermal vent, ...)
   env.tempC = 20; env.salinity = 35; env.update();
-  // The title screen used to be an empty ocean. Run the attract mode behind it: the sim teaches
-  // itself, and the menu sits over a sea that's actually alive.
+  // Keep an autonomous, uncaptioned ocean alive behind the title menu.
   startDemo();
   // Clicking the water (rather than a menu button) also means "let me play".
   if (el.title) el.title.addEventListener("click", (e) => { if (e.target === el.title && demo) start(); });

@@ -282,10 +282,7 @@
     background: radial-gradient(ellipse at 50% 45%, rgba(3,14,18,.93) 0%, rgba(3,14,18,.8) 38%,
                                 rgba(3,14,18,.55) 70%, rgba(3,14,18,.35) 100%);
     backdrop-filter: blur(1.5px); }
-  /* Attract-mode caption: one line of narration under the ocean's midline, above the water,
-     below the menu. */
-  /* z-index 11 = above the title's dimming gradient (10), below nothing that matters — the menu is
-     centred and the caption hugs the floor, so they never collide. */
+  /* Interactive tutorial caption, over the petri dish and above its Back/Skip controls. */
   #demoCap { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%);
     z-index: 11; width: min(560px, 88%); text-align: center; pointer-events: none;
     background: rgba(4,17,21,.82); border: 1px solid rgba(87,224,192,.28); border-radius: 10px;
@@ -296,7 +293,16 @@
     text-transform: uppercase; color: var(--accent); opacity: .75; margin-bottom: 2px; }
   #demoCap span { font-size: 13px; line-height: 1.45; color: var(--ink); }
   #demoCap b { color: var(--accent); }
-  #demoCap .c-carb { color: #6fa8ff; } /* match the carbohydrate blocks, even when the word is bold */
+  /* Semantic caption colors mirror the gene bar and world objects. These ID-qualified rules beat
+     the generic bold color above, so highlighting a biological term cannot turn it accent-green. */
+  #demoCap .c-lip { color: #efd98a; } #demoCap .c-pro { color: #ef8b3c; }
+  #demoCap .c-carb { color: #6fa8ff; } #demoCap .c-gold { color: #ffd24a; }
+  #demoCap .c-crispr { color: #c39bff; } #demoCap .c-ab { color: #f05ad0; }
+  #demoCap .c-vir { color: #8bf06a; } #demoCap .c-prot { color: #ff9ec0; }
+  #demoCap.tut.complete { bottom: 50%; transform: translate(-50%,50%); width: min(420px, 82%);
+    padding: 20px 24px; }
+  #demoCap.complete span { display: block; font-size: 17px; line-height: 1.55; }
+  #demoCap.complete span b { display: block; font-size: 24px; margin-bottom: 5px; }
   /* the one thing this step wants you to DO */
   #demoCap .tutgoal { display: block; margin-top: 6px; padding-top: 6px; font-size: 13px;
     border-top: 1px solid rgba(255,255,255,.12); color: #ffd24a; }
@@ -328,7 +334,8 @@
   #helpBody p { margin: 0; font-size: 13px; line-height: 1.55; opacity: .9; }
   #helpBody ul { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.7; opacity: .9; }
   .c-lip { color: #efd98a; } .c-pro { color: #ef8b3c; } .c-carb { color: #6fa8ff; }
-  .c-gold { color: #ffd24a; } .c-vir { color: #8bf06a; } .c-cyst { color: #9aa6a0; } .c-prot { color: #ff9ec0; }
+  .c-gold { color: #ffd24a; } .c-crispr { color: #c39bff; } .c-ab { color: #f05ad0; }
+  .c-vir { color: #8bf06a; } .c-cyst { color: #9aa6a0; } .c-prot { color: #ff9ec0; }
   /* Lineage genome popup (hover a colored band on an analysis/detail chart) */
   /* opaque, not translucent: the ring's middle is empty, and the leaderboard behind it
      showed straight through the gap and muddied the plot */
@@ -527,8 +534,7 @@
                max(14px, var(--safe-bottom)) max(14px, var(--safe-left)); }
     #scores { padding-top: max(24px, var(--safe-top)); }
     #help, #science { padding-top: max(22px, var(--safe-top)); }
-    /* the menus go position:fixed here, which would bury the attract caption inside the stage —
-       lift it out to the viewport too, above the title's backdrop */
+    /* tutorial captions remain inside the safe viewport on compact screens */
     #demoCap { position: fixed; z-index: 55; bottom: max(10px, var(--safe-bottom)); }
     #help, #science { z-index: 60; } /* stay above the screen they were opened from */
     .screen h1 { font-size: 30px; }
@@ -635,8 +641,7 @@
       </div>
     </div>
     <div id="toast"></div>
-    <!-- Attract-mode caption. Sits over the ocean but UNDER the title screen's menu, so the demo
-         narrates itself without fighting the buttons for space. -->
+    <!-- Interactive tutorial and completion captions; the menu's background sim has no narration. -->
     <div id="demoCap" class="hidden"></div>
     <!-- Interactive tutorial: Back / Skip. The DEFAULT way through is to do the thing the step asks;
          these are for anyone who wants past a step they can't or won't complete. -->
