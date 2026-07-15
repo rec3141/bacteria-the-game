@@ -1154,29 +1154,25 @@
         return !!(c && s && Math.hypot(dx(c.x, s.x), dy(c.y, s.y)) < s.R + 46); } },
 
     { cap: "You are far too small to swallow it. So you digest it from the OUTSIDE: <b>Space</b> releases your <b class='c-carb'>carbohydrase</b>, the <b class='c-carb'>blue</b> blocks dissolve, and you absorb what comes loose.",
-      goal: "Face the particle and press <b>Space</b> — eat something",
+      goal: "Approach the particle and press <b>Space</b> — eat something",
       setup: () => { if (!tut.target || tut.target.organic <= 0) { clearCast(); tut.target = spawnCarbParticle(); }
         demo.focus = tut.target; tut.score0 = state.score; },
       done: () => state.score > (tut.score0 || 0) + 2 },
 
-    { cap: "This is a <b style='color:#ff9ec0'>protist</b> — a single-celled hunter, and bacteria are what it eats. It doesn't dissolve you from outside the way you eat a particle: it engulfs you whole. You cannot outswim it forever.<br><em style='opacity:.8'>There is something a bacterium can do about a grazer. You don't have it yet.</em>",
-      goal: "Let it catch you. <b>Get eaten.</b>",
+    { cap: "This is a <b style='color:#ff9ec0'>protist</b> — a single-celled hunter, and bacteria are what it eats. It doesn't dissolve you from outside the way you eat a particle: it engulfs you whole.",
+      goal: "Avoid getting eaten for <b>4 seconds</b>",
       setup: () => { clearCast(true); const c = centre(ctrlCell());
         const pr = makePredator(0, 0, CFG.predator.startEnergy, 0);
         pr.tutorialGrace = TUTORIAL_PROTIST_GRACE; focusTutorial(pr);
-        predators.push(pr); if (c) c.invuln = 0; },
-      done: () => !!tut.flags.eaten },
+        predators.push(pr); tut.target = pr; tut.surviveT = 0; if (c) c.invuln = 0; },
+      maintain: (c, dt) => { const pr = tut.target; if (!pr || pr.dead) return;
+        pr.energy = Math.max(pr.energy, CFG.predator.startEnergy);
+        if (tut.flags.eaten) { tut.flags.eaten = false; tut.surviveT = 0;
+          pr.tutorialGrace = TUTORIAL_PROTIST_GRACE; focusTutorial(pr); if (c) { centre(c); c.invuln = 0; } return; }
+        if (c && pr.tutorialGrace <= 0 && (pr.vx !== 0 || pr.vy !== 0)) tut.surviveT += dt; },
+      done: () => tut.surviveT >= 4 },
 
-    { cap: "<b style='color:#ff5a52'>Red</b> phages can infect <em>you</em>; <b style='color:#8bf06a'>green</b> ones can't. A phage cannot chase — it drifts, and waits to collide.",
-      goal: "Swim into a <b style='color:#ff5a52'>red</b> phage. <b>Get infected.</b>",
-      setup: () => { clearCast(true); const c = centre(ctrlCell()); if (!c) return;
-        demo.hero = c; c.invuln = 0; c.infectedGreen = false;
-        const tier = upgradeTier(c);
-        for (let i = 0; i < 7; i++) { const p = near(c, rand(120, 210)); const ph = makePhage("green", p.x, p.y, tier);
-          if (i === 0) focusTutorial(ph); ph.vx = ph.vy = 0; phages.push(ph); } },
-      done: () => { const c = ctrlCell(); return !!(tut.flags.infected || (c && c.infectedGreen)); } },
-
-    { cap: "Not every phage kills. The <b style='color:#ffd24a'>gold</b> one carries a gene INTO you instead — it is the only thing in this sea that changes what you can <em>do</em>.",
+    { cap: "Not every phage kills. The <b style='color:#ffd24a'>gold</b> one provides <b>ADAPTATIONS</b> that you can pass on to your descendants.",
       goal: "Catch the <b style='color:#ffd24a'>gold phage</b> — it carries <b>CRISPR</b>",
       setup: () => { clearCast(true); const c = centre(ctrlCell()); if (!c) return;
         c.infectedGreen = false; c.crispr = false;      // a clean slate, so the gene is the news
@@ -1184,8 +1180,8 @@
         phages.push(ph); },
       done: () => { const c = ctrlCell(); return !!(tut.flags.adapted || (c && c.crispr)); } },
 
-    { cap: "<b>CRISPR</b> is a real immune system: it files away the DNA of viruses that attacked you and shreds them on sight. A phage that cannot infect you stops being a threat and becomes <b>lunch</b>.",
-      goal: "Swim into a <b style='color:#8bf06a'>green</b> phage. <b>Eat it.</b>",
+    { cap: "<b>CRISPR</b> is a bacterial immune system that shreds viral DNA. <b style='color:#8bf06a'>Green phages</b> cannot infect you and become lunch.",
+      goal: "Swim into a <b style='color:#8bf06a'>green phage</b> to eat it.",
       setup: () => { clearCast(true); const c = centre(ctrlCell()); if (!c) return;
         demo.hero = c; if (!c.crispr) grantCrispr(c);   // Skip'd past the last step? You still get the gene.
         c.antibiotic = 0; if (state.activeEnzyme === AB) state.activeEnzyme = 2;
@@ -1195,7 +1191,7 @@
           if (i === 0) focusTutorial(ph); ph.vx = ph.vy = 0; phages.push(ph); } },
       done: () => !!tut.flags.atePhage },
 
-    { cap: "One cell can carry several deployable genes, but only one is loaded at a time. This cell has an <b style='color:#f05ad0'>antibiotic</b> as well as carbohydrase — swap what is loaded before you need it.",
+    { cap: "One cell can carry multiple adaptive genes, but only one is expressed at a time. This cell has an <b style='color:#f05ad0'>antibiotic biosynthesis gene</b>.",
       goal: "Press <b>Tab</b> — or tap/swipe the gene control — to load the <b style='color:#f05ad0'>antibiotic</b>",
       setup: () => { clearCast(); const c = placeTutorial(ctrlCell()); if (!c) return;
         demo.hero = c; c.antibiotic = Math.max(1, c.antibiotic || 0); state.activeEnzyme = 2; demo.focus = c; },
@@ -1203,7 +1199,7 @@
       done: () => state.activeEnzyme === AB },
 
     { cap: "Many microbes make <b style='color:#f05ad0'>antibiotics</b> as chemical weapons. Yours poisons nearby protists and genetically distant bacteria, while close kin carrying the same resistance are spared.",
-      goal: "Swim into range and kill the ringed <b style='color:#ff9ec0'>protist</b> with your antibiotic",
+      goal: "Press <b>Space</b> to release the antibiotic and kill the <b style='color:#ff9ec0'>protist</b>",
       setup: () => { clearCast(); const c = ctrlCell(); if (!c) return;
         demo.hero = c; c.antibiotic = Math.max(1, c.antibiotic || 0); c.angle = 0; c.tumbling = false;
         c.energy = Math.max(c.energy, CFG.cell.antibioticCost + 10); c.invuln = Math.max(c.invuln, 3);
@@ -1278,15 +1274,15 @@
   function tutPrev() { if (tut) gotoTutStep(tut.i - 1); }
   function updateTutorial(dt) {
     if (!tut || !demo) return;
-    // Your cell being eaten is the LESSON in step 3, not a failure — so the sea hands you another one
-    // instead of flipping you to a protist. (A tutorial that ends by taking the game away is a joke.)
+    // Being eaten during the step-3 survival challenge is a retry, not a role swap, so the sea
+    // hands you another cell and the step restarts its movement grace period.
     if (!cells.some((c) => c.alive)) {
       const c = makeCell(WORLD_W/2, WORLD_H/2, CFG.cell.startEnergy, rand(0, TAU), 1);
       c.controlled = true; c.invuln = 1.5; cells.push(c);
       demo.hero = c;
     } else if (!ctrlCell()) { const c = cells.find((x) => x.alive); if (c) { c.controlled = true; demo.hero = c; } }
     const st = TUT_STEPS[tut.i];
-    if (st.maintain) st.maintain(ctrlCell());       // tutorial-granted genes survive a replacement cell
+    if (st.maintain) st.maintain(ctrlCell(), dt);   // maintain genes and timed tutorial objectives
     if (tut.done) {                              // held on "✓ done" for a beat, then move on
       tut.doneT -= dt;
       if (tut.doneT <= 0) tutNext();
