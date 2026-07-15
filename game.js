@@ -1125,10 +1125,23 @@
     predators.length = 0; phages.length = 0; toxins.length = 0;
     if (!keepFood) substrates.length = 0;
   }
+  // Tutorial captions occupy the bottom of the dish. Stage every ringed subject above the
+  // midline so the highlight and the thing it names can never hide behind the explainer.
+  function upperTutorialPoint(xOffset = 0, yOffset = 0) {
+    const r = dishRadius();
+    return { x: WORLD_W/2 + clamp(xOffset, -r*0.45, r*0.45),
+      y: WORLD_H/2 - r*0.32 + clamp(yOffset, -r*0.14, r*0.14) };
+  }
+  function placeTutorial(e, xOffset, yOffset) {
+    if (!e) return e;
+    const p = upperTutorialPoint(xOffset, yOffset); e.x = p.x; e.y = p.y; return e;
+  }
+  function focusTutorial(e, xOffset, yOffset) {
+    placeTutorial(e, xOffset, yOffset); demo.focus = e; return e;
+  }
   function spawnCarbParticle() {                // chitin is 70% carbohydrate — the one you can already eat
     const s = makeSubstrate("chitin");
-    const p = dishSpot(dishRadius()*0.55);
-    s.x = p.x; s.y = p.y; s.vx = s.vy = 0;
+    placeTutorial(s); s.vx = s.vy = 0;
     substrates.push(s);
     return s;
   }
@@ -1148,8 +1161,8 @@
     { cap: "This is a <b style='color:#ff9ec0'>protist</b> — a single-celled hunter, and bacteria are what it eats. It doesn't dissolve you from outside the way you eat a particle: it engulfs you whole. You cannot outswim it forever.<br><em style='opacity:.8'>There is something a bacterium can do about a grazer. You don't have it yet.</em>",
       goal: "Let it catch you. <b>Get eaten.</b>",
       setup: () => { clearCast(true); const c = centre(ctrlCell());
-        const pr = makePredator(WORLD_W/2 + 170, WORLD_H/2, CFG.predator.startEnergy, 0);
-        predators.push(pr); demo.focus = pr; if (c) c.invuln = 0; },
+        const pr = makePredator(0, 0, CFG.predator.startEnergy, 0); focusTutorial(pr);
+        predators.push(pr); if (c) c.invuln = 0; },
       done: () => !!tut.flags.eaten },
 
     { cap: "<b style='color:#ff5a52'>Red</b> phages can infect <em>you</em>; <b style='color:#8bf06a'>green</b> ones can't. A phage cannot chase — it drifts, and waits to collide.",
@@ -1157,15 +1170,16 @@
       setup: () => { clearCast(true); const c = centre(ctrlCell()); if (!c) return;
         demo.hero = c; c.invuln = 0; c.infectedGreen = false;
         const tier = upgradeTier(c);
-        for (let i = 0; i < 7; i++) { const p = near(c, rand(120, 210)); const ph = makePhage("green", p.x, p.y, tier); ph.vx = ph.vy = 0; phages.push(ph); if (i === 0) demo.focus = ph; } },
+        for (let i = 0; i < 7; i++) { const p = near(c, rand(120, 210)); const ph = makePhage("green", p.x, p.y, tier);
+          if (i === 0) focusTutorial(ph); ph.vx = ph.vy = 0; phages.push(ph); } },
       done: () => { const c = ctrlCell(); return !!(tut.flags.infected || (c && c.infectedGreen)); } },
 
     { cap: "Not every phage kills. The <b style='color:#ffd24a'>gold</b> one carries a gene INTO you instead — it is the only thing in this sea that changes what you can <em>do</em>.",
       goal: "Catch the <b style='color:#ffd24a'>gold phage</b> — it carries <b>CRISPR</b>",
       setup: () => { clearCast(true); const c = centre(ctrlCell()); if (!c) return;
         c.infectedGreen = false; c.crispr = false;      // a clean slate, so the gene is the news
-        const p = near(c, 190); const ph = makePhage("gold", p.x, p.y); ph.vx = ph.vy = 0;
-        phages.push(ph); demo.focus = ph; },
+        const ph = makePhage("gold", 0, 0); focusTutorial(ph); ph.vx = ph.vy = 0;
+        phages.push(ph); },
       done: () => { const c = ctrlCell(); return !!(tut.flags.adapted || (c && c.crispr)); } },
 
     { cap: "<b>CRISPR</b> is a real immune system: it files away the DNA of viruses that attacked you and shreds them on sight. A phage that cannot infect you stops being a threat and becomes <b>lunch</b>.",
@@ -1176,25 +1190,26 @@
         const tier = upgradeTier(c);
         for (let i = 0; i < 8; i++) { const p = near(c, rand(110, 200));
           const ph = makePhage("green", p.x, p.y, tier + CFG.phage.hostTolerance + 4);  // immune to you = edible
-          ph.vx = ph.vy = 0; phages.push(ph); if (i === 0) demo.focus = ph; } },
+          if (i === 0) focusTutorial(ph); ph.vx = ph.vy = 0; phages.push(ph); } },
       done: () => !!tut.flags.atePhage },
 
     { cap: "One cell can carry several deployable genes, but only one is loaded at a time. This cell has an <b style='color:#f05ad0'>antibiotic</b> as well as carbohydrase — swap what is loaded before you need it.",
       goal: "Press <b>Tab</b> — or tap/swipe the gene control — to load the <b style='color:#f05ad0'>antibiotic</b>",
-      setup: () => { clearCast(); const c = centre(ctrlCell()); if (!c) return;
+      setup: () => { clearCast(); const c = placeTutorial(ctrlCell()); if (!c) return;
         demo.hero = c; c.antibiotic = Math.max(1, c.antibiotic || 0); state.activeEnzyme = 2; demo.focus = c; },
       maintain: (c) => { if (c) c.antibiotic = Math.max(1, c.antibiotic || 0); },
       done: () => state.activeEnzyme === AB },
 
     { cap: "Many microbes make <b style='color:#f05ad0'>antibiotics</b> as chemical weapons. Yours poisons nearby protists and genetically distant bacteria, while close kin carrying the same resistance are spared.",
       goal: "Face the ringed <b style='color:#ff9ec0'>protist</b> and press <b>Space</b> — or tap release — to fire the antibiotic",
-      setup: () => { clearCast(); const c = centre(ctrlCell()); if (!c) return;
+      setup: () => { clearCast(); const c = ctrlCell(); if (!c) return;
         demo.hero = c; c.antibiotic = Math.max(1, c.antibiotic || 0); c.angle = 0; c.tumbling = false;
         c.energy = Math.max(c.energy, CFG.cell.antibioticCost + 10); c.invuln = Math.max(c.invuln, 3);
         state.activeEnzyme = AB;
-        const pole = cellPolesLocal(c), maxR = CFG.toxin.maxRadius * (1 + (c.antibiotic-1)*CFG.toxin.radiusPer);
-        const pr = makePredator(wrapX(c.x + pole[0] + maxR*0.55), wrapY(c.y + pole[1]), CFG.predator.startEnergy, 0);
-        predators.push(pr); tut.target = pr; demo.focus = pr; },
+        const maxR = CFG.toxin.maxRadius * (1 + (c.antibiotic-1)*CFG.toxin.radiusPer);
+        placeTutorial(c, -maxR*0.35);
+        const pr = makePredator(0, 0, CFG.predator.startEnergy, 0); focusTutorial(pr, maxR*0.35);
+        predators.push(pr); tut.target = pr; },
       maintain: (c) => { if (c) { c.antibiotic = Math.max(1, c.antibiotic || 0);
         c.energy = Math.max(c.energy, CFG.cell.antibioticCost + 10); c.invuln = Math.max(c.invuln, 0.5); } },
       done: () => !!tut.flags.usedAntibiotic },

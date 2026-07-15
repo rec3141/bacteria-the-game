@@ -69,5 +69,11 @@ assert.match(game, /releaseAntibiotic\(c\)\) \{ tutDid\("usedAntibiotic"\)/,
   "a successful player antibiotic release must complete the tutorial event");
 assert.match(game, /const st = TUT_STEPS\[tut\.i\];[\s\S]*?st\.maintain\(ctrlCell\(\)\)/,
   "tutorial-maintained genes must be restored after the controlled cell is replaced");
+assert.match(game, /function upperTutorialPoint[\s\S]*?y: WORLD_H\/2 - r\*0\.32/,
+  "tutorial highlights must be staged in the upper half of the dish");
+assert.match(game, /function spawnCarbParticle[\s\S]*?placeTutorial\(s\)/,
+  "the tutorial's ringed food particle must use upper-dish staging");
+assert.doesNotMatch(tutorial, /demo\.focus = (?:ph|pr)/,
+  "ringed tutorial phages and protists must use upper-dish staging rather than raw spawn positions");
 
 console.log(`Static contracts OK: ${sounds.size} sounds and ${controls.length} control${controls.length === 1 ? "" : "s"} checked.`);
