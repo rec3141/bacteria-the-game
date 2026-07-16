@@ -49,10 +49,12 @@ assert.doesNotMatch(scoreRowBindings, /mouseenter|mousemove|mouseleave|showCirco
   "the main high-score table must not show a Circos map on hover");
 assert.match(game, /if \(el\.detailCircos\) \{[\s\S]*?renderCircos\([^\n]*rec\.upgrades/,
   "the detailed run view must retain its Circos genome map");
-assert.doesNotMatch(game, /"Σlog\(cells\) per lineage"|S\.peakCells \+ " ·Σlog"/,
-  "high-score charts must not expose summation-log notation in their labels");
-assert.match(game, /chartLog \? "ecotype abundance \(log scale\)" : "ecotype abundance"/,
-  "the log toggle must use a plain-language chart title");
+assert.doesNotMatch(game + help, /[Σ∑]/,
+  "the shipped UI and its source must not contain summation characters");
+assert.doesNotMatch(game, /geo-mean lineage|geoMeanLineage/,
+  "the live chart legend must not add a geometric-mean statistic");
+assert.match(game, /<span id="chartTitle">ecotype abundance vs time<\/span>/,
+  "the live chart must retain the requested plain-language title in either scale");
 const subChartRenderer = game.slice(game.indexOf("function renderSubChart"), game.indexOf("function drawHelix"));
 assert.match(subChartRenderer, /const vals = hist\.map\(\(s\) => subVals\(s\)\.slice\(\)\)/,
   "the lower chart must render the values recorded at each sample");

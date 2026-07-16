@@ -3181,21 +3181,8 @@
     let html = `<span><i class="gen-swatch"></i>${colony === 1 ? "bacterium" : "bacteria"} <b>${colony}</b></span>`;
     html += `<span><i class="eco-line" style="border-color:${PROTIST_COLOR}"></i>protists <b>${preds}</b></span>`;
     html += `<span><i class="eco-line" style="border-color:${VIRUS_COLOR}"></i>viruses <b>${green || 0}</b></span>`;
-    // In log mode the stack is Σlog(cells) per lineage, whose height is n·log(GM) — so the number
-    // worth showing alongside it is the GEOMETRIC MEAN lineage size, not the total.
-    if (chartLog) {
-      const gm = geoMeanLineage(ecoSample().buckets);
-      if (gm) html += `<span>geo-mean lineage <b>${gm.toFixed(1)}</b></span>`;
-    }
-    html += `<span id="chartTitle">${chartLog ? "ecotype abundance (log scale)" : "ecotype abundance"} vs. time · click for ${chartLog ? "linear" : "log"}</span>`;
+    html += `<span id="chartTitle">ecotype abundance vs time</span>`;
     el.legend.innerHTML = html;
-  }
-  // geometric mean of the living lineages' sizes — the centre of a log-scaled stack
-  function geoMeanLineage(buckets) {
-    const v = Object.values(buckets || {}).filter((n) => n > 0);
-    if (!v.length) return 0;
-    let s = 0; for (const n of v) s += Math.log(n);
-    return Math.exp(s/v.length);
   }
   function ecoCounts() { const e = [0,0,0,0,0,0,0,0]; for (const c of cells) e[ecoMask(c)]++; return e; }
   // per-ecotype count + average upgrade level (total enzyme levels above base + chemoLevel) for the chart
@@ -3236,12 +3223,12 @@
   // chart (scrolling window) and by each saved high-score mini-chart (whole game).
   // `denom` sets the x-span (fixed window for live scroll; hist length for saved fill).
   // THE LOG SCALE, and why it changed.
-  // It used to stack raw counts and log the CUMULATIVE total — log(Σx). On a stacked chart that is
+  // It used to stack raw counts and log the cumulative total. On a stacked chart that is
   // close to useless: the bottom band gets nearly the whole axis, and a rare lineage sitting on top
   // of a boom is squeezed into a hairline, because what you see is the log of everything BELOW it.
-  // Now each band contributes log(x+1) of its OWN size and those are stacked — Σlog(x). Every
+  // Now each band contributes log(x+1) of its OWN size and those contributions are stacked. Every
   // lineage then gets a thickness set by its own abundance, so 2 cells is visible next to 200.
-  // (This is the geometric mean, drawn: Σlog(xᵢ) = n·log(GM), so the stack's total height IS the
+  // (This corresponds to a geometric mean, so the stack's total height is the
   // count of lineages times the log of their geometric mean. A colony of many similar lineages is
   // tall; one monster lineage plus stragglers is short. That's the diversity you wanted to see.)
   const bandVal = (x) => (chartLog ? Math.log10(x + 1) : x);
@@ -3261,7 +3248,7 @@
       if ((hist[i].v || 0) > vMax) vMax = hist[i].v;
     }
     const pad = H < 70 ? 8 : 14;
-    // v is ALREADY in stacked units (cells, or Σlog-cells) — so the axis itself is linear in them
+    // v is already in stacked units (cells, or stacked log-cells), so the axis itself is linear in them
     const yAt = (v) => H - (v/maxY)*(H - pad) - 2;
     return { bks, keys, maxY, vMax, peakCells, pad, yAt };
   }
