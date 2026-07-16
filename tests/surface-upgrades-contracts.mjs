@@ -4,20 +4,28 @@ import { readFileSync } from "node:fs";
 const game = readFileSync(new URL("../game.js", import.meta.url), "utf8");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 
-assert.match(game, /eps: \{ life: 30,[^}]*maxCount: 240/,
-  "EPS starts as a 30-second, globally capped barrier");
+assert.match(game, /eps: \{ lifePerLevel: 4,[^}]*maxCount: 240/,
+  "EPS starts at four seconds per expression level and remains globally capped");
 assert.match(html, /id="enzEps">EPS<[\s\S]*id="abilTwitch">twitching</,
   "both new genes are visible in the genome bar");
 
 const grant = game.slice(game.indexOf("function grantRandomUpgrade_(c)"), game.indexOf("function makeCell"));
 assert.match(grant, /!c\.twitching[\s\S]*pool\.push\("twitching"\)/,
   "twitching motility is a one-time gold-phage upgrade");
-assert.match(grant, /!c\.eps[\s\S]*pool\.push\("eps"\)/,
-  "EPS production is a one-time gold-phage upgrade");
+assert.match(grant, /pool\.push\("eps"\)[\s\S]*const acquired = c\.eps === 0; c\.eps\+\+/,
+  "EPS is a repeatable, countable gold-phage upgrade");
+assert.match(game, /pick === "eps"\) \{ c\.eps--; locus = "Eps"/,
+  "gene loss removes one EPS expression level at a time");
+assert.match(game, /function upgradeTier\(c\)[\s\S]*\+ \(c\.eps \|\| 0\)/,
+  "every EPS level contributes to lineage adaptation tier");
+assert.match(game, /function genomeOf\(c\)[\s\S]*c\.eps \|\| 0/,
+  "genetic distance preserves the countable EPS locus");
+assert.match(game, /for \(let k = 1; k <= \(c\.eps \|\| 0\); k\+\+\) push\("EPS " \+ k, "Eps" \+ k/,
+  "synthetic lineage histories contain one event per EPS level");
 
 const divide = game.slice(game.indexOf("function divide(c)"), game.indexOf("function cellStrength"));
 assert.match(divide, /d1\.twitching = d2\.twitching = !!c\.twitching/);
-assert.match(divide, /d1\.eps = d2\.eps = !!c\.eps/,
+assert.match(divide, /d1\.eps = d2\.eps = c\.eps \|\| 0/,
   "both surface adaptations are inherited at division");
 
 const movement = game.slice(game.indexOf("function updateCell(c, dt)"), game.indexOf("function nearestOrganicSub"));
@@ -63,11 +71,15 @@ assert.match(drawCell, /for \(let i = 0; i <= 14; i\+\+\)[\s\S]*?ctx\.stroke\(\)
   "twitching cells retain the ordinary flagellum as well as their pili");
 
 const drawEps = game.slice(game.indexOf("function drawEps(z)"), game.indexOf("function drawNutrient"));
-assert.match(drawEps, /const profile = \[[^\]]{60,}\][\s\S]*quadraticCurveTo/,
+assert.match(game, /const EPS_RENDER_PROFILE = \[[^\]]{60,}\][\s\S]*EPS_OUTLINE_PATH\.quadraticCurveTo/,
   "EPS has a rounded, tortuous bouba silhouette with alternating lobes and valleys");
 assert.doesNotMatch(drawEps, /lineTo\(/,
   "EPS has no sharp-sided block outline");
-const epsProfileText = drawEps.match(/const profile = \[([\s\S]*?)\];/)?.[1];
+assert.match(game, /const EPS_NETWORK_NODES = \[[\s\S]*const EPS_NETWORK_LINKS = \[[\s\S]*ctx\.clip\(EPS_OUTLINE_PATH\)/,
+  "EPS renders a clipped filament network with stable junction nodes");
+assert.match(drawEps, /rgba\(105,88,43,0\.52\)[\s\S]*ctx\.stroke\(EPS_NETWORK_PATH\)[\s\S]*rgba\(255,241,190,0\.78\)[\s\S]*ctx\.stroke\(EPS_NETWORK_PATH\)/,
+  "EPS fibres reuse one path for their under-strand and bright core");
+const epsProfileText = game.match(/const EPS_RENDER_PROFILE = \[([\s\S]*?)\];/)?.[1];
 assert.ok(epsProfileText, "EPS radial profile is present");
 const epsProfile = epsProfileText.split(",").map(Number);
 const epsPoints = epsProfile.map((radius, i) => {
@@ -84,9 +96,29 @@ assert.ok(epsTurns.includes(1) && epsTurns.includes(-1),
 
 const actions = game.slice(game.indexOf("const AB = 3, EPS = 4"), game.indexOf("function lineageReps"));
 assert.match(actions, /if \(c\.eps\) o\.push\(EPS\)/);
-assert.match(actions, /epsBlocks\.push\(\{[\s\S]*life: E\.life/);
+assert.match(actions, /life = E\.lifePerLevel\*level[\s\S]*life, maxLife: life, level/,
+  "released EPS lifetime is four seconds times its expression level");
 assert.match(actions, /state\.activeEnzyme === EPS[\s\S]*releaseEps\(c\)/,
   "EPS is selected and released through the ordinary deployable control");
+
+const releaseEpsSource = game.match(/function releaseEps\(c, angle = c\.angle\) \{[\s\S]*?\n  \}/)?.[0];
+assert.ok(releaseEpsSource, "production EPS release function is present");
+const released = [];
+const releaseEps = new Function("CFG", "epsBlocks", "cellHalfLen", "wrapX", "wrapY",
+  `${releaseEpsSource}\nreturn releaseEps;`)(
+    { eps: { lifePerLevel: 4, radius: 24, cost: 8, maxCount: 240 } }, released,
+    () => 10, (v) => v, (v) => v,
+  );
+const producer = { x: 100, y: 100, angle: 0, energy: 100, eps: 3 };
+assert.equal(releaseEps(producer), true);
+assert.equal(released[0].life, 12, "EPS level 3 lasts 12 seconds");
+assert.equal(released[0].level, 3, "the released block records its expression level");
+assert.equal(producer.energy, 92, "EPS release still charges its ordinary energy cost");
+
+assert.match(game, /el\.enzEps\.innerHTML = "EPS" \+ \(owned \? amp\(lvl\) : ""\)/,
+  "the genome chip displays the countable EPS level");
+assert.match(game, /for \(const c of cells\) c\.eps = Math\.max\(0, Math\.round\(Number\(c\.eps\) \|\| 0\)\)/,
+  "old boolean EPS checkpoint values migrate to numeric level 1");
 
 const enzymeUpdate = game.slice(game.indexOf("function updateEnzymes(dt)"), game.indexOf("function updateToxins(dt)"));
 assert.doesNotMatch(enzymeUpdate, /epsBlocks|updateEps/,

@@ -125,8 +125,9 @@
     toxin: { life: 4.5, maxRadius: 40, growTime: 0.4, dose: 55, potency: 18, radiusPer: 0.34, // anti-protist antibiotic: fixed `dose` hit + lingering `potency`/s (NOT scaled by level); leveling GROWS the radius (radiusPer) so it hits more protists at once
              crossDist: 3, crossFactor: 1 }, // cross-reactive: bacteria a genetic distance ≥ crossDist from the releaser also take damage (×crossFactor)
     // EPS is a physical extracellular-polysaccharide block: it cannot be enzymatically digested,
-    // but it ages away so a defended colony cannot permanently wall off the toroidal ocean.
-    eps: { life: 30, radius: 24, growTime: 0.3, cost: 8, maxCount: 240,
+    // but it ages away so a defended colony cannot permanently wall off the toroidal ocean. Its
+    // expression level is countable, and each level adds lifePerLevel seconds to a released block.
+    eps: { lifePerLevel: 4, radius: 24, growTime: 0.3, cost: 8, maxCount: 240,
            cooldown: [12, 18], threatRange: 95 },
     nutrient: { life: 16, radius: 3.2, maxCount: 600 },
     // trophic role-swap: when your whole population dies you flip to the other trophic level
@@ -736,7 +737,7 @@
     const pick = opts[(Math.random()*opts.length)|0];
     let locus, color;
     if (pick === "twitching") { c.twitching = false; locus = "Tw"; color = TWITCH_COLOR; }
-    else if (pick === "eps") { c.eps = false; locus = "Eps"; color = EPS_COLOR; }
+    else if (pick === "eps") { c.eps--; locus = "Eps"; color = EPS_COLOR; }
     else if (pick === "crispr") { c.crispr = false; locus = "Cr"; color = CRISPR_COLOR; }
     else if (pick === "antibiotic") { c.antibiotic--; locus = "Ab"; color = TOXIN_COLOR; }
     else if (pick === "chemo") { c.chemoLevel--; if (!c.chemoLevel) c.chemotaxis = false; locus = "T"; color = "#ffd24a"; }
@@ -812,15 +813,15 @@
     const pool = ["chemo", "enz0", "enz1", "enz2", "antibiotic"];
     if (!c.crispr) pool.push("crispr");            // one-time: phage-immune-harvesting defense system
     if (!c.twitching) pool.push("twitching");      // one-time: type-IV-pilus crawling over particles
-    if (!c.eps) pool.push("eps");                  // one-time: deployable extracellular matrix
+    pool.push("eps");                              // repeatable: each level extends matrix lifetime
     const pick = pool[(Math.random()*pool.length)|0];
     if (pick === "twitching") {
       c.twitching = true;
       return { msg: "Twitching motility", color: TWITCH_COLOR, abbr: "Tw", acquired: true };
     }
     if (pick === "eps") {
-      c.eps = true;
-      return { msg: "EPS production", color: EPS_COLOR, abbr: "Eps", acquired: true };
+      const acquired = c.eps === 0; c.eps++;
+      return { msg: "EPS " + c.eps, color: EPS_COLOR, abbr: "Eps" + c.eps, acquired };
     }
     if (pick === "crispr") {
       c.crispr = true;
@@ -847,7 +848,7 @@
       tumbling: false, runTimer: rand(CFG.cell.runMin, CFG.cell.runMax), tumbleT: 0, tumbleTarget: angle,
       fed: 0, enzCd: rand(CFG.cell.enzymeCooldown[0], CFG.cell.enzymeCooldown[1]),
       infectedGreen: false, lysisT: 0, chemotaxis: false, chemoLevel: 0, crispr: false, antibiotic: 0,
-      twitching: false, eps: false, epsCd: rand(CFG.eps.cooldown[0], CFG.eps.cooldown[1]), toxT: 0,
+      twitching: false, eps: 0, epsCd: rand(CFG.eps.cooldown[0], CFG.eps.cooldown[1]), toxT: 0,
       // This cell's OWN adaptation log, in the order it was acquired — inherited whole by its
       // daughters. The player's run-level log (state.upgrades) only ever knew about the cell you were
       // steering; this is what lets every lineage on the chart show its own genome. phylo preserves
@@ -870,7 +871,7 @@
     if (c.crispr) push("CRISPR", "Cr", CRISPR_COLOR, true);
     for (let k = 1; k <= (c.antibiotic || 0); k++) push("Antibiotic " + k, "Ab" + k, TOXIN_COLOR, k === 1);
     if (c.twitching) push("Twitching motility", "Tw", TWITCH_COLOR, true);
-    if (c.eps) push("EPS production", "Eps", EPS_COLOR, true);
+    for (let k = 1; k <= (c.eps || 0); k++) push("EPS " + k, "Eps" + k, EPS_COLOR, k === 1);
     return u;
   }
   function ownedEnzymes(c) { const o = []; for (let i = 0; i < 3; i++) if (c.enzLvl[i] > 0) o.push(i); return o; }
@@ -888,15 +889,15 @@
   // and infects only cells within hostTolerance tiers of it. Every upgrade you take shifts your tier,
   // so you can OUTRUN a virus cohort by upgrading (they turn green) until new phages evolve to your tier.
   function upgradeTier(c) { return (c.enzLvl[0] + c.enzLvl[1] + c.enzLvl[2] - 1) + c.chemoLevel +
-    (c.crispr ? 1 : 0) + (c.antibiotic || 0) + (c.twitching ? 1 : 0) + (c.eps ? 1 : 0); }
+    (c.crispr ? 1 : 0) + (c.antibiotic || 0) + (c.twitching ? 1 : 0) + (c.eps || 0); }
   function hostMatch(phHost, tier) { return Math.abs(phHost - tier) <= CFG.phage.hostTolerance; }
   // genome as a vector of loci → "genetic distance" (Manhattan) between two cells, for cross-reactive antibiotics
   function genomeOf(c) { return [c.enzLvl[0], c.enzLvl[1], c.enzLvl[2], c.chemoLevel, c.crispr ? 1 : 0,
-    c.antibiotic || 0, c.twitching ? 1 : 0, c.eps ? 1 : 0]; }
+    c.antibiotic || 0, c.twitching ? 1 : 0, c.eps || 0]; }
   function genDist(g, c) {
     return Math.abs(g[0]-c.enzLvl[0]) + Math.abs(g[1]-c.enzLvl[1]) + Math.abs(g[2]-c.enzLvl[2])
          + Math.abs(g[3]-c.chemoLevel) + Math.abs(g[4]-(c.crispr?1:0)) + Math.abs(g[5]-(c.antibiotic||0))
-         + Math.abs((g[6]||0)-(c.twitching?1:0)) + Math.abs((g[7]||0)-(c.eps?1:0));
+         + Math.abs((g[6]||0)-(c.twitching?1:0)) + Math.abs((g[7]||0)-(c.eps||0));
   }
 
   // ----------------------------------------------------- destructible particle
@@ -1357,6 +1358,11 @@
     if (adminRows.length) syncAdmin();
     setWorld(record.world.width, record.world.height);
     state = record.state; cells = E.cells;
+    // EPS was a boolean in schema-1 checkpoints before expression became countable. Number(true)
+    // migrates an old producer to level 1 without invalidating a player's saved day.
+    for (const c of cells) c.eps = Math.max(0, Math.round(Number(c.eps) || 0));
+    if (Array.isArray(state.dead)) for (const g of state.dead)
+      g.eps = Math.max(0, Math.round(Number(g.eps) || 0));
     substrates = E.substrates.map((saved) => ({
       ...saved, spec: PARTICLES[saved.kind], cache: null, depthBuf: null, dirty: true,
     }));
@@ -1834,7 +1840,7 @@
     if (!state || c.cyst === undefined) return;
     state.dead = state.dead || [];
     state.dead.push({ enzLvl: c.enzLvl.slice(), chemotaxis: !!c.chemotaxis, chemoLevel: c.chemoLevel || 0,
-                      crispr: !!c.crispr, antibiotic: c.antibiotic || 0, twitching: !!c.twitching, eps: !!c.eps,
+                      crispr: !!c.crispr, antibiotic: c.antibiotic || 0, twitching: !!c.twitching, eps: c.eps || 0,
                       ups: (c.ups || []).slice(0, 32),
                       phylo: (c.phylo || c.ups || []).slice(0, 32) });
     if (state.dead.length > 400) state.dead.shift();   // a rolling bank, not an ever-growing one
@@ -1844,7 +1850,8 @@
     if (!bank.length) return false;
     const g = bank[(Math.random()*bank.length)|0];
     c.enzLvl = g.enzLvl.slice(); c.chemotaxis = g.chemotaxis; c.chemoLevel = g.chemoLevel;
-    c.crispr = g.crispr; c.antibiotic = g.antibiotic; c.twitching = !!g.twitching; c.eps = !!g.eps;
+    c.crispr = g.crispr; c.antibiotic = g.antibiotic; c.twitching = !!g.twitching;
+    c.eps = Math.max(0, Math.round(Number(g.eps) || 0));
     c.ups = (g.ups || []).slice();
     c.phylo = (g.phylo || g.ups || []).slice();
     return true;
@@ -1863,7 +1870,7 @@
         if (Math.random() < 0.22) c.crispr = true;
         if (Math.random() < 0.30) c.antibiotic = 1;
         if (Math.random() < 0.18) c.twitching = true;
-        if (Math.random() < 0.18) c.eps = true;
+        if (Math.random() < 0.18) c.eps = 1;
         c.ups = genomeUps(c);   // it arrived already carrying these — read the log off the genome
         c.phylo = c.ups.slice();
       }
@@ -1933,8 +1940,9 @@
     if (!c.eps || c.energy < E.cost || epsBlocks.length >= E.maxCount) return false;
     c.energy -= E.cost;
     const d = cellHalfLen(c) + E.radius + 3;
+    const level = Math.max(1, Math.round(c.eps)), life = E.lifePerLevel*level;
     epsBlocks.push({ x: wrapX(c.x + Math.cos(angle)*d), y: wrapY(c.y + Math.sin(angle)*d),
-      angle: angle + Math.PI/4, r: 4, maxR: E.radius, life: E.life, age: 0 });
+      angle: angle + Math.PI/4, r: 4, maxR: E.radius, life, maxLife: life, level, age: 0 });
     return true;
   }
   // A grazer has no enzymes, so Space (and the phone's release button) becomes a sprint instead.
@@ -2101,7 +2109,7 @@
     d1.crispr = d2.crispr = c.crispr;
     d1.antibiotic = d2.antibiotic = c.antibiotic;
     d1.twitching = d2.twitching = !!c.twitching;
-    d1.eps = d2.eps = !!c.eps;
+    d1.eps = d2.eps = c.eps || 0;
     d1.enzLvl = c.enzLvl.slice(); d2.enzLvl = c.enzLvl.slice();
     d1.ups = d2.ups = c.ups || [];   // the adaptation log is heritable too (shared until one of them adapts)
     d1.phylo = d2.phylo = c.phylo || c.ups || []; // event ancestry survives gain and gene loss alike
@@ -3123,6 +3131,44 @@
     ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, z.r, 0, 6.28); ctx.fill();
     ctx.restore();
   }
+  // Static unit geometry keeps a full field of EPS from rebuilding the same mesh every frame.
+  const EPS_RENDER_PROFILE = [0.97, 0.73, 0.91, 0.68, 0.98, 0.76, 0.94, 0.70,
+                              0.96, 0.72, 0.90, 0.67, 0.97, 0.74];
+  const EPS_RENDER_POINTS = EPS_RENDER_PROFILE.map((scale, i) => {
+    const a = i/EPS_RENDER_PROFILE.length*TAU - Math.PI/2;
+    return [Math.cos(a)*scale, Math.sin(a)*scale];
+  });
+  const EPS_NETWORK_NODES = [
+    [-0.58,-0.28],[-0.33,-0.56],[-0.05,-0.43],[0.27,-0.58],[0.57,-0.29],
+    [0.45,-0.02],[0.59,0.31],[0.28,0.56],[-0.03,0.46],[-0.35,0.58],[-0.58,0.22],
+    [-0.28,-0.13],[0.02,-0.08],[0.28,0.22],[-0.18,0.25]
+  ];
+  const EPS_NETWORK_LINKS = [
+    [0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[7,8],[8,9],[9,10],[10,0],
+    [0,11],[1,11],[2,11],[2,12],[3,12],[4,12],[5,12],[5,13],[6,13],[7,13],
+    [8,13],[8,14],[9,14],[10,14],[10,11],[11,12],[11,14],[12,13],[12,14],[13,14]
+  ];
+  const EPS_OUTLINE_PATH = new Path2D(), epsFirst = EPS_RENDER_POINTS[0],
+        epsLast = EPS_RENDER_POINTS[EPS_RENDER_POINTS.length - 1];
+  EPS_OUTLINE_PATH.moveTo((epsLast[0] + epsFirst[0])/2, (epsLast[1] + epsFirst[1])/2);
+  for (let i = 0; i < EPS_RENDER_POINTS.length; i++) {
+    const p = EPS_RENDER_POINTS[i], next = EPS_RENDER_POINTS[(i + 1) % EPS_RENDER_POINTS.length];
+    EPS_OUTLINE_PATH.quadraticCurveTo(p[0], p[1], (p[0] + next[0])/2, (p[1] + next[1])/2);
+  }
+  EPS_OUTLINE_PATH.closePath();
+  const EPS_NETWORK_PATH = new Path2D(), EPS_NETWORK_NODES_PATH = new Path2D();
+  for (let i = 0; i < EPS_NETWORK_LINKS.length; i++) {
+    const link = EPS_NETWORK_LINKS[i], a = EPS_NETWORK_NODES[link[0]], b = EPS_NETWORK_NODES[link[1]];
+    const vx = b[0] - a[0], vy = b[1] - a[1], inv = 1/(Math.hypot(vx, vy) || 1);
+    const bend = ((i % 3) - 1)*0.055;
+    EPS_NETWORK_PATH.moveTo(a[0], a[1]);
+    EPS_NETWORK_PATH.quadraticCurveTo((a[0]+b[0])/2 - vy*inv*bend,
+      (a[1]+b[1])/2 + vx*inv*bend, b[0], b[1]);
+  }
+  for (const node of EPS_NETWORK_NODES) {
+    EPS_NETWORK_NODES_PATH.moveTo(node[0] + 0.045, node[1]);
+    EPS_NETWORK_NODES_PATH.arc(node[0], node[1], 0.045, 0, TAU);
+  }
   function drawEps(z) {
     const cx = sx(z.x), cy = sy(z.y); if (!onScreen(cx, cy, z.r + 5)) return;
     const fade = clamp(z.life/3, 0, 1), r = z.r;
@@ -3130,30 +3176,22 @@
     // A plump but tortuous polysaccharide blob. Alternating outer lobes and deep inner valleys make
     // the outline visibly convex and concave; midpoint curves keep every wiggle soft, and every
     // point remains inside the circular collision boundary.
-    const profile = [0.97, 0.73, 0.91, 0.68, 0.98, 0.76, 0.94, 0.70,
-                     0.96, 0.72, 0.90, 0.67, 0.97, 0.74];
-    const points = profile.map((scale, i) => {
-      const a = i/profile.length*TAU - Math.PI/2;
-      return { x: Math.cos(a)*r*scale, y: Math.sin(a)*r*scale };
-    });
-    const first = points[0], last = points[points.length - 1];
-    ctx.beginPath();
-    ctx.moveTo((last.x + first.x)/2, (last.y + first.y)/2);
-    for (let i = 0; i < points.length; i++) {
-      const p = points[i], next = points[(i + 1) % points.length];
-      ctx.quadraticCurveTo(p.x, p.y, (p.x + next.x)/2, (p.y + next.y)/2);
-    }
-    ctx.closePath();
-    const matrix = ctx.createRadialGradient(-r*0.25, -r*0.28, r*0.08, 0, 0, r);
-    matrix.addColorStop(0, "rgba(255,238,180,0.68)");
-    matrix.addColorStop(0.7, "rgba(216,184,106,0.52)");
-    matrix.addColorStop(1, "rgba(166,132,66,0.58)");
-    ctx.fillStyle = matrix; ctx.strokeStyle = "rgba(255,235,178,0.92)"; ctx.lineWidth = 1.5;
-    ctx.fill(); ctx.stroke();
-    ctx.fillStyle = "rgba(255,248,218,0.40)";
-    for (const [x, y] of [[-0.34,-0.28],[0.28,-0.31],[-0.12,0.22],[0.39,0.28]]) {
-      ctx.beginPath(); ctx.arc(x*r, y*r, Math.max(1.2, r*0.08), 0, TAU); ctx.fill();
-    }
+    ctx.scale(r, r);
+    const matrix = ctx.createRadialGradient(-0.25, -0.28, 0.08, 0, 0, 1);
+    matrix.addColorStop(0, "rgba(255,238,180,0.38)");
+    matrix.addColorStop(0.7, "rgba(216,184,106,0.24)");
+    matrix.addColorStop(1, "rgba(166,132,66,0.28)");
+    ctx.fillStyle = matrix; ctx.strokeStyle = "rgba(255,235,178,0.92)"; ctx.lineWidth = 1.5/r;
+    ctx.fill(EPS_OUTLINE_PATH); ctx.stroke(EPS_OUTLINE_PATH);
+
+    // Clip a dense web of curved fibres to the soft outline. A dark under-strand and pale core make
+    // each connection read as a polysaccharide cable rather than a flat diagram line.
+    ctx.save(); ctx.clip(EPS_OUTLINE_PATH); ctx.lineCap = "round"; ctx.lineJoin = "round";
+    ctx.strokeStyle = "rgba(105,88,43,0.52)"; ctx.lineWidth = 1.5/r; ctx.stroke(EPS_NETWORK_PATH);
+    ctx.strokeStyle = "rgba(255,241,190,0.78)"; ctx.lineWidth = 0.55/r; ctx.stroke(EPS_NETWORK_PATH);
+    ctx.fillStyle = "rgba(255,248,214,0.90)";
+    ctx.fill(EPS_NETWORK_NODES_PATH);
+    ctx.restore();
     ctx.restore();
   }
   function drawNutrient(n) {
@@ -4413,10 +4451,10 @@
       el.enzTox.classList.toggle("owned", owned);
       el.enzTox.classList.toggle("active", owned && state.activeEnzyme === 3);
       el.enzTox.innerHTML = "antibiotic" + (owned ? amp(lvl) : ""); }
-    if (el.enzEps) { const owned = !!(pc && pc.eps);
+    if (el.enzEps) { const lvl = pc ? pc.eps || 0 : 0, owned = lvl > 0;
       el.enzEps.classList.toggle("owned", owned);
       el.enzEps.classList.toggle("active", owned && state.activeEnzyme === EPS);
-      el.enzEps.textContent = "EPS"; }
+      el.enzEps.innerHTML = "EPS" + (owned ? amp(lvl) : ""); }
     if (el.abilChemo) { const on = !!(pc && pc.chemotaxis); el.abilChemo.classList.toggle("owned", on); el.abilChemo.innerHTML = "chemotaxis" + (on ? amp(pc.chemoLevel) : ""); }
     if (el.abilCrispr) el.abilCrispr.classList.toggle("owned", !!(pc && pc.crispr));
     if (el.abilTwitch) el.abilTwitch.classList.toggle("owned", !!(pc && pc.twitching));
@@ -4630,7 +4668,7 @@
     "toxin.crossDist": "Cross-reactivity: bacteria at least this genetic distance from the releaser are harmed by its antibiotic too.",
     "toxin.crossFactor": "How hard that cross-reactive dose lands on those distant lineages (1 = the full dose).",
     "toxin.radiusPer": "Cloud radius gained per antibiotic level — leveling widens the cloud rather than strengthening it.",
-    "eps.life": "Seconds an EPS block remains in the ocean before its matrix ages away.",
+    "eps.lifePerLevel": "Seconds of barrier lifetime added by each EPS expression level. Level 1 lasts this long; every later level adds the same amount again.",
     "eps.radius": "Collision radius of one EPS block (px).",
     "eps.growTime": "Seconds a newly released EPS block takes to reach full size.",
     "eps.cost": "Energy spent per EPS block released.",
@@ -4752,7 +4790,7 @@
     "substrate.sizeMin", "substrate.sizeMax", "substrate.lifeMin", "substrate.lifeMax",
     "substrate.dissolveTime", "enzyme.life", "enzyme.maxRadius", "enzyme.growTime", "toxin.life",
     "toxin.maxRadius", "toxin.growTime", "nutrient.life", "nutrient.radius", "cycle.preyEvery",
-    "eps.life", "eps.radius", "eps.growTime", "eps.cooldown.0", "eps.cooldown.1", "eps.threatRange",
+    "eps.lifePerLevel", "eps.radius", "eps.growTime", "eps.cooldown.0", "eps.cooldown.1", "eps.threatRange",
     "cycle.turboSecs", "cycle.turboMaxSecs", "predator.radius", "predator.satiatedTime",
     "predator.maturity", "predator.reproCooldown", "predator.immigrateEvery", "predator.respawnFloor",
     "phage.radius", "phage.life.0", "phage.life.1", "phage.latent.0", "phage.latent.1",
