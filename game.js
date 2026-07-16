@@ -183,8 +183,8 @@
       latent: [9, 15],      // seconds from green infection to lysis
       greenSeed: [5, 9], greenFloor: 27, seedBatch: 3, // reservoir: every greenSeed s, top the sampled lineage up (a few at a time) to ≥greenFloor phages tuned to ITS tier
       hostTolerance: 2,     // kill-the-winner: a phage infects only cells within this many upgrade-tiers of its host
-      adsorbBase: 0.35,     // adsorption RATE per second of contact for a matched green phage (dt-scaled, not per-frame)
-      superinfDecay: 0.7,   // each virion already aboard multiplies further adsorption rate by this (superinfection resistance)
+      adsorbBase: 0.3,      // probability a matched green phage adsorbs on ONE encounter (a cloud of N gives ~N independent chances)
+      superinfDecay: 0.7,   // each virion already aboard multiplies further adsorption odds by this (superinfection resistance)
       maxLoad: 6,           // most virions one cell can carry at once — the multiplicity-of-infection ceiling
       burstPerLoad: 1,      // extra virions released at lysis for every virion above the first (heavy load → slightly bigger burst)
       twitchAdsorbMult: 2.2,// pili ARE the phage receptor: they multiply a twitching cell's adsorption probability
@@ -2947,6 +2947,7 @@
       const reach = (ph.type === "gold" && isTouch) ? CFG.phage.goldGrabTouch : 1;
       const infectDist = (CFG.cell.radius + ph.r + CFG.phage.infectHalo) * reach;
       const cellReach = CFG.cell.maxHalf + infectDist + 2;
+      let greenContact = null;                       // the eligible host this phage is touching this frame (for one-roll-per-encounter)
       for (const c of cellSpace.query(ph.x, ph.y, cellReach, cellCandidates)) {
         if (!c.alive || c.cyst) continue;            // cysts are impervious to viruses
         if (ph.type === "gold" && !c.controlled) continue; // only YOU can grab the gold phage — daughters can't steal your adaptation
@@ -2954,23 +2955,28 @@
         if (toroDist2(ph.x, ph.y, c.x, c.y) > hl*hl) continue;
         if (cellDistTo(c, ph.x, ph.y) > infectDist) continue;
         if (ph.type === "green") {
-          if ((c.viralLoad || 0) >= CFG.phage.maxLoad) continue; // receptors saturated — no more virions fit
+          if ((c.viralLoad || 0) >= CFG.phage.maxLoad) continue; // receptors saturated — no more virions fit; try another cell
           if (!hostMatch(ph.host, upgradeTier(c), cellHostTol(c))) { // kill-the-winner (widened for twitching pili)
             if (c.crispr) { c.energy = Math.min(c.energy + CFG.cell.crisprEnergy, CFG.cell.maxEnergy); ph.dead = true;
               if (c.controlled) tutDid("atePhage"); burst(ph.x, ph.y, CRISPR_COLOR, 8); break; } // CRISPR harvests the immune virus for energy
-            continue;
+            continue;                                // immune to this one — try another cell
           }
-          // Adsorption is a RATE per second of contact, dt-scaled — NOT a per-frame coin flip. A phage lingers
-          // beside a cell for many frames, so a flat per-frame probability would compound to ~100% almost
-          // instantly; scaling by dt makes dwell TIME the thing that matters. Twitching pili raise the rate,
-          // and each virion already aboard lowers it (superinfection resistance). A miss leaves the phage ALIVE
-          // to keep trying, so multiplicity of infection builds the longer a cell sits in a viral cloud.
-          const rate = CFG.phage.adsorbBase * (c.twitching ? CFG.phage.twitchAdsorbMult : 1)
-                       * Math.pow(CFG.phage.superinfDecay, c.viralLoad || 0);
-          if (Math.random() >= 1 - Math.exp(-rate * dt)) continue; // didn't adsorb this frame — phage drifts on, still infectious
-          c.viralLoad = (c.viralLoad || 0) + 1;      // one more virion aboard (multiplicity of infection)
-          if (!c.infectedGreen) { c.infectedGreen = true; c.lysisT = rand(CFG.phage.latent[0], CFG.phage.latent[1]); if (c.controlled) tutDid("infected"); }
-          ph.dead = true; break;                     // this virion is spent — stop scanning cells for it
+          // ONE roll per ENCOUNTER, not per frame. A phage latches onto the host it first touches (ph.contact)
+          // and does NOT re-roll it every frame it stays in contact — otherwise dwell TIME, not the NUMBER of
+          // viruses, decides infection (fly through 8 ≈ sit on 1). It must separate and re-approach for another
+          // chance, so a cloud of N viruses gives ~N independent chances. A miss leaves the phage alive to drift
+          // on and meet another cell; twitching pili raise the odds; each virion aboard lowers them (superinfection).
+          greenContact = c;
+          if (ph.contact !== c) {                    // a fresh encounter with this host
+            ph.contact = c;
+            const p = CFG.phage.adsorbBase * (c.twitching ? CFG.phage.twitchAdsorbMult : 1)
+                      * Math.pow(CFG.phage.superinfDecay, c.viralLoad || 0);
+            if (Math.random() < p) {                 // adsorbed and injected a virion
+              c.viralLoad = (c.viralLoad || 0) + 1;  // multiplicity of infection accumulates across phages
+              if (!c.infectedGreen) { c.infectedGreen = true; c.lysisT = rand(CFG.phage.latent[0], CFG.phage.latent[1]); if (c.controlled) tutDid("infected"); }
+              ph.dead = true;                        // this virion is spent
+            }
+          }
         } else {                                     // gold: transduce a random upgrade
           // The tutorial promises CRISPR by name, and then has to teach eating a phage with it — so
           // there it grants CRISPR outright rather than rolling the dice on the lesson.
@@ -2985,8 +2991,9 @@
             driftAnotherCell(c);   // the sea evolves too — someone else gains or loses a gene
           }
         }
-        break;
+        break;                                       // a phage commits to ONE host per frame (green or gold)
       }
+      if (!greenContact) ph.contact = null;          // separated from every eligible host → next touch is a fresh encounter
     }
     phages = phages.filter((p) => !p.dead);
     if (phages.length > CFG.phage.maxCount) phages.length = CFG.phage.maxCount;
@@ -5027,7 +5034,7 @@
     "phage.greenSeed": "Seconds between reservoir top-ups, which keep phages tuned to a sampled lineage.",
     "phage.greenFloor": "Minimum phages kept matched to the sampled lineage's tier at each top-up.",
     "phage.hostTolerance": "Kill-the-winner window: how many adaptation tiers from its host a phage can still infect. Lower = upgrading shakes off your pursuers faster.",
-    "phage.adsorbBase": "Adsorption RATE per SECOND of contact for a matched green phage (dt-scaled, not a per-frame roll). Lower = a cell can brush past a virus and escape; infection now depends on how long it dwells in a viral cloud.",
+    "phage.adsorbBase": "Probability a matched green phage adsorbs on ONE encounter (0-1). Each virus you contact is an independent chance, so a cloud of N gives ~1-(1-p)^N. Lower = brushing past a lone virus usually misses, but a dense cloud still almost always lands.",
     "phage.superinfDecay": "Superinfection resistance (0-1): each virion already inside a cell multiplies the chance of the next one adsorbing by this. <1 makes heavy loads self-limiting; 1 disables it.",
     "phage.maxLoad": "Most virions one cell can carry at once — the multiplicity-of-infection ceiling.",
     "phage.burstPerLoad": "Extra virions released at lysis for every virion above the first, so a heavily-loaded cell bursts far bigger. Raise this if bacteria outrun the plague.",

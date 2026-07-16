@@ -165,12 +165,14 @@ assert.equal(susceptibility.hostMatch(5, 8, susceptibility.cellHostTol({ twitchi
 assert.equal(susceptibility.hostMatch(5, 8, susceptibility.cellHostTol({ twitching: true })), true,
   "twitching pili widen the window, so the same distant phage now infects");
 // probabilistic multiplicity-of-infection model (replaces the old flat 100% single-hit adsorption)
-assert.match(game, /const rate = CFG\.phage\.adsorbBase \* \(c\.twitching \? CFG\.phage\.twitchAdsorbMult : 1\)/,
-  "green adsorption is a rate and twitching multiplies it");
+assert.match(game, /const p = CFG\.phage\.adsorbBase \* \(c\.twitching \? CFG\.phage\.twitchAdsorbMult : 1\)/,
+  "green adsorption is a per-encounter probability and twitching multiplies it");
 assert.match(game, /Math\.pow\(CFG\.phage\.superinfDecay, c\.viralLoad \|\| 0\)/,
-  "each virion already aboard lowers the rate of the next (superinfection resistance)");
-assert.match(game, /if \(Math\.random\(\) >= 1 - Math\.exp\(-rate \* dt\)\) continue;/,
-  "adsorption is dt-scaled (rate per second of contact), not a per-frame roll that compounds to ~100%");
+  "each virion already aboard lowers the odds of the next (superinfection resistance)");
+assert.match(game, /if \(ph\.contact !== c\)/,
+  "ONE roll per encounter — a phage won't re-roll a host it is still in continuous contact with");
+assert.match(game, /if \(!greenContact\) ph\.contact = null;/,
+  "separating from every host resets the encounter, so a re-approach is a fresh independent chance");
 assert.match(game, /c\.viralLoad = \(c\.viralLoad \|\| 0\) \+ 1;/,
   "a successful adsorption raises the cell's viral load rather than being one-and-done");
 assert.match(game, /\(c\.viralLoad \|\| 0\) >= CFG\.phage\.maxLoad/,
