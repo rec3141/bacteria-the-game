@@ -99,8 +99,8 @@
   #subchartlegend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
   #subchartlegend span { text-transform: capitalize; }
   #subchartTitle { margin-left: auto; opacity: .55; font-style: italic; text-transform: none; }
-  #analysisSubChart { display: block; width: 100%; height: 66px; border-radius: 6px; }
-  #detailSubChart { display: block; width: 100%; height: 90px; border-radius: 6px; }
+  #analysisSubChart, #analysisMortChart { display: block; width: 100%; height: 66px; border-radius: 6px; }
+  #detailSubChart, #detailMortChart { display: block; width: 100%; height: 90px; border-radius: 6px; }
   .alabel.sublabel { margin-top: 8px; opacity: .5; text-transform: none; letter-spacing: 0; }
 
   /* Overlays (title / death / win) */
@@ -128,7 +128,7 @@
   }
   button:active { transform: translateY(3px); box-shadow: 0 1px 0 #2a9d84; }
   .hidden { display: none !important; }
-  /* upgrade announcement bubble */
+  /* brief in-world announcement bubble: adaptations, loaded genes, and lineage changes */
   #toast {
     position: absolute; top: 50%; left: 50%; z-index: 5;
     transform: translate(-50%, -100%) translateY(-10px) scale(.96);
@@ -136,7 +136,7 @@
     padding: 8px 18px; border-radius: 22px; font-weight: bold; font-size: 14px;
     white-space: nowrap; pointer-events: none; opacity: 0;
     box-shadow: 0 4px 18px rgba(0,0,0,.5);
-    transition: opacity .25s ease, transform .25s ease;
+    transition: opacity .16s ease, transform .16s ease;
   }
   #roleTag { align-self: center; font-size: 12px; font-weight: bold; letter-spacing: .5px;
     color: #ffd6ec; background: rgba(255,158,192,.16); border: 1px solid rgba(255,158,192,.5);
@@ -155,7 +155,7 @@
     padding: 5px 14px; border-radius: 16px; font-size: 12px; font-weight: bold;
     transition: opacity .2s ease, transform .2s ease; }
   #audioFlash.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-  #toast::before { content: "🧬 "; }
+  #toast::before { content: attr(data-icon); margin-right: 6px; }
   #toast.show { opacity: 1; transform: translate(-50%, -100%) translateY(0) scale(1); }
   .btnrow { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; justify-content: center; }
   button.ghost { background: transparent; color: var(--accent); box-shadow: none;
@@ -324,6 +324,19 @@
   .titlecard .tag { margin: 6px 0 0; font-size: 14px; letter-spacing: 4px;
     text-transform: uppercase; opacity: .65; }
   #title .lede { max-width: 480px; text-align: center; line-height: 1.6; opacity: .92; font-size: 15px; }
+  #savedContinueBtn {
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+    width: min(430px, 92%); padding: 11px 22px; border-radius: 15px;
+    color: #eafff8; background: rgba(6,38,44,.92);
+    border: 1.5px solid rgba(87,224,192,.7); box-shadow: 0 4px 0 rgba(42,157,132,.72);
+  }
+  #savedContinueBtn strong { color: var(--accent); font-size: 16px; letter-spacing: .4px; }
+  #savedContinueBtn span { color: var(--ink); font-size: 11.5px; font-weight: normal; opacity: .82; }
+  #savedContinueBtn:disabled { cursor: wait; opacity: .65; }
+  #saveStatus { max-width: 460px; padding: 7px 13px; border-radius: 9px; font-size: 12px;
+    color: var(--muted); background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.1); }
+  #saveStatus.ok { color: var(--accent); border-color: rgba(87,224,192,.35); }
+  #saveStatus.warn { color: #ffd24a; border-color: rgba(255,210,74,.35); }
 
   /* Help screen */
   #help { justify-content: flex-start; padding-top: 22px; gap: 10px; background: #04141a; }
@@ -539,7 +552,7 @@
     #help, #science { z-index: 60; } /* stay above the screen they were opened from */
     .screen h1 { font-size: 30px; }
     #title .lede { font-size: 13px; line-height: 1.45; }
-    #analysisChart { height: 128px; } #analysisSubChart { height: 50px; }
+    #analysisChart { height: 128px; } #analysisSubChart, #analysisMortChart { height: 50px; }
     #analysisWrap { padding: 6px 8px; }
     #helpBody, #sciBody, #scoresList { max-height: 62vh; max-height: 62dvh; }
   }
@@ -649,7 +662,7 @@
       <div class="hudrow topline">
         <div class="bar"><span id="energyFill"></span></div>
         <span id="energyTxt" class="stat">0</span>
-        <span class="stats-inline"><b id="colony">1</b>&#8202;<span id="colonyWord">bacterium</span> · gen&#8202;<b id="gen">1</b> · <b id="score">0</b>&#8202;cal · <b id="time">0:00</b></span>
+        <span class="stats-inline"><b id="colony">1</b>&#8202;active · <b id="cysts">0</b>&#8202;cysts · gen&#8202;<b id="gen">1</b> · <b id="score">0</b>&#8202;cal · <b id="time">0:00</b></span>
         <span id="roleTag" class="hidden">🛡️ PROTIST</span>
       </div>
       <div class="hudrow genome-row">
@@ -684,6 +697,10 @@
         <p class="tag">forage · evolve · divide · endure</p>
       </div>
       <p class="lede"><b>One tiny cell. One living ocean.</b> Chase food, capture new genes, evade hungry protists, and multiply into a lineage strong enough to survive from sunrise to sunrise.</p>
+      <button id="savedContinueBtn" class="hidden" type="button">
+        <strong id="savedContinueTitle">Continue to day 2</strong>
+        <span id="savedContinueMeta"></span>
+      </button>
       <div class="btnrow">
         <button id="startBtn">Begin life</button>
         <button id="tutorialBtn" class="ghost">Tutorial</button>
@@ -819,6 +836,7 @@
     <div id="over" class="screen hidden">
       <h1 id="overTitle">Run ended</h1>
       <p id="overMsg"></p>
+      <div id="saveStatus" class="hidden" aria-live="polite"></div>
       <div id="analysisWrap">
         <!-- Name goes FIRST: it was under the charts, below the fold on a long run, so the one thing
              the screen actually needs from you was the one thing you had to scroll to find. -->
@@ -828,13 +846,15 @@
         <canvas id="analysisChart" width="900" height="200"></canvas>
         <div class="alabel sublabel" id="analysisSubLabel">Food available (lipid · protein · carb)</div>
         <canvas id="analysisSubChart" width="900" height="96"></canvas>
+        <div class="alabel sublabel">Cause of mortality (grazing · viral · starvation · antibiotic)</div>
+        <canvas id="analysisMortChart" width="900" height="96"></canvas>
         <div class="alabel sublabel">Phylogeny — how each lineage descends from the founder</div>
         <canvas id="analysisClado" width="900" height="190"></canvas>
         <div id="analysisStats"></div>
       </div>
       <div class="btnrow"><button id="continueBtn" class="hidden">Continue</button>
       <button id="restartBtn">Start over</button>
-      <button id="menuBtn" class="ghost">Main menu</button>
+      <button id="menuBtn" class="ghost">Return to menu</button>
       <button id="scoresBtn2" class="ghost">High scores</button>
       <button id="helpBtn3" class="ghost">Help</button>
       <button id="sciBtn3" class="ghost">The science</button>
@@ -852,6 +872,8 @@
         <canvas id="detailChart" width="900" height="240"></canvas>
         <div class="alabel sublabel" id="detailSubLabel">Food available (lipid · protein · carb)</div>
         <canvas id="detailSubChart" width="900" height="110"></canvas>
+        <div class="alabel sublabel">Cause of mortality (grazing · viral · starvation · antibiotic)</div>
+        <canvas id="detailMortChart" width="900" height="110"></canvas>
         <div class="alabel sublabel">Phylogeny — how each lineage descends from the founder</div>
         <canvas id="detailClado" width="900" height="200"></canvas>
         <div class="alabel sublabel">Genome — adaptations clockwise in the order they arrived</div>
