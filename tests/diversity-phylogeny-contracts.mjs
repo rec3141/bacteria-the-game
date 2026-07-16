@@ -39,6 +39,12 @@ assert.match(game, /function drawAnalysis\(\)[\s\S]*annotateDiversity\([^;]+stat
   "the end screen must render run diversity");
 assert.match(game, /function openScoreDetail\([^)]*\)[\s\S]*annotateDiversity\([^;]+rec\.hist/,
   "high-score detail must render saved-run diversity");
+assert.match(game, /function toggleSubMode\(\) \{ subMode = \(subMode \+ 1\) % 3; updateSubLegend\(\); \}/,
+  "the compact gameplay chart must cycle through all three companion views");
+assert.match(game, /function renderSubChart\([^)]*\) \{\s*if \(mode === 2\) \{ renderDiversityChart\(g, W, H, hist, denom\); return; \}/,
+  "the third compact gameplay view must reuse the diversity renderer");
+assert.match(game, /richness S[\s\S]*Shannon H′[\s\S]*title = "ecotype diversity"/,
+  "the live diversity view must identify both indices with the analysis-chart colors");
 
 const clado = game.slice(game.indexOf("function drawClado"), game.indexOf("function showLineageCircos"));
 assert.match(clado, /maxDepth\*48 \+ labelBand/,

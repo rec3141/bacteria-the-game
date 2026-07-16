@@ -721,7 +721,7 @@
   let ZOOM = 1; // world magnification — bumped on touch devices so cells aren't tiny on a small screen
   let isTouch = false; // coarse-pointer device → mobile control + HUD layout (minimap top-left, etc.)
   let chartLog = false; // generation-history charts: log vs. linear y-axis (toggled by clicking a chart)
-  let subMode = 0;      // lower chart: 0 = food available, 1 = cause of mortality (toggled by clicking it)
+  let subMode = 0;      // lower chart: 0 = food, 1 = mortality, 2 = ecotype diversity (cycled by clicking it)
 
   function cellHalfLen(c) {
     return clamp(CFG.cell.baseHalf + Math.max(0, c.energy - CFG.cell.lenBaseEnergy)*CFG.cell.elongK,
@@ -3467,16 +3467,25 @@
   // cause-of-mortality series (index order matches MORT_IDX: grazing / viral / starvation / antibiotic)
   const MORT_COLORS = [PROTIST_COLOR, VIRUS_COLOR, CYST_COLOR, TOXIN_COLOR];
   const MORT_LABELS = ["grazing", "viral", "starvation", "antibiotic"];
-  function subVals(s, mode = subMode) { return mode ? (s && s.mort ? s.mort : [0,0,0,0]) : (s && s.sub ? s.sub : [0,0,0]); }
-  function subColors(mode = subMode) { return mode ? MORT_COLORS : RESOURCES.map((r) => r.color); }
+  function subVals(s, mode = subMode) { return mode === 1 ? (s && s.mort ? s.mort : [0,0,0,0]) : (s && s.sub ? s.sub : [0,0,0]); }
+  function subColors(mode = subMode) { return mode === 1 ? MORT_COLORS : RESOURCES.map((r) => r.color); }
   function updateSubLegend() {
     if (!el_subchartlegend) return;
-    const items = subMode
-      ? MORT_LABELS.map((l, k) => `<span><i style="background:${MORT_COLORS[k]}"></i>${l}</span>`).join("")
-      : RESOURCES.map((r) => `<span><i style="background:${r.color}"></i>${r.key}</span>`).join("");
-    el_subchartlegend.innerHTML = items + `<span id="subchartTitle">${subMode ? "cause of mortality" : "food available"} vs. time · click to swap</span>`;
+    let items, title;
+    if (subMode === 0) {
+      items = RESOURCES.map((r) => `<span><i style="background:${r.color}"></i>${r.key}</span>`).join("");
+      title = "food available";
+    } else if (subMode === 1) {
+      items = MORT_LABELS.map((l, k) => `<span><i style="background:${MORT_COLORS[k]}"></i>${l}</span>`).join("");
+      title = "cause of mortality";
+    } else {
+      items = `<span><i style="background:${RICHNESS_COLOR}"></i>richness S</span>` +
+              `<span><i style="background:${SHANNON_COLOR}"></i>Shannon H′</span>`;
+      title = "ecotype diversity";
+    }
+    el_subchartlegend.innerHTML = items + `<span id="subchartTitle">${title} vs. time · click to cycle</span>`;
   }
-  function toggleSubMode() { subMode ^= 1; updateSubLegend(); }
+  function toggleSubMode() { subMode = (subMode + 1) % 3; updateSubLegend(); }
   function ecoMask(c) { return (c.enzLvl[0] > 0 ? 1 : 0) | (c.enzLvl[1] > 0 ? 2 : 0) | (c.chemotaxis ? 4 : 0); }
   function updateLegend(eco, preds, green) {
     if (!el.legend) return;
@@ -3616,6 +3625,7 @@
   // Second chart: available food of each resource type stacked over time. Watch a band get eaten down right
   // after you acquire its enzyme — that consumption is what fuels the colony boom you see on the ecotype chart.
   function renderSubChart(g, W, H, hist, denom, mode = subMode) {
+    if (mode === 2) { renderDiversityChart(g, W, H, hist, denom); return; }
     g.clearRect(0, 0, W, H);
     g.fillStyle = CHART.surface; g.fillRect(0, 0, W, H);
     const colors = subColors(mode), K = colors.length;
@@ -5321,7 +5331,7 @@
   if (el.chart) el.chart.addEventListener("click", () => { if (!document.body.classList.contains("touch")) chartLog = !chartLog; });
   if (el.analysisChart) el.analysisChart.addEventListener("click", () => { chartLog = !chartLog; drawAnalysis(); });
   if (el.detailChart) el.detailChart.addEventListener("click", () => { chartLog = !chartLog; if (_detailRec) openScoreDetail(_detailRank, _detailRec); });
-  // click the lower chart to swap food-available ↔ cause-of-mortality (live chart is desktop-only: tap folds it on mobile)
+  // click the lower chart to cycle food → mortality → diversity (desktop-only: tap folds it on mobile)
   if (el_subchart) el_subchart.addEventListener("click", () => { if (!document.body.classList.contains("touch")) toggleSubMode(); });
   updateSubLegend();
   // Hover a colored band on either run chart → that lineage's own genome, as a circos ring.
