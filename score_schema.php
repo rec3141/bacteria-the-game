@@ -81,7 +81,7 @@ function score_upgrades($value, $limit = 200, $maxTime = 86400) {
 
 function score_history_sample($value) {
   if (!is_object($value)) return null;
-  $eco = score_vector(score_value($value, 'eco'), 8, 100000);
+  $eco = score_vector(score_value($value, 'eco'), 8, 100000); // legacy wire key: per-trait-mask counts (kept for data compat)
   if ($eco === null) return null;
   $out = [
     'eco' => $eco,

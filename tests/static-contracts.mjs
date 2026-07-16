@@ -53,7 +53,7 @@ assert.doesNotMatch(game + help, /[Σ∑]/,
   "the shipped UI and its source must not contain summation characters");
 assert.doesNotMatch(game, /geo-mean lineage|geoMeanLineage/,
   "the live chart legend must not add a geometric-mean statistic");
-assert.match(game, /<span id="chartTitle">ecotype abundance vs time<\/span>/,
+assert.match(game, /<span id="chartTitle">community over time<\/span>/,
   "the live chart must retain the requested plain-language title in either scale");
 const subChartRenderer = game.slice(game.indexOf("function renderSubChart"), game.indexOf("function drawHelix"));
 assert.match(subChartRenderer, /const vals = hist\.map\(\(s\) => subVals\(s, mode\)\.slice\(\)\)/,

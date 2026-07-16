@@ -726,7 +726,7 @@
   let ZOOM = 1; // world magnification — bumped on touch devices so cells aren't tiny on a small screen
   let isTouch = false; // coarse-pointer device → mobile control + HUD layout (minimap top-left, etc.)
   let chartLog = false; // generation-history charts: log vs. linear y-axis (toggled by clicking a chart)
-  let subMode = 0;      // lower chart: 0 = food, 1 = mortality, 2 = ecotype diversity (cycled by clicking it)
+  let subMode = 0;      // lower chart: 0 = food, 1 = mortality, 2 = lineage diversity (cycled by clicking it)
 
   function cellHalfLen(c) {
     return clamp(CFG.cell.baseHalf + Math.max(0, c.energy - CFG.cell.lenBaseEnergy)*CFG.cell.elongK,
@@ -783,10 +783,10 @@
   // DRIFT. Your cell taking a gene is a single event in one lineage; on its own the population just
   // tracks you, and the chart becomes one colour marching up the screen. So every time you adapt,
   // somewhere else in the sea another cell also changes — it gains a random gene, or it loses one.
-  // That keeps a spread of genomes alive around you, which is what makes the ecotype chart (and
+  // That keeps a spread of genomes alive around you, which is what makes the community chart (and
   // kill-the-winner, which needs variety in adaptation level to bite) mean anything.
   function lineageSignature(path) { return (path || []).map((u) => u && u.abbr).filter(Boolean).join("|"); }
-  // Every distinct band (ecotype+tier) keeps its genome for the whole run — extinct lineages stay
+  // Every distinct band (mask+tier) keeps its genome for the whole run — extinct lineages stay
   // hoverable in the charts, never evicted. The old 64 ceiling froze the map early (so a long or
   // continued run left most bands reading "no genome recorded"); this is high enough to hold a
   // marathon's worth. Records stay small because the wire encoding drops everything derivable — see
@@ -794,7 +794,7 @@
   const LINEAGE_CAP = 512;
   function rememberLineage(c) {
     if (!state || !state.lineages || !c) return;
-    const key = ecoMask(c)*512 + Math.min(511, upgradeTier(c));
+    const key = traitMask(c)*512 + Math.min(511, upgradeTier(c));
     const snapshot = { t: +state.elapsed.toFixed(1), ups: (c.ups || []).slice(0, 32),
       tree: (c.phylo || c.ups || []).slice(0, 32) };
     const entry = state.lineages[key];
@@ -802,7 +802,7 @@
       if (Object.keys(state.lineages).length < LINEAGE_CAP) state.lineages[key] = snapshot;
       return;
     }
-    // Several real genomes can share the chart's compact ecotype+tier bucket. Keep those terminal
+    // Several real genomes can share the chart's compact mask+tier bucket. Keep those terminal
     // paths as variants so the phylogenetic tree does not collapse a mutation just because its band
     // happens to have the same numeric tier as one already sampled.
     const sig = lineageSignature(snapshot.tree), variants = entry.variants || [];
@@ -915,7 +915,7 @@
       life: rand(lifeRange[0], lifeRange[1]), dead: false, stuck: false,
       host: type === "green" ? (host != null ? host : (Math.random()*3)|0) : 0 }; // adaptation tier this phage can infect
   }
-  // "kill the winner": a phage only infects cells closely related to its host ecotype
+  // "kill the winner": a phage only infects cells closely related to its host lineage
   // kill-the-winner keyed to ADAPTATION LEVEL: a phage tracks the upgrade tier of the cell it lysed,
   // and infects only cells within hostTolerance tiers of it. Every upgrade you take shifts your tier,
   // so you can OUTRUN a virus cohort by upgrading (they turn green) until new phages evolve to your tier.
@@ -1870,7 +1870,7 @@
   // restocks from. It matters most after a protist takeover: the bacteria that drift back in should
   // be the ones that ALREADY EVOLVED in this run — waking out of cysts, as they really would —
   // rather than a fresh set of invented strains that erase the run's evolutionary history the moment
-  // your lineage dies. Sampling the pool uniformly means common ecotypes come back often and rare
+  // your lineage dies. Sampling the pool uniformly means common lineages come back often and rare
   // ones rarely: the distribution of the dead is the distribution of the revived.
   function rememberGenome(c) {
     if (!state || c.cyst === undefined) return;
@@ -2082,7 +2082,7 @@
     if (state.activeEnzyme === id) return;
     state.activeEnzyme = id; announceDeployable(id); Audio.play("eat", 0.3);
   }
-  // hand control to a DIFFERENT lineage — cycle through the distinct generations (ecotype+tier) present,
+  // hand control to a DIFFERENT lineage — cycle through the distinct generations (mask+tier) present,
   // so you can shepherd several populations at different adaptation tiers (diversity = virus resilience).
   // the distinct lineages alive right now, one healthy representative each, in a stable order.
   // Shared by switchControl and the lineage button, so the button shows exactly what a swipe
@@ -2095,11 +2095,11 @@
     }
     return { reps, ks: [...reps.keys()].sort((a, b) => a - b) };
   }
-  // Lineage identity packs the 3-bit ecotype mask (0-7) above a 9-bit adaptation tier (0-511):
+  // Lineage identity packs the 3-bit trait mask (0-7) above a 9-bit adaptation tier (0-511):
   // key = mask*512 + tier. The tier field was 6 bits (0-63), which capped the chart/circos at tier 63 —
   // every adaptation past that pinned the lineage to one band. 9 bits lifts that ceiling to 511. Tier is
   // clamped to 511 so it can never overflow into the mask bits (which previously mis-colored / crashed).
-  const lineageKey = (c) => ecoMask(c)*512 + Math.min(511, upgradeTier(c));
+  const lineageKey = (c) => traitMask(c)*512 + Math.min(511, upgradeTier(c));
   const lineageKeyColor = (k) => levelColor(Math.floor(k/512), k % 512); // key → the color it's drawn in
   function announceLineage(c) {
     if (!c) return;
@@ -2245,7 +2245,7 @@
       g.restore();
     }
   }
-  // vertical markers where each adaptation happened — overlaid on both the ecotype and substrate charts
+  // vertical markers where each adaptation happened — overlaid on both the community and substrate charts
   function drawAdaptationMarkers(g, W, H, upgrades, t0, t1) {
     if (!upgrades || !upgrades.length) return;
     const span = Math.max(1e-4, t1 - t0), fs = H > 150 ? 11 : 9, rows = H > 150 ? 4 : 3;
@@ -2263,10 +2263,10 @@
     });
     g.globalAlpha = 1;
   }
-  // Shared annotated renderers (game-over screen + high-score detail view): ecotype, substrate,
+  // Shared annotated renderers (game-over screen + high-score detail view): community, substrate,
   // mortality, and diversity charts all share the run's adaptation and role-swap time markers — and the
   // same zoom window (sliceHistView), so zooming one axis zooms the whole stack in lockstep.
-  function annotateRun(g, W, H, hist, upgrades, dur, swaps) { const v = sliceHistView(hist); renderEcoChart(g, W, H, v.hist); drawAdaptationMarkers(g, W, H, upgrades, v.t0f*dur, v.t1f*dur); drawRoleSwaps(g, W, H, swaps, v.t0f*dur, v.t1f*dur); }
+  function annotateRun(g, W, H, hist, upgrades, dur, swaps) { const v = sliceHistView(hist); renderCommunityChart(g, W, H, v.hist); drawAdaptationMarkers(g, W, H, upgrades, v.t0f*dur, v.t1f*dur); drawRoleSwaps(g, W, H, swaps, v.t0f*dur, v.t1f*dur); }
   function annotateSub(g, W, H, hist, upgrades, dur, swaps, mode) { const v = sliceHistView(hist); renderSubChart(g, W, H, v.hist, undefined, mode); drawAdaptationMarkers(g, W, H, upgrades, v.t0f*dur, v.t1f*dur); drawRoleSwaps(g, W, H, swaps, v.t0f*dur, v.t1f*dur); }
   function annotateDiversity(g, W, H, hist, upgrades, dur, swaps) { const v = sliceHistView(hist); renderDiversityChart(g, W, H, v.hist); drawAdaptationMarkers(g, W, H, upgrades, v.t0f*dur, v.t1f*dur); drawRoleSwaps(g, W, H, swaps, v.t0f*dur, v.t1f*dur); }
   function runStatsHtml(hist, upgrades) {
@@ -2276,8 +2276,8 @@
   }
   function drawAnalysis() {
     if (!actx || !state) return;
-    const ecoSurface = prepareHiDpiCanvas(el.analysisChart, null, null, actx);
-    annotateRun(ecoSurface.context, ecoSurface.width, ecoSurface.height, state.fullHist, state.upgrades, state.elapsed, state.roleSwaps);
+    const communitySurface = prepareHiDpiCanvas(el.analysisChart, null, null, actx);
+    annotateRun(communitySurface.context, communitySurface.width, communitySurface.height, state.fullHist, state.upgrades, state.elapsed, state.roleSwaps);
     if (asctx) {
       const subSurface = prepareHiDpiCanvas(el.analysisSubChart, null, null, asctx);
       annotateSub(subSurface.context, subSurface.width, subSurface.height, state.fullHist, state.upgrades, state.elapsed, state.roleSwaps, 0);
@@ -2449,14 +2449,14 @@
     const pc = controlledEntity(); if (pc) { cam.x = pc.x; cam.y = pc.y; }
     updateDemo(dt);   // no player in the menu background — the camera drifts through the sim
     rebuildSpatialIndexes(); // final positions feed rendering and any input between animation frames
-    // sample per-ecotype abundances for the time-series chart
+    // sample per-mask abundances for the time-series chart
     const greenCount = phages.reduce((a, p) => a + (p.type === "green"), 0);
     const subTotals = [0, 0, 0]; // total available organic of each resource on the board (lipid/protein/carb)
     for (const p of substrates) { const o = p.orgByType; subTotals[0] += o[0]; subTotals[1] += o[1]; subTotals[2] += o[2]; }
     state.chartT -= dt;
     if (state.chartT <= 0) {
       state.chartT = CHART.interval;
-      const s = ecoSample();
+      const s = communitySample();
       state.history.push({ eco: s.eco, buckets: s.buckets, sub: subTotals.slice(), p: predators.length, v: greenCount, mort: state.mortLive });
       state.mortLive = [0, 0, 0, 0]; // reset the per-interval death tally for the next sample
       if (state.history.length > CHART.samples) state.history.shift();
@@ -2466,7 +2466,7 @@
     state.fullT -= dt;
     if (state.fullT <= 0) {
       state.fullT = state.fullInterval;
-      const fs = ecoSample();
+      const fs = communitySample();
       state.fullHist.push({ eco: fs.eco, buckets: fs.buckets, sub: subTotals.slice(), p: predators.length, v: greenCount, mort: state.mortFull });
       state.mortFull = [0, 0, 0, 0];
       if (state.fullHist.length > 600) { state.fullHist = state.fullHist.filter((_, i) => i % 2 === 0); state.fullInterval *= 2; }
@@ -3477,7 +3477,7 @@
       const used = [];
       for (const c of sampledMinimapCells()) {
         if (!c.alive || c.controlled || c.cyst) continue;
-        const key = ecoMask(c)*512 + Math.min(511, upgradeTier(c)), bucket = minimapPointBuckets[key];
+        const key = traitMask(c)*512 + Math.min(511, upgradeTier(c)), bucket = minimapPointBuckets[key];
         if (!bucket.length) used.push(key);
         bucket.push(MX(c.x) - 1, MY(c.y) - 1);
       }
@@ -3507,12 +3507,14 @@
     ctx.closePath(); ctx.fillStyle = fill; ctx.fill(); ctx.strokeStyle = "rgba(60,40,0,0.6)"; ctx.lineWidth = 0.8; ctx.stroke();
   }
 
-  // ---------------------------------------------------------------- eco chart
-  // An ecotype is the set of acquired capabilities. Carbohydrase is universal, so
-  // the differentiators are lipase(1) | protease(2) | chemotaxis(4) → 8 ecotypes.
+  // ---------------------------------------------------------------- community chart
+  // The TRAIT MASK is a cell's coarse functional group: which acquired capabilities it carries.
+  // Carbohydrase is universal, so the differentiators are lipase(1) | protease(2) | chemotaxis(4) → 8 masks.
+  // This is NOT an "ecotype": a true ecotype is a full-genome lineage, and convergent evolution can give
+  // two unrelated genomes the same mask. The mask is only a color base; lineage identity is (mask + tier).
   // Colors: dataviz skill's validated 8-hue categorical palette (dark, CVD-safe order).
   const CHART = { interval: 0.5, samples: 200, W: 800, H: 96, subH: 64, surface: "#06181d" };
-  const ECO_COLOR = ["#3987e5", "#199e70", "#c98500", "#008300", "#9085e9", "#e66767", "#d55181", "#d95926"];
+  const TRAIT_COLOR = ["#3987e5", "#199e70", "#c98500", "#008300", "#9085e9", "#e66767", "#d55181", "#d95926"];
   const PROTIST_COLOR = "#ff9ec0", VIRUS_COLOR = "#8bf06a", CYST_COLOR = "#9aa6a0", CRISPR_COLOR = "#c39bff", TOXIN_COLOR = "#f05ad0",
         TWITCH_COLOR = "#4fe3ff", EPS_COLOR = "#d8b86a";
   // cause-of-mortality series (index order matches MORT_IDX: grazing / viral / starvation / antibiotic)
@@ -3537,27 +3539,30 @@
     el_subchartlegend.innerHTML = items + `<span id="subchartTitle">${title} vs. time · click to cycle</span>`;
   }
   function toggleSubMode() { subMode = (subMode + 1) % 3; updateSubLegend(); }
-  function ecoMask(c) { return (c.enzLvl[0] > 0 ? 1 : 0) | (c.enzLvl[1] > 0 ? 2 : 0) | (c.chemotaxis ? 4 : 0); }
+  function traitMask(c) { return (c.enzLvl[0] > 0 ? 1 : 0) | (c.enzLvl[1] > 0 ? 2 : 0) | (c.chemotaxis ? 4 : 0); }
   function updateLegend(eco, preds, green) {
     if (!el.legend) return;
-    // Just the totals. The per-ecotype breakdown ("carb only 1 · +lipase 6 · +protease 1 · …") grew a
+    // Just the totals. The per-mask breakdown ("carb only 1 · +lipase 6 · +protease 1 · …") grew a
     // line per gene combination and crowded the legend off the chart; the color bands already show
     // the composition, and the run analysis on death gives the detail.
     let colony = 0; for (let m = 0; m < 8; m++) colony += eco[m];
     let html = `<span><i class="gen-swatch"></i>${colony === 1 ? "bacterium" : "bacteria"} <b>${colony}</b></span>`;
     html += `<span><i class="eco-line" style="border-color:${PROTIST_COLOR}"></i>protists <b>${preds}</b></span>`;
     html += `<span><i class="eco-line" style="border-color:${VIRUS_COLOR}"></i>viruses <b>${green || 0}</b></span>`;
-    html += `<span id="chartTitle">ecotype abundance vs time</span>`;
+    html += `<span id="chartTitle">community over time</span>`;
     el.legend.innerHTML = html;
   }
-  function ecoCounts() { const e = [0,0,0,0,0,0,0,0]; for (const c of cells) e[ecoMask(c)]++; return e; }
-  // per-ecotype count + average upgrade level (total enzyme levels above base + chemoLevel) for the chart
-  function ecoSample() {
-    // bucket active cells by GENERATION = (ecotype, upgrade tier). Each bucket becomes its own flat-colored
+  function traitMaskCounts() { const e = [0,0,0,0,0,0,0,0]; for (const c of cells) e[traitMask(c)]++; return e; }
+  // A history sample for the community chart. `eco` is the 8-slot per-trait-mask count vector; `buckets`
+  // is the finer per-generation (mask+tier) map the stack actually draws.
+  function communitySample() {
+    // bucket active cells by GENERATION = (mask, upgrade tier). Each bucket becomes its own flat-colored
     // polygon in the stack — a new lineage gets a new color, and cells keep it until they upgrade again.
+    // `eco` KEEPS ITS NAME on the wire: it's the serialized leaderboard field (per-trait-mask counts,
+    // legacy) that older saves and score_schema.php still read — renaming it would break data compat.
     const eco = [0,0,0,0,0,0,0,0], buckets = {};
     for (const c of cells) {
-      const m = ecoMask(c); eco[m]++;          // cysts included in their generation bucket (colored, not a separate gray band)
+      const m = traitMask(c); eco[m]++;          // cysts included in their generation bucket (colored, not a separate gray band)
       const key = m*512 + Math.min(511, upgradeTier(c)); // mask (0-7) high bits, tier (0-511) low bits
       buckets[key] = (buckets[key] || 0) + 1;
       // Remember the genomes behind every colored band. Same-band variants are deduplicated by their
@@ -3566,18 +3571,18 @@
     }
     return { eco, buckets };
   }
-  function sampleBuckets(s) { // legacy high-score saves stored eco[]/lvl[] not buckets — synthesize one bucket per ecotype
+  function sampleBuckets(s) { // legacy high-score saves stored eco[]/lvl[] not buckets — synthesize one bucket per trait mask
     if (s.buckets) return s.buckets;
     const b = {}; if (s.eco) for (let m = 0; m < 8; m++) if (s.eco[m]) b[m*512 + Math.min(511, Math.round(s.lvl ? s.lvl[m] : 0))] = s.eco[m];
     return b;
   }
   // Diversity of the community AS THE CHART DRAWS IT — one entry per coexisting generation
-  // (ecotype + adaptation tier), i.e. per colored band. The old version measured only the 3-bit
-  // ecotype, which collapses to richness 1 the moment the population converges on one trait set
+  // (mask + adaptation tier), i.e. per colored band. The old version measured only the 3-bit
+  // trait mask, which collapses to richness 1 the moment the population converges on one trait set
   // (it always does once every cell carries both enzymes + chemotaxis) — so a visibly rainbow-diverse
-  // community read as "1 ecotype". Counting the generation buckets instead makes richness track the
+  // community read as "1 mask". Counting the generation buckets instead makes richness track the
   // bands you can see. sampleBuckets returns the real per-generation buckets, or synthesizes one per
-  // ecotype for any legacy record too old to carry them (a graceful fallback, not the common path).
+  // trait mask for any legacy record too old to carry them (a graceful fallback, not the common path).
   function diversityIndices(s) {
     const buckets = sampleBuckets(s || {});
     const counts = [];
@@ -3595,16 +3600,16 @@
       h = mx === r ? (g-b)/d + (g < b ? 6 : 0) : mx === g ? (b-r)/d + 2 : (r-g)/d + 4; h *= 60; }
     return [h, s*100, l*100];
   }
-  const ECO_HSL = ECO_COLOR.map(hexToHsl);
-  // The ecotype mask is only 3 bits — 8 designed colors — but a very long run's upgradeTier overflows
+  const TRAIT_HSL = TRAIT_COLOR.map(hexToHsl);
+  // The trait mask is only 3 bits — 8 designed colors — but a very long run's upgradeTier overflows
   // the tier field of a packed lineage key and pushes the mask index past 7 (see levelColor's callers).
   // Instead of wrapping back onto the same 8 hues (which made two far-apart lineages share a color, and
   // before that indexed off the end of the array and crashed the frame), fan out fresh, evenly-spaced
   // hues by the golden angle for every index beyond the palette — an unlimited supply of distinct colors.
   function baseHsl(m) {
     const i = Number.isFinite(m) ? Math.max(0, Math.floor(m)) : 0;
-    if (i < ECO_HSL.length) return ECO_HSL[i];
-    const ref = ECO_HSL[i % ECO_HSL.length];
+    if (i < TRAIT_HSL.length) return TRAIT_HSL[i];
+    const ref = TRAIT_HSL[i % TRAIT_HSL.length];
     return [(i * 137.508) % 360, ref[1], ref[2]]; // 137.508° = golden angle → maximally-separated hues
   }
   function levelColor(m, lvl) { // DISCRETE staggered color per generation → sharp transitions, not a smooth rainbow
@@ -3613,7 +3618,7 @@
     const light = clamp(hsl[2] + (L % 2 ? -13 : 9), 24, 74);  // alternate darker/lighter to separate them further
     return `hsl(${hue.toFixed(0)}, ${hsl[1].toFixed(0)}%, ${light.toFixed(0)}%)`;
   }
-  // Shared renderer: stacked absolute ecotype areas + protist line. Used by the live
+  // Shared renderer: stacked absolute per-lineage areas + protist line. Used by the live
   // chart (scrolling window) and by each saved high-score mini-chart (whole game).
   // `denom` sets the x-span (fixed window for live scroll; hist length for saved fill).
   // THE LOG SCALE, and why it changed.
@@ -3627,7 +3632,7 @@
   // tall; one monster lineage plus stragglers is short. That's the diversity you wanted to see.)
   const bandVal = (x) => (chartLog ? Math.log10(x + 1) : x);
   // One scale, shared by the renderer and the hover hit-test, so the two can never drift apart.
-  function ecoScale(hist, H) {
+  function communityScale(hist, H) {
     const bks = hist.map(sampleBuckets);
     const keySet = new Set(); for (const b of bks) for (const k in b) keySet.add(+k);
     const keys = [...keySet].sort((a, b) => a - b);   // stable: mask-major, tier-minor — bands don't jump
@@ -3646,10 +3651,10 @@
     const yAt = (v) => H - (v/maxY)*(H - pad) - 2;
     return { bks, keys, maxY, vMax, peakCells, pad, yAt };
   }
-  function renderEcoChart(g, W, H, hist, denom) {
+  function renderCommunityChart(g, W, H, hist, denom) {
     g.clearRect(0, 0, W, H);
     g.fillStyle = CHART.surface; g.fillRect(0, 0, W, H);
-    const S = ecoScale(hist, H);
+    const S = communityScale(hist, H);
     const n = denom || Math.max(hist.length, 2);
     const xAt = (i) => i/(n-1)*W, yAt = S.yAt;
     g.strokeStyle = "rgba(255,255,255,0.06)"; g.lineWidth = 1;
@@ -3661,7 +3666,7 @@
     g.fillText("0", 3, H - 3);
     if (hist.length > 1) {
       const last = hist.length - 1;
-      // one FLAT-colored polygon per GENERATION bucket (ecotype+tier), stacked from the baseline.
+      // one FLAT-colored polygon per GENERATION bucket (mask+tier), stacked from the baseline.
       // Each new lineage = a new color that grows in and fades out as its population rises and falls.
       const bks = S.bks, cum = hist.map(() => 0);
       for (const key of S.keys) {
@@ -3685,7 +3690,7 @@
     }
   }
   // Second chart: available food of each resource type stacked over time. Watch a band get eaten down right
-  // after you acquire its enzyme — that consumption is what fuels the colony boom you see on the ecotype chart.
+  // after you acquire its enzyme — that consumption is what fuels the colony boom you see on the community chart.
   function renderSubChart(g, W, H, hist, denom, mode = subMode) {
     if (mode === 2) { renderDiversityChart(g, W, H, hist, denom); return; }
     g.clearRect(0, 0, W, H);
@@ -3716,7 +3721,7 @@
   }
   const RICHNESS_COLOR = "#57e0c0", SHANNON_COLOR = "#c39bff";
   // Third companion chart: two simultaneous lines with independent, labeled axes. Richness is a
-  // count of ecotypes; Shannon H' is dimensionless and uses natural logarithms, so sharing one numeric
+  // count of coexisting lineages; Shannon H' is dimensionless and uses natural logarithms, so sharing one numeric
   // axis would flatten H' into the baseline whenever many lineages coexist.
   function renderDiversityChart(g, W, H, hist, denom) {
     g.clearRect(0, 0, W, H);
@@ -3749,7 +3754,7 @@
     const w = Math.round(gw), h = Math.round(gh);
     const surface = prepareHiDpiCanvas(el.helix, w, h, hlxCtx);
     const g = surface.context; g.clearRect(0, 0, w, h);
-    const col = pc ? levelColor(ecoMask(pc), upgradeTier(pc)) : "#8dffdc"; // lineage = generation color of the steered cell
+    const col = pc ? levelColor(traitMask(pc), upgradeTier(pc)) : "#8dffdc"; // lineage = generation color of the steered cell
     const cy = h/2, amp = h*0.40, P = 26;
     g.strokeStyle = col; g.lineCap = "round";
     for (const ph of [0, Math.PI]) {                 // two anti-phase strands
@@ -3765,7 +3770,7 @@
     if (!state) return;
     if (cctx) {
       const surface = prepareHiDpiCanvas(el.chart, CHART.W, CHART.H, cctx);
-      renderEcoChart(surface.context, surface.width, surface.height, state.history, CHART.samples);
+      renderCommunityChart(surface.context, surface.width, surface.height, state.history, CHART.samples);
     }
     if (sctx) {
       const surface = prepareHiDpiCanvas(el_subchart, CHART.W, CHART.subH, sctx);
@@ -3836,7 +3841,7 @@
   }
   function normalizeClientSample(value) {
     if (!scoreClientObject(value)) return null;
-    const eco = scoreClientVector(value.eco, 8, 100000);
+    const eco = scoreClientVector(value.eco, 8, 100000); // legacy wire key: per-trait-mask counts (kept for data compat)
     if (!eco) return null;
     const out = { eco, p: scoreClientInteger(value.p, 0, 1000000), v: scoreClientInteger(value.v, 0, 1000000) };
     const buckets = scoreClientBuckets(value.buckets); if (buckets) out.buckets = buckets;
@@ -4091,7 +4096,7 @@
       const rec = arr.find((r) => String(recId(r)) === cv.getAttribute("data-cid"));
       if (rec) {
         const surface = prepareHiDpiCanvas(cv);
-        renderEcoChart(surface.context, surface.width, surface.height, rec.hist || []);
+        renderCommunityChart(surface.context, surface.width, surface.height, rec.hist || []);
       }
     });
     el.scoresList.querySelectorAll("th.sortable").forEach((th) => th.addEventListener("click", () => {
@@ -4300,7 +4305,7 @@
       g.restore();
     }
   }
-  // Hovering a COLORED BAND on a run chart: that band is one lineage (an ecotype at an adaptation
+  // Hovering a COLORED BAND on a run chart: that band is one lineage (a trait mask at an adaptation
   // level), so show that lineage's own genome — which is the whole point of the colors.
   function showLineageCircos(rec, band) {
     if (!el.circosPop || !el.circosCanvas) return;
@@ -4329,12 +4334,12 @@
       (ups.length ? ` + ${ups.length} adaptation${ups.length === 1 ? "" : "s"}, as they arrived` : ` only — never adapted`);
     el.circosPop.classList.remove("hidden");
   }
-  // Which stacked band is under the cursor? Re-derives exactly what renderEcoChart drew, so the
+  // Which stacked band is under the cursor? Re-derives exactly what renderCommunityChart drew, so the
   // hit-test can't drift away from the picture.
-  function ecoBandAt(hist, W, H, mx, my) {
+  function communityBandAt(hist, W, H, mx, my) {
     hist = sliceHistView(hist).hist;                   // hit-test the ZOOMED window, exactly what's drawn
     if (!hist || hist.length < 2) return null;
-    const S = ecoScale(hist, H);                       // the SAME scale the renderer used
+    const S = communityScale(hist, H);                       // the SAME scale the renderer used
     const n = Math.max(hist.length, 2);
     const i = clamp(Math.round(mx/W*(n-1)), 0, hist.length - 1);
     let cum = 0;
@@ -4401,7 +4406,7 @@
       const r = canvas.getBoundingClientRect();
       if (!r.width || !r.height) return;
       const logical = logicalCanvasSize(canvas);
-      const band = ecoBandAt(rec.hist || [], logical.width, logical.height,
+      const band = communityBandAt(rec.hist || [], logical.width, logical.height,
                              (e.clientX - r.left)*(logical.width/r.width),
                              (e.clientY - r.top)*(logical.height/r.height));
       if (!band) { hideCircos(); return; }
@@ -4477,8 +4482,8 @@
       const surface = prepareHiDpiCanvas(el.detailCircos);
       renderCircos(surface.context, surface.width, surface.height, rec.upgrades, runMid(rec));
     }
-    const ecoSurface = prepareHiDpiCanvas(el.detailChart);
-    annotateRun(ecoSurface.context, ecoSurface.width, ecoSurface.height, rec.hist || [], rec.upgrades, rec.dur, rec.roleSwaps);
+    const communitySurface = prepareHiDpiCanvas(el.detailChart);
+    annotateRun(communitySurface.context, communitySurface.width, communitySurface.height, rec.hist || [], rec.upgrades, rec.dur, rec.roleSwaps);
     if (el.detailSubChart) {
       const subSurface = prepareHiDpiCanvas(el.detailSubChart);
       annotateSub(subSurface.context, subSurface.width, subSurface.height, rec.hist || [], rec.upgrades, rec.dur, rec.roleSwaps, 0);
@@ -4506,7 +4511,7 @@
     showScores(); // rebuilds & re-shows the list (and the current-run row if paused mid-game)
   }
   // `liveDetail` = the PAUSE screen. Pausing to be shown a table of other people's scores is the
-  // wrong answer to "how am I doing?" — what you want mid-run is your OWN run: the ecotype chart,
+  // wrong answer to "how am I doing?" — what you want mid-run is your OWN run: the community chart,
   // the food/mortality/diversity panel, the phylogeny, the genome. That's the same page the leaderboard opens
   // for a saved run, so pause just opens it on the live one. "← Back to list" from there still takes
   // you to the board, so nothing is lost.
@@ -4518,7 +4523,7 @@
     if (el.scoresBack) el.scoresBack.textContent = paused ? "Resume" : "Back";
     if (el.endGameBtn) el.endGameBtn.classList.toggle("hidden", !active);
     if (el.currentRun) el.currentRun.classList.add("hidden"); // the live run now appears inline in the ranked list
-    if (el.scoresKey) { // colors now encode GENERATION (ecotype + upgrade tier), so no fixed per-ecotype swatch
+    if (el.scoresKey) { // colors now encode GENERATION (mask + upgrade tier), so no fixed per-mask swatch
       el.scoresKey.innerHTML =
         `<span><i class="gen-swatch"></i>bacteria</span>` +
         `<span><i class="eco-line" style="border-color:${PROTIST_COLOR}"></i>protists</span>` +
@@ -4712,7 +4717,7 @@
       const { ks } = lineageReps();
       let j = ks.indexOf(lineageKey(c)); if (j < 0) j = 0;
       const multi = ks.length > 1;
-      paintRolo(el.tLin, levelColor(ecoMask(c), upgradeTier(c)),
+      paintRolo(el.tLin, levelColor(traitMask(c), upgradeTier(c)),
         multi ? lineageKeyColor(ks[(j - 1 + ks.length) % ks.length]) : null,
         multi ? lineageKeyColor(ks[(j + 1) % ks.length]) : null);
       drawRoleSprite(sprite, "bacterium");

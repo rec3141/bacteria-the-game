@@ -49,7 +49,7 @@ assert.equal(canvasPixelRatio(), 1, "invalid browser DPR falls back to one");
 
 assert.match(game, /prepareHiDpiCanvas\(canvas, w, h, ctx\);[\s\S]*?VIEW_W = w; VIEW_H = h/,
   "main canvas backing size is separate from logical world size");
-assert.match(game, /const logical = logicalCanvasSize\(canvas\);[\s\S]*?ecoBandAt\([^;]*logical\.width, logical\.height/,
+assert.match(game, /const logical = logicalCanvasSize\(canvas\);[\s\S]*?communityBandAt\([^;]*logical\.width, logical\.height/,
   "chart hover hit-testing uses logical coordinates");
 assert.match(html, /#scoresTable td\.chart canvas \{[^}]*width: 132px; height: 30px/,
   "mini charts retain their CSS footprint after backing-store growth");
