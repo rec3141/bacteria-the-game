@@ -71,7 +71,7 @@
   .stats-inline b { color: #d6efe6; font-weight: 600; }
   /* GENOME: capabilities as gene loci on a DNA double-helix (drawn in the current lineage's color) */
   .genome { position: relative; display: flex; align-items: center; gap: 5px; padding: 10px 8px; }
-  #helix { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+  #helix { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
   .gene { position: relative; z-index: 1; padding: 2px 8px; border-radius: 5px; font-size: 11px; line-height: 1.35;
     white-space: nowrap; background: rgba(6,22,27,.9); border: 1px solid rgba(255,255,255,.13);
     color: rgba(210,228,222,.42); opacity: .62; transition: opacity .12s, box-shadow .12s, color .12s; }
@@ -328,7 +328,7 @@
   #helpBody ul { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.7; opacity: .9; }
   .c-lip { color: #efd98a; } .c-pro { color: #ef8b3c; } .c-carb { color: #6fa8ff; }
   .c-gold { color: #ffd24a; } .c-vir { color: #8bf06a; } .c-cyst { color: #9aa6a0; } .c-prot { color: #ff9ec0; }
-  /* Circos genome popup (hover a run on the leaderboard) */
+  /* Lineage genome popup (hover a colored band on an analysis/detail chart) */
   /* opaque, not translucent: the ring's middle is empty, and the leaderboard behind it
      showed straight through the gap and muddied the plot */
   #circosPop { position: fixed; z-index: 200; pointer-events: none;
@@ -875,7 +875,7 @@
     <canvas id="subchart" width="800" height="64"></canvas>
   </div>
 </div>
-<!-- Hover a run on the high-score board and its genome is drawn here, as a circos ring. Lives outside
+<!-- Hover a lineage band on an analysis/detail chart and its genome is drawn here. Lives outside
      #stage so it can follow the cursor across the whole viewport without being clipped. -->
 <div id="circosPop" class="hidden">
   <canvas id="circosCanvas" width="230" height="230"></canvas>

@@ -3292,12 +3292,6 @@
       const rec = arr.find((r) => String(recId(r)) === tr.getAttribute("data-id"));
       if (!rec) return;
       tr.addEventListener("click", () => openScoreDetail("#" + (arr.indexOf(rec) + 1), rec));
-      // Hover → that run's genome, drawn as a circos ring. Touch has no hover, so a phone gets the
-      // same plot by tapping the row (it's in the detail view too) — nothing is desktop-only.
-      if (isTouch) return;
-      tr.addEventListener("mouseenter", (e) => { showCircos(rec); positionCircos(e); });
-      tr.addEventListener("mousemove", positionCircos);
-      tr.addEventListener("mouseleave", hideCircos);
     });
   }
   // ------------------------------------------------------------------ circos
@@ -3490,17 +3484,6 @@
       const n = peak[r.key] || 0;
       g.fillText(`${n} cell${n === 1 ? "" : "s"} at peak` + (r.node.depth ? "" : " · founder, never adapted"), xn + 21, y);
     }
-  }
-  function showCircos(rec) {
-    if (!el.circosPop || !el.circosCanvas) return;
-    const surface = prepareHiDpiCanvas(el.circosCanvas);
-    renderCircos(surface.context, surface.width, surface.height, rec.upgrades, runMid(rec));
-    const n = rec.upgrades ? rec.upgrades.length : 0;
-    el.circosPop.style.borderColor = "";
-    if (el.circosCap) el.circosCap.innerHTML = n
-      ? `<em>C1</em> founding gene + ${n} adaptation${n === 1 ? "" : "s"}, clockwise as they arrived`
-      : `<em>C1</em> founding gene only — this run never adapted`;
-    el.circosPop.classList.remove("hidden");
   }
   // Hovering a COLORED BAND on a run chart: that band is one lineage (an ecotype at an adaptation
   // level), so show that lineage's own genome — which is the whole point of the colors.

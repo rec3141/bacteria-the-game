@@ -39,4 +39,15 @@ for (const control of controls) {
   assert(control.implementation.test(game), `${control.name} has no matching keyboard handler`);
 }
 
+const scoreRowStart = game.indexOf('el.scoresList.querySelectorAll("tr.srow")');
+const scoreRowEnd = game.indexOf("// ------------------------------------------------------------------ circos", scoreRowStart);
+assert(scoreRowStart >= 0 && scoreRowEnd > scoreRowStart, "score-row bindings are missing");
+const scoreRowBindings = game.slice(scoreRowStart, scoreRowEnd);
+assert.match(scoreRowBindings, /addEventListener\("click"[^\n]*openScoreDetail/,
+  "high-score rows must still open the detailed run view");
+assert.doesNotMatch(scoreRowBindings, /mouseenter|mousemove|mouseleave|showCircos|positionCircos|hideCircos/,
+  "the main high-score table must not show a Circos map on hover");
+assert.match(game, /if \(el\.detailCircos\) \{[\s\S]*?renderCircos\([^\n]*rec\.upgrades/,
+  "the detailed run view must retain its Circos genome map");
+
 console.log(`Static contracts OK: ${sounds.size} sounds and ${controls.length} control${controls.length === 1 ? "" : "s"} checked.`);
