@@ -99,8 +99,8 @@
   #subchartlegend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
   #subchartlegend span { text-transform: capitalize; }
   #subchartTitle { margin-left: auto; opacity: .55; font-style: italic; text-transform: none; }
-  #analysisSubChart, #analysisMortChart { display: block; width: 100%; height: 66px; border-radius: 6px; }
-  #detailSubChart, #detailMortChart { display: block; width: 100%; height: 90px; border-radius: 6px; }
+  #analysisSubChart, #analysisMortChart, #analysisDiversityChart { display: block; width: 100%; height: 66px; border-radius: 6px; }
+  #detailSubChart, #detailMortChart, #detailDiversityChart { display: block; width: 100%; height: 90px; border-radius: 6px; }
   .alabel.sublabel { margin-top: 8px; opacity: .5; text-transform: none; letter-spacing: 0; }
 
   /* Overlays (title / death / win) */
@@ -360,8 +360,8 @@
   #circosCap { max-width: 230px; text-align: center; font-size: 10.5px; line-height: 1.35;
     color: var(--muted); margin-top: 3px; }
   #detailCircos { display: block; width: 280px; height: 280px; margin: 2px auto 0; background: transparent; }
-  /* height:auto — the canvas is sized to the number of lineages in game.js (drawClado), so it must
-     scale by its own aspect rather than being pinned to a fixed box that squashes the rows. */
+  /* height:auto — the down-facing tree is sized to its adaptation depth in game.js (drawClado), so
+     it must scale by its own aspect rather than being pinned to a box that squashes branches. */
   #analysisClado, #detailClado { display: block; width: 100%; height: auto; border-radius: 6px; }
   /* the run charts are hoverable now (each band is a lineage) — say so with the cursor */
   #analysisChart, #detailChart { cursor: crosshair; }
@@ -554,7 +554,7 @@
     #help, #science { z-index: 60; } /* stay above the screen they were opened from */
     .screen h1 { font-size: 30px; }
     #title .lede { font-size: 13px; line-height: 1.45; }
-    #analysisChart { height: 128px; } #analysisSubChart, #analysisMortChart { height: 50px; }
+    #analysisChart { height: 128px; } #analysisSubChart, #analysisMortChart, #analysisDiversityChart { height: 50px; }
     #analysisWrap { padding: 6px 8px; }
     #helpBody, #sciBody, #scoresList { max-height: 62vh; max-height: 62dvh; }
   }
@@ -862,6 +862,8 @@
         <canvas id="analysisSubChart" width="900" height="96"></canvas>
         <div class="alabel sublabel">Cause of mortality (grazing · viral · starvation · antibiotic)</div>
         <canvas id="analysisMortChart" width="900" height="96"></canvas>
+        <div class="alabel sublabel">Ecotype diversity (<span style="color:#57e0c0">richness S</span> · <span style="color:#c39bff">Shannon H′</span>)</div>
+        <canvas id="analysisDiversityChart" width="900" height="96"></canvas>
         <div class="alabel sublabel">Phylogeny — how each lineage descends from the founder</div>
         <canvas id="analysisClado" width="900" height="190"></canvas>
         <div id="analysisStats"></div>
@@ -888,6 +890,8 @@
         <canvas id="detailSubChart" width="900" height="110"></canvas>
         <div class="alabel sublabel">Cause of mortality (grazing · viral · starvation · antibiotic)</div>
         <canvas id="detailMortChart" width="900" height="110"></canvas>
+        <div class="alabel sublabel">Ecotype diversity (<span style="color:#57e0c0">richness S</span> · <span style="color:#c39bff">Shannon H′</span>)</div>
+        <canvas id="detailDiversityChart" width="900" height="110"></canvas>
         <div class="alabel sublabel">Phylogeny — how each lineage descends from the founder</div>
         <canvas id="detailClado" width="900" height="200"></canvas>
         <div class="alabel sublabel">Genome — adaptations clockwise in the order they arrived</div>

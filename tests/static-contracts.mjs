@@ -73,7 +73,7 @@ assert.match(game, /annotateSub\([^\n]*rec\.roleSwaps, 0\)[\s\S]*?annotateSub\([
 assert.doesNotMatch(game, /analysisSubChart\.addEventListener\("click"|detailSubChart\.addEventListener\("click"/,
   "expanded analysis charts must not hide either dataset behind a click toggle");
 assert.match(game, /if \(el_subchart\) el_subchart\.addEventListener\("click"[\s\S]*?toggleSubMode/,
-  "the compact live chart must retain its click-to-swap behavior");
+  "the compact live chart must retain its click-to-cycle behavior");
 
 const tutorialStart = game.indexOf("const TUT_STEPS = [");
 const tutorialEnd = game.indexOf("function startTutorial()", tutorialStart);
