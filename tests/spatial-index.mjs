@@ -33,7 +33,14 @@ assert.match(game, /rebuildSpatialIndexes\(\); \/\/ final positions feed renderi
   "rendering uses final-frame positions");
 assert.match(game, /visibleSpatial\(cellSpace, cellCandidates/,
   "cell rendering queries the visible spatial neighborhood");
-assert.match(game, /Math\.ceil\(cells\.length\/2000\)/,
-  "the whole-world minimap has a bounded cell-dot budget");
+assert.match(game, /const MINIMAP_CELL_DOT_LIMIT = 500, MINIMAP_SAMPLE_INTERVAL = 0\.5/,
+  "the whole-world minimap has a conservative, throttled cell-dot budget");
+assert.match(game, /function sampledMinimapCells\(\)[\s\S]*?minimapCellSample\.filter\(\(c\) => current\.has\(c\)[\s\S]*?minimapCellSample\.push\(\.\.\.additions\)/,
+  "the minimap must preserve surviving sampled cells and replenish only vacancies");
+const minimapDraw = game.slice(game.indexOf("function drawMinimap()"), game.indexOf("function drawMiniDiamond"));
+assert.match(minimapDraw, /const used = \[\][\s\S]*?minimapPointBuckets\[key\][\s\S]*?ctx\.rect\([\s\S]*?ctx\.fill\(\)/,
+  "minimap colony dots must be batched by lineage color rather than painted one call at a time");
+assert.doesNotMatch(minimapDraw, /fillRect\(MX\(c\.x\)/,
+  "the minimap must not issue one fillRect call per sampled cell");
 
 console.log("Spatial index contracts OK: torus seams, resizing, hot paths, and rendering are indexed.");

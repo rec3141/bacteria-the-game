@@ -277,6 +277,9 @@
     overTitle: document.getElementById("overTitle"), overMsg: document.getElementById("overMsg"),
     startBtn: document.getElementById("startBtn"), restartBtn: document.getElementById("restartBtn"),
     continueBtn: document.getElementById("continueBtn"),
+    savedContinueBtn: document.getElementById("savedContinueBtn"),
+    savedContinueTitle: document.getElementById("savedContinueTitle"),
+    savedContinueMeta: document.getElementById("savedContinueMeta"), saveStatus: document.getElementById("saveStatus"),
     updateBtn: document.getElementById("updateBtn"),
     enz: [document.getElementById("enz0"), document.getElementById("enz1"), document.getElementById("enz2")],
     abilChemo: document.getElementById("abilChemo"), abilCrispr: document.getElementById("abilCrispr"),
@@ -1048,6 +1051,235 @@
     if (!isDemo) Audio.play("spawn", 0.5);
   }
 
+  // ------------------------------------------------------ day-end checkpoints
+  // A checkpoint is the sunset that ENDED a completed day. Loading it advances the day counter and
+  // starts the next sunrise, while leaving the stored sunset untouched: dying midway through the new
+  // day therefore never consumes the retry point. IndexedDB keeps the large typed particle grids
+  // intact; canvas caches and spatial indexes are derived again after restoration.
+  const CHECKPOINT_SCHEMA = 1;
+  const CHECKPOINT_DB = "bacteria-day-checkpoints";
+  const CHECKPOINT_STORE = "checkpoints";
+  const CHECKPOINT_CURRENT = "current", CHECKPOINT_PREVIOUS = "previous";
+  let checkpointDbPromise = null, checkpointWriteQueue = Promise.resolve(), checkpointCardRequest = 0;
+
+  function checkpointSubstrate(p) {
+    const { cache, depthBuf, spec, ...saved } = p; // DOM canvas + shading buffer + static catalog entry
+    return saved;
+  }
+
+  function makeCheckpoint() {
+    if (!state || state.demo || state.running) throw new Error("Only a completed game day can be saved");
+    if (typeof structuredClone !== "function") throw new Error("This browser cannot clone the game world");
+    const completedDay = state.day || 1, savedAt = new Date().toISOString();
+    const raw = {
+      schema: CHECKPOINT_SCHEMA, build: BUILD, savedAt, completedDay,
+      summary: {
+        nextDay: completedDay + 1, score: state.score, gen: state.gen,
+        cells: cells.filter((c) => c.alive).length, role: state.role,
+        tuned: cfgTuned(), savedAt,
+      },
+      world: { width: WORLD_W, height: WORLD_H }, cam: { x: cam.x, y: cam.y }, flagPhase,
+      cfg: JSON.parse(JSON.stringify(CFG)), state,
+      entities: {
+        cells, substrates: substrates.map(checkpointSubstrate), enzymes, toxins,
+        nutrients, predators, phages, particles,
+      },
+    };
+    // Clone NOW, before IndexedDB has to open or wait behind an earlier write. The player may press
+    // Continue immediately; that live next day must never leak into this completed-day snapshot.
+    return structuredClone(raw);
+  }
+
+  function normalizedCheckpointConfig(saved) {
+    if (!saved || typeof saved !== "object") throw new Error("Checkpoint configuration is missing");
+    const candidate = cloneCfg(CFG_DEFAULTS);
+    for (const leaf of cfgLeaves(candidate)) {
+      const value = cfgGet(saved, leaf.path);
+      if (value === undefined) continue; // a newer build may add a knob; its default is the migration
+      if (typeof value !== "number" || !Number.isFinite(value))
+        throw new Error(`Invalid checkpoint setting: ${leaf.path.join(".")}`);
+      cfgSet(candidate, leaf.path, value);
+    }
+    const errors = validateTuningConfig(candidate, CFG_DEFAULTS);
+    if (errors.length) throw new Error(errors[0]);
+    return candidate;
+  }
+
+  function validCheckpoint(record) {
+    if (!record || record.schema !== CHECKPOINT_SCHEMA || !record.state || record.state.demo ||
+        record.state.running !== false || !record.entities || !record.world) return false;
+    const day = record.completedDay;
+    if (!Number.isInteger(day) || day < 1 || record.state.day !== day ||
+        !Number.isFinite(record.state.elapsed) || record.state.elapsed < 0) return false;
+    if (!Number.isFinite(record.world.width) || !Number.isFinite(record.world.height) ||
+        !record.cam || !Number.isFinite(record.cam.x) || !Number.isFinite(record.cam.y)) return false;
+    const E = record.entities;
+    const limits = { cells: 200000, substrates: 10000, enzymes: 100000, toxins: 100000,
+                     nutrients: 500000, predators: 100000, phages: 500000, particles: 500000 };
+    for (const [name, limit] of Object.entries(limits))
+      if (!Array.isArray(E[name]) || E[name].length > limit) return false;
+    for (const p of E.substrates) {
+      if (!p || !Object.prototype.hasOwnProperty.call(PARTICLES, p.kind) ||
+          !Number.isInteger(p.n) || p.n < 1 || p.n > 2048 ||
+          !(p.grid instanceof Float32Array) || !(p.gtype instanceof Uint8Array) ||
+          p.grid.length !== p.n*p.n || p.gtype.length !== p.n*p.n) return false;
+    }
+    try { normalizedCheckpointConfig(record.cfg); } catch (e) { return false; }
+    return true;
+  }
+
+  function openCheckpointDb() {
+    if (checkpointDbPromise) return checkpointDbPromise;
+    if (typeof indexedDB === "undefined") return Promise.reject(new Error("Saved games are unavailable in this browser"));
+    checkpointDbPromise = new Promise((resolve, reject) => {
+      const request = indexedDB.open(CHECKPOINT_DB, 1);
+      request.onupgradeneeded = () => {
+        if (!request.result.objectStoreNames.contains(CHECKPOINT_STORE))
+          request.result.createObjectStore(CHECKPOINT_STORE, { keyPath: "slot" });
+      };
+      request.onsuccess = () => {
+        const db = request.result;
+        db.onversionchange = () => { db.close(); checkpointDbPromise = null; };
+        resolve(db);
+      };
+      request.onerror = () => reject(request.error || new Error("Could not open saved games"));
+      request.onblocked = () => reject(new Error("Another tab is updating saved games"));
+    }).catch((error) => { checkpointDbPromise = null; throw error; });
+    return checkpointDbPromise;
+  }
+
+  async function readCheckpointSlot(slot) {
+    const db = await openCheckpointDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(CHECKPOINT_STORE, "readonly");
+      const request = tx.objectStore(CHECKPOINT_STORE).get(slot);
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => reject(request.error || new Error("Could not read saved game"));
+      tx.onabort = () => reject(tx.error || new Error("Saved-game read was interrupted"));
+    });
+  }
+
+  async function loadBestCheckpoint() {
+    const current = await readCheckpointSlot(CHECKPOINT_CURRENT);
+    if (validCheckpoint(current)) return { record: current, slot: CHECKPOINT_CURRENT };
+    const previous = await readCheckpointSlot(CHECKPOINT_PREVIOUS);
+    return validCheckpoint(previous) ? { record: previous, slot: CHECKPOINT_PREVIOUS } : null;
+  }
+
+  async function writeCheckpoint(snapshot) {
+    const db = await openCheckpointDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(CHECKPOINT_STORE, "readwrite"), store = tx.objectStore(CHECKPOINT_STORE);
+      const existing = store.get(CHECKPOINT_CURRENT);
+      existing.onsuccess = () => {
+        try {
+          // Both puts share one transaction: quota failure or a tab closing can leave the old current
+          // in place, but can never leave half of a current/previous rotation behind.
+          if (existing.result) store.put({ ...existing.result, slot: CHECKPOINT_PREVIOUS });
+          store.put({ ...snapshot, slot: CHECKPOINT_CURRENT });
+        } catch (error) { try { tx.abort(); } catch (e) {} reject(error); }
+      };
+      existing.onerror = () => reject(existing.error || new Error("Could not rotate saved games"));
+      tx.oncomplete = () => resolve(snapshot);
+      tx.onerror = () => reject(tx.error || new Error("Could not save the completed day"));
+      tx.onabort = () => reject(tx.error || new Error("Saved-game write was interrupted"));
+    });
+  }
+
+  function setCheckpointStatus(message, kind) {
+    if (!el.saveStatus) return;
+    el.saveStatus.textContent = message || "";
+    el.saveStatus.classList.toggle("hidden", !message);
+    el.saveStatus.classList.remove("ok", "warn");
+    if (message && kind) el.saveStatus.classList.add(kind);
+  }
+
+  function formatCheckpointCard(record, fallback) {
+    const S = record.summary || {}, day = record.completedDay || 1;
+    const count = Math.max(0, Math.round(Number(S.cells) || 0));
+    const calories = Math.round(Number(S.score) || 0).toLocaleString();
+    let when = "";
+    try { when = new Date(record.savedAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); }
+    catch (e) {}
+    if (el.savedContinueTitle) el.savedContinueTitle.textContent = `Continue to day ${day + 1}`;
+    if (el.savedContinueMeta) el.savedContinueMeta.textContent =
+      `${calories} cal · gen ${Math.max(1, Math.round(Number(S.gen) || 1))} · ${count.toLocaleString()} cells` +
+      (when ? ` · saved ${when}` : "") + (S.tuned ? " · tuned" : "") + (fallback ? " · recovered backup" : "");
+  }
+
+  async function refreshCheckpointCard() {
+    const requestId = ++checkpointCardRequest;
+    try {
+      const found = await loadBestCheckpoint();
+      if (requestId !== checkpointCardRequest) return;
+      if (!found) { if (el.savedContinueBtn) el.savedContinueBtn.classList.add("hidden"); return; }
+      formatCheckpointCard(found.record, found.slot === CHECKPOINT_PREVIOUS);
+      if (el.savedContinueBtn) el.savedContinueBtn.classList.remove("hidden");
+    } catch (e) {
+      if (requestId === checkpointCardRequest && el.savedContinueBtn) el.savedContinueBtn.classList.add("hidden");
+    }
+  }
+
+  function saveCompletedDay() {
+    const day = state && (state.day || 1);
+    let snapshot;
+    try { snapshot = makeCheckpoint(); }
+    catch (error) {
+      setCheckpointStatus("This day could not be saved. You can still continue while this game remains open.", "warn");
+      return Promise.resolve(null);
+    }
+    setCheckpointStatus(`Saving day ${day}…`);
+    const task = checkpointWriteQueue.catch(() => undefined).then(() => writeCheckpoint(snapshot));
+    checkpointWriteQueue = task.catch(() => undefined);
+    task.then(() => {
+      setCheckpointStatus(`Day ${day} saved. This is your retry point for day ${day + 1}.`, "ok");
+      refreshCheckpointCard();
+    }).catch((error) => {
+      console.warn("Could not save completed day", error);
+      setCheckpointStatus("This day could not be saved. Your earlier checkpoint is still safe.", "warn");
+    });
+    return task;
+  }
+
+  function restoreCheckpoint(record) {
+    if (!validCheckpoint(record)) throw new Error("That saved game is damaged or incompatible");
+    const restoredCfg = normalizedCheckpointConfig(record.cfg), E = record.entities;
+    commitCfg(restoredCfg);
+    if (adminRows.length) syncAdmin();
+    setWorld(record.world.width, record.world.height);
+    state = record.state; cells = E.cells;
+    substrates = E.substrates.map((saved) => ({
+      ...saved, spec: PARTICLES[saved.kind], cache: null, depthBuf: null, dirty: true,
+    }));
+    enzymes = E.enzymes; toxins = E.toxins; nutrients = E.nutrients;
+    predators = E.predators; phages = E.phages; particles = E.particles;
+    cam = { x: record.cam.x, y: record.cam.y }; flagPhase = Number(record.flagPhase) || 0;
+    state.running = false; state.demo = false; demoWorld = false; paused = false;
+    minimapCellSample = []; minimapCellSampleRun = null; minimapCellSampleT = -Infinity;
+    for (const key of Object.keys(keys)) keys[key] = false;
+    releaseStick(); updateDiel(); rebuildSpatialIndexes(); last = 0;
+  }
+
+  async function resumeSavedGame() {
+    if (!el.savedContinueBtn || el.savedContinueBtn.disabled) return;
+    const oldTitle = el.savedContinueTitle ? el.savedContinueTitle.textContent : "";
+    el.savedContinueBtn.disabled = true;
+    if (el.savedContinueTitle) el.savedContinueTitle.textContent = "Loading saved ocean…";
+    try {
+      const found = await loadBestCheckpoint();
+      if (!found) throw new Error("No usable checkpoint was found");
+      stopDemo(); Audio.init(); Music.start(Audio.ctx()); applyAudioMode(); justFinishedTs = null;
+      restoreCheckpoint(found.record);
+      [el.title, el.over, el.scores, el.help, el.science].forEach((screen) => screen && screen.classList.add("hidden"));
+      if (shortLandscapeActive() && el.chartwrap) el.chartwrap.classList.add("collapsed");
+      continueDay();
+    } catch (error) {
+      console.warn("Could not restore saved game", error);
+      if (el.savedContinueMeta) el.savedContinueMeta.textContent = "That checkpoint could not be loaded. Your new-game option is unaffected.";
+      if (el.savedContinueTitle) el.savedContinueTitle.textContent = oldTitle || "Saved game unavailable";
+    } finally { el.savedContinueBtn.disabled = false; }
+  }
+
   function controlledCell() { return cells.find((c) => c.controlled && c.alive); }
   function controlledProtist() { return predators.find((p) => p.controlled); }
 
@@ -1327,6 +1559,7 @@
     hideCircos();
     startDemo();                              // the sea goes back to playing itself behind the menu
     if (el.title) el.title.classList.remove("hidden");
+    refreshCheckpointCard();
   }
   // No-caption background: drift to whatever is worth watching — something dying loudly,
   // a grazer mid-hunt, the gold phage, or failing all that the thick of the colony.
@@ -1867,6 +2100,8 @@
     el.overMsg.innerHTML = msg + tuned;
     // you can only carry on from a day you SURVIVED — not from a run that ended
     if (el.continueBtn) el.continueBtn.classList.toggle("hidden", !dayComplete);
+    if (el.continueBtn && dayComplete) el.continueBtn.textContent = `Continue to day ${dayN + 1}`;
+    if (dayComplete) saveCompletedDay(); else setCheckpointStatus("");
     drawAnalysis();
     if (el.nameInput) el.nameInput.value = playerName; // prefill with the remembered name
     Audio.play(dayComplete ? "spawn" : "death", dayComplete ? 0.7 : 0.9);
@@ -2816,6 +3051,37 @@
     ctx.restore();
   }
 
+  const MINIMAP_CELL_DOT_LIMIT = 500, MINIMAP_SAMPLE_INTERVAL = 0.5;
+  let minimapCellSample = [], minimapCellSampleRun = null, minimapCellSampleT = -Infinity;
+  const minimapPointBuckets = Array.from({ length: 512 }, () => []);
+  function sampledMinimapCells() {
+    if (cells.length <= MINIMAP_CELL_DOT_LIMIT) return cells;
+    const run = state && state.runId, now = state ? state.elapsed : 0;
+    if (run === minimapCellSampleRun && now >= minimapCellSampleT &&
+        now - minimapCellSampleT < MINIMAP_SAMPLE_INTERVAL && minimapCellSample.length) return minimapCellSample;
+
+    // Preserve every sampled cell that is still in the sea. Only vacancies are reservoir-sampled
+    // from the rest of the colony, so dots do not reshuffle every time an unrelated cell divides.
+    const current = new Set(cells);
+    if (run !== minimapCellSampleRun || now < minimapCellSampleT) minimapCellSample = [];
+    else minimapCellSample = minimapCellSample.filter((c) => current.has(c) && c.alive && !c.cyst && !c.controlled);
+    if (minimapCellSample.length > MINIMAP_CELL_DOT_LIMIT) minimapCellSample.length = MINIMAP_CELL_DOT_LIMIT;
+    const need = MINIMAP_CELL_DOT_LIMIT - minimapCellSample.length;
+    if (need > 0) {
+      const selected = new Set(minimapCellSample), additions = [];
+      let seen = 0;
+      for (const c of cells) {
+        if (!c.alive || c.cyst || c.controlled || selected.has(c)) continue;
+        seen++;
+        if (additions.length < need) additions.push(c);
+        else { const j = (Math.random()*seen)|0; if (j < need) additions[j] = c; }
+      }
+      minimapCellSample.push(...additions);
+    }
+    minimapCellSampleRun = run; minimapCellSampleT = now;
+    return minimapCellSample;
+  }
+
   function drawMinimap() {
     // Desktop: small, bottom-right, showing everything including the colony.
     // Phone: BIGGER, top-left, and deliberately sparser — the colony dots are dropped and the
@@ -2851,13 +3117,19 @@
     ctx.beginPath(); ctx.rect(mx, my, mw, mh); ctx.clip(); // keep marks inside the frame
     // particles are omitted — the map shows only the living things
     if (!isTouch) { // colony dots colored by generation (same palette as the chart); cysts hidden
-      const stride = Math.max(1, Math.ceil(cells.length/2000)); // bounded map cost at the stress cap
-      for (let i = 0; i < cells.length; i += stride) {
-        const c = cells[i];
-        if (!c.controlled && !c.cyst) {
-          ctx.fillStyle = levelColor(ecoMask(c), upgradeTier(c));
-          ctx.fillRect(MX(c.x) - 1, MY(c.y) - 1, 2, 2);
-        }
+      const used = [];
+      for (const c of sampledMinimapCells()) {
+        if (!c.alive || c.controlled || c.cyst) continue;
+        const key = ecoMask(c)*64 + Math.min(63, upgradeTier(c)), bucket = minimapPointBuckets[key];
+        if (!bucket.length) used.push(key);
+        bucket.push(MX(c.x) - 1, MY(c.y) - 1);
+      }
+      // One path fill per lineage color instead of a fillStyle change + fillRect for every cell.
+      for (const key of used) {
+        const bucket = minimapPointBuckets[key];
+        ctx.fillStyle = levelColor(key >> 6, key & 63); ctx.beginPath();
+        for (let i = 0; i < bucket.length; i += 2) ctx.rect(bucket[i], bucket[i + 1], 2, 2);
+        ctx.fill(); bucket.length = 0;
       }
     }
     ctx.fillStyle = "#ff7a6b";
@@ -2915,7 +3187,7 @@
       const gm = geoMeanLineage(ecoSample().buckets);
       if (gm) html += `<span>geo-mean lineage <b>${gm.toFixed(1)}</b></span>`;
     }
-    html += `<span id="chartTitle">${chartLog ? "Σlog(cells) per lineage" : "ecotype abundance"} vs. time · click for ${chartLog ? "linear" : "log"}</span>`;
+    html += `<span id="chartTitle">${chartLog ? "ecotype abundance (log scale)" : "ecotype abundance"} vs. time · click for ${chartLog ? "linear" : "log"}</span>`;
     el.legend.innerHTML = html;
   }
   // geometric mean of the living lineages' sizes — the centre of a log-scaled stack
@@ -3002,10 +3274,9 @@
     g.strokeStyle = "rgba(255,255,255,0.06)"; g.lineWidth = 1;
     for (let k = 1; k <= 3; k++) { const y = H - k/4*(H - S.pad) - 2; g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }
     g.fillStyle = "rgba(215,245,238,0.5)"; g.font = "10px 'Trebuchet MS', sans-serif"; g.textAlign = "left";
-    // In log mode the axis is in Σlog units, which is not a cell count — so label it with the peak
-    // CELLS (what you actually want to know) and mark the axis as Σlog rather than printing a number
-    // that means nothing.
-    g.fillText(chartLog ? S.peakCells + " ·Σlog" : String(Math.round(S.maxY)), 3, 10);
+    // In log mode the axis units are synthetic, so show the useful peak-cell number without adding
+    // mathematical notation to the score panel. The title already says that the view is log-scaled.
+    g.fillText(chartLog ? String(S.peakCells) : String(Math.round(S.maxY)), 3, 10);
     g.fillText("0", 3, H - 3);
     if (hist.length > 1) {
       const last = hist.length - 1;
@@ -3038,10 +3309,9 @@
     g.clearRect(0, 0, W, H);
     g.fillStyle = CHART.surface; g.fillRect(0, 0, W, H);
     const colors = subColors(), K = colors.length;
-    // per-sample values; for mortality we CUMULATE so the bands grow smoothly and the
-    // end-of-window proportions read directly as the grazing/viral/etc. split.
+    // Both food and mortality are instantaneous sample values. Mortality counters already reset
+    // after every sample, so accumulating them again here would turn this into an ever-rising total.
     const vals = hist.map((s) => subVals(s).slice());
-    if (subMode) { const run = new Array(K).fill(0); for (let i = 0; i < vals.length; i++) for (let k = 0; k < K; k++) { run[k] += vals[i][k] || 0; vals[i][k] = run[k]; } }
     let maxY = subMode ? 1 : 10;
     for (const v of vals) { let tot = 0; for (let k = 0; k < K; k++) tot += v[k] || 0; if (tot > maxY) maxY = tot; }
     const n = denom || Math.max(hist.length, 2), pad = H < 70 ? 8 : 14;
@@ -3191,6 +3461,7 @@
   const API_URL = "scores.php"; // shared leaderboard on the game's own origin; if it's absent/offline we fall back to localStorage
   let playerName = ""; try { playerName = localStorage.getItem(NAME_KEY) || ""; } catch (e) {}
   let globalScores = null;      // last-fetched shared leaderboard (null = not loaded / offline → use local)
+  let scoreFetchPromise = null; // one cold-start request; opening the board twice must not race two replacements
   let lastRec = null;           // the run just finished (so a later name edit re-submits the same id)
   let scoreWriteQueue = Promise.resolve(); // serialize writes so an older request can never land last
   const NAME_UPDATE_DELAY = 500;
@@ -3244,16 +3515,26 @@
     const update = pendingNameUpdate; pendingNameUpdate = null;
     if (update) try { return queueScoreWrite(update); } catch (e) {}
   }
-  function fetchScores() { // GET the shared leaderboard; on success it replaces the local list in the UI
-    if (typeof fetch !== "function") return;
+  function fetchScores() { // GET the shared leaderboard; resolves false so a cold-start screen can fall back locally
+    if (typeof fetch !== "function") return Promise.resolve(false);
+    if (scoreFetchPromise) return scoreFetchPromise;
     try {
-      fetch(API_URL, { cache: "no-store" })
+      scoreFetchPromise = fetch(API_URL, { cache: "no-store" })
         .then((r) => (r.ok ? r.json() : null))
-        .then((list) => { if (Array.isArray(list)) { globalScores = normalizeScoreList(list); refreshScoreListIfOpen(); } })
-        .catch(() => {});
-    } catch (e) {}
+        .then((list) => {
+          if (!Array.isArray(list)) return false;
+          globalScores = normalizeScoreList(list); refreshScoreListIfOpen(); return true;
+        })
+        .catch(() => false)
+        .finally(() => { scoreFetchPromise = null; });
+      return scoreFetchPromise;
+    } catch (e) { return Promise.resolve(false); }
   }
   function refreshScoreListIfOpen() { if (el.scores && !el.scores.classList.contains("hidden") && el.scoreDetail && el.scoreDetail.classList.contains("hidden")) renderScoreList(); }
+  function renderScoreLoading() {
+    if (el.scoreTabs) el.scoreTabs.innerHTML = ""; // never leave counts from an older/local board above the loader
+    if (el.scoresList) el.scoresList.innerHTML = `<p class="empty">Loading shared high scores…</p>`;
+  }
   function renderScoreList() {
     if (!el.scoresList) return;
     let arr = (globalScores || loadScores()).slice(); // shared list when we have it, else this browser's local runs
@@ -3662,6 +3943,7 @@
   function showScores(opts) {
     const active = !!(state && state.running && !state.demo); // paused mid-game — the background sim isn't a game to end
     const live = !!(opts && opts.liveDetail) && active;
+    const coldSharedBoard = !live && globalScores === null && typeof fetch === "function";
     if (el.scoresTitle) el.scoresTitle.textContent = paused ? "Paused" : "High Scores";
     if (el.scoresBack) el.scoresBack.textContent = paused ? "Resume" : "Back";
     if (el.endGameBtn) el.endGameBtn.classList.toggle("hidden", !active);
@@ -3677,10 +3959,17 @@
     } else {
       if (el.scoreDetail) el.scoreDetail.classList.add("hidden"); // open on the list, not a stale detail
       [el.scoresList, el.scoresKey].forEach((e) => e && e.classList.remove("hidden"));
-      renderScoreList();     // draw from cache/local immediately…
+      if (coldSharedBoard) renderScoreLoading(); // don't flash this browser's longer/different local list
+      else renderScoreList();                    // shared cache, or immediate local fallback without fetch
     }
-    fetchScores();           // …then refresh from the shared leaderboard when it responds
     el.scores.classList.remove("hidden");
+    const request = fetchScores(); // later opens repaint a cached board only if the shared data really changed
+    if (coldSharedBoard) request.then((loaded) => {
+      // Network/API failure: the local board is useful, but only reveal it once we know it is the
+      // fallback—not as a transient set of extra rows that vanishes a moment later.
+      if (!loaded && el.scores && !el.scores.classList.contains("hidden") &&
+          el.scoreDetail && el.scoreDetail.classList.contains("hidden")) renderScoreList();
+    });
   }
   function hideScores() { hideCircos(); el.scores.classList.add("hidden"); if (el.scoreDetail) el.scoreDetail.classList.add("hidden"); }
   // BETA FEEDBACK. It posts to our own feedback.php (one JSON entry per report) rather than handing
@@ -3935,6 +4224,7 @@
   function start() {
     stopDemo(); Audio.init(); Music.start(Audio.ctx()); applyAudioMode(); justFinishedTs = null;
     el.title.classList.add("hidden"); el.over.classList.add("hidden");
+    setCheckpointStatus("");
     if (shortLandscapeActive() && el.chartwrap) el.chartwrap.classList.add("collapsed");
     newGame();
   }
@@ -3949,10 +4239,12 @@
     paused = false;
     el.over.classList.add("hidden");
     if (el.continueBtn) el.continueBtn.classList.add("hidden");
+    setCheckpointStatus("");
     justFinishedTs = null;
     Audio.play("spawn", 0.55);
   }
   if (el.continueBtn) el.continueBtn.addEventListener("click", continueDay);
+  if (el.savedContinueBtn) el.savedContinueBtn.addEventListener("click", resumeSavedGame);
   el.restartBtn.addEventListener("click", start);
   if (el.scoresBtn) el.scoresBtn.addEventListener("click", showScores);
   if (el.scoresBtn2) el.scoresBtn2.addEventListener("click", showScores);
@@ -4760,6 +5052,7 @@
   env.tempC = 20; env.salinity = 35; env.update();
   // Keep an autonomous, uncaptioned ocean alive behind the title menu.
   startDemo();
+  refreshCheckpointCard();
   // Clicking the water (rather than a menu button) also means "let me play".
   if (el.title) el.title.addEventListener("click", (e) => { if (e.target === el.title && demo) start(); });
   requestAnimationFrame(frame);

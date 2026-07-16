@@ -49,6 +49,15 @@ assert.equal(board[1].lineages[64].variants[0].tree[0].abbr, "xL1");
 assert.deepEqual(board[1].roleSwaps, [2]);
 assert.deepEqual(normalizeScoreList({ 0: board[0] }), [], "a board object must not masquerade as a list");
 
+const showScores = game.slice(game.indexOf("function showScores(opts)"), game.indexOf("function hideScores()"));
+assert.match(showScores, /coldSharedBoard[\s\S]*?renderScoreLoading\(\)[\s\S]*?request\.then\(\(loaded\)/,
+  "the first leaderboard open must wait for the shared board instead of flashing local rows");
+assert.match(showScores, /if \(!loaded[\s\S]*?renderScoreList\(\)/,
+  "a failed shared request must still reveal the browser-local fallback");
+const fetchScores = game.slice(game.indexOf("function fetchScores()"), game.indexOf("function refreshScoreListIfOpen"));
+assert.match(fetchScores, /if \(scoreFetchPromise\) return scoreFetchPromise/,
+  "overlapping leaderboard opens must share one fetch rather than race UI replacements");
+
 for (const record of board) {
   for (const sample of record.hist) assert.equal(sample.eco.length, 8);
   for (const upgrade of record.upgrades) assert.match(upgrade.color, /^#[0-9A-Fa-f]{3,8}$/);
