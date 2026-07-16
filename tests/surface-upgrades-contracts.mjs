@@ -4,8 +4,8 @@ import { readFileSync } from "node:fs";
 const game = readFileSync(new URL("../game.js", import.meta.url), "utf8");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 
-assert.match(game, /eps: \{ lifePerLevel: 4,[^}]*maxCount: 240/,
-  "EPS starts at four seconds per expression level and remains globally capped");
+assert.match(game, /eps: \{ lifePerLevel: 4,[^}]*cost: 4,[^}]*maxCount: 240/,
+  "EPS starts at four seconds per expression level, costs four energy, and remains globally capped");
 assert.match(html, /id="enzEps">EPS<[\s\S]*id="abilTwitch">twitching</,
   "both new genes are visible in the genome bar");
 
@@ -106,14 +106,14 @@ assert.ok(releaseEpsSource, "production EPS release function is present");
 const released = [];
 const releaseEps = new Function("CFG", "epsBlocks", "cellHalfLen", "wrapX", "wrapY",
   `${releaseEpsSource}\nreturn releaseEps;`)(
-    { eps: { lifePerLevel: 4, radius: 24, cost: 8, maxCount: 240 } }, released,
+    { eps: { lifePerLevel: 4, radius: 24, cost: 4, maxCount: 240 } }, released,
     () => 10, (v) => v, (v) => v,
   );
 const producer = { x: 100, y: 100, angle: 0, energy: 100, eps: 3 };
 assert.equal(releaseEps(producer), true);
 assert.equal(released[0].life, 12, "EPS level 3 lasts 12 seconds");
 assert.equal(released[0].level, 3, "the released block records its expression level");
-assert.equal(producer.energy, 92, "EPS release still charges its ordinary energy cost");
+assert.equal(producer.energy, 96, "EPS release charges its reduced four-energy cost");
 
 assert.match(game, /el\.enzEps\.innerHTML = "EPS" \+ \(owned \? amp\(lvl\) : ""\)/,
   "the genome chip displays the countable EPS level");

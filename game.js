@@ -127,7 +127,7 @@
     // EPS is a physical extracellular-polysaccharide block: it cannot be enzymatically digested,
     // but it ages away so a defended colony cannot permanently wall off the toroidal ocean. Its
     // expression level is countable, and each level adds lifePerLevel seconds to a released block.
-    eps: { lifePerLevel: 4, radius: 24, growTime: 0.3, cost: 8, maxCount: 240,
+    eps: { lifePerLevel: 4, radius: 24, growTime: 0.3, cost: 4, maxCount: 240,
            cooldown: [12, 18], threatRange: 95 },
     nutrient: { life: 16, radius: 3.2, maxCount: 600 },
     // trophic role-swap: when your whole population dies you flip to the other trophic level
@@ -535,6 +535,12 @@
 
   // ------------------------------------------------------------------- input
   const keys = {};
+  // These keys already do something during live play. Any other unmodified key becomes a generous
+  // pause target; browser/OS shortcuts keep their normal meaning and held-key repeats cannot flicker
+  // rapidly between paused and running.
+  const RESERVED_GAME_KEYS = new Set([
+    "w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright", " ", "tab", "shift"
+  ]);
   addEventListener("keydown", (e) => {
     // Typing in a field (leaderboard name, tuning inputs) must not also drive the
     // cell — otherwise "m" mutes the music and Space fires an enzyme mid-word.
@@ -554,9 +560,21 @@
         && (e.key === "Enter" || e.key === " " || e.key.startsWith("Arrow") || "wasd".includes(e.key.toLowerCase()))) {
       e.preventDefault(); start(); return;
     }
-    if (helpOpen || sciOpen || paused) return; // swallow gameplay input while a menu is up
+    const key = e.key.toLowerCase(), gameplayKey = RESERVED_GAME_KEYS.has(key);
+    const pauseCandidate = e.key.length === 1 || e.key === "Enter" || e.key === "Pause";
+    const unusedPauseKey = pauseCandidate && !gameplayKey && !e.repeat &&
+      !e.ctrlKey && !e.metaKey && !e.altKey && !adminOpen;
+    if (helpOpen || sciOpen) return; // swallow gameplay input while a menu is up
+    if (paused) {
+      if (unusedPauseKey) { e.preventDefault(); togglePause(); }
+      return;
+    }
+    if (!gameplayKey) {
+      if (unusedPauseKey && state && state.running && !state.demo) { e.preventDefault(); togglePause(); }
+      return;
+    }
     if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," ","Tab"].includes(e.key)) e.preventDefault();
-    keys[e.key.toLowerCase()] = true;
+    keys[key] = true;
     if (e.key === " ") playerEnzyme();
     if (!e.repeat && e.key === "Tab") cycleEnzyme();      // switch loaded enzyme / antibiotic
     if (!e.repeat && e.key === "Shift") switchControl();  // switch which lineage you're steering

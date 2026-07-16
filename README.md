@@ -13,7 +13,7 @@ Play it at **https://bacteria.cryomics.org**
 - **W A S D / arrows** — swim (release and you stop dead — see The Science)
 - **Space** — fire the loaded gene: an enzyme dissolves the particle ahead, the antibiotic poisons nearby protists. As a protist, Space is a sprint.
 - **Tab** — load a different gene · **Shift** — take control of another lineage
-- **M** — cycle sound (music / effects / off) · **Esc** — pause, run stats & high scores
+- **M** — cycle sound (music / effects / off) · **Esc or any unused key** — pause, run stats & high scores
 - **`** — live tuning panel (every constant in the sim)
 
 ## Mechanics (in brief)
