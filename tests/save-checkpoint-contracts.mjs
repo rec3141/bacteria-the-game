@@ -35,7 +35,7 @@ assert.doesNotMatch(game, /localStorage\.setItem\([^\n]*checkpoint/i,
   "large world checkpoints must not be forced into localStorage");
 
 const snapshot = game.slice(game.indexOf("function makeCheckpoint()"), game.indexOf("function normalizedCheckpointConfig"));
-for (const field of ["cells", "substrates", "enzymes", "toxins", "nutrients", "predators", "phages", "particles"])
+for (const field of ["cells", "substrates", "enzymes", "toxins", "eps", "nutrients", "predators", "phages", "particles"])
   assert.match(snapshot, new RegExp(`\\b${field}\\b`), `checkpoint snapshot includes ${field}`);
 assert.match(snapshot, /cfg: JSON\.parse\(JSON\.stringify\(CFG\)\), state/,
   "checkpoints carry the exact simulation settings and runtime state");
@@ -55,6 +55,8 @@ assert.match(restore, /spec: PARTICLES\[saved\.kind\], cache: null, depthBuf: nu
   "restoration rebuilds particle render caches from the static catalog");
 assert.match(restore, /updateDiel\(\); rebuildSpatialIndexes\(\); last = 0/,
   "restoration rebuilds derived environment and spatial indexes without a giant first frame");
+assert.match(restore, /epsBlocks = Array\.isArray\(E\.eps\) \? E\.eps : \[\]/,
+  "checkpoints from before EPS restore with an empty barrier field");
 
 const over = game.slice(game.indexOf("function gameOver(dayComplete)"), game.indexOf("function setPlayerName"));
 assert.match(over, /state\.running = false;[\s\S]*if \(dayComplete\) saveCompletedDay\(\)/,
@@ -68,4 +70,13 @@ const start = game.slice(game.indexOf("function start()"), game.indexOf("functio
 assert.doesNotMatch(start, /writeCheckpoint|deleteCheckpoint|clearCheckpoint|indexedDB/,
   "starting a separate new run leaves the prior completed-day checkpoint intact");
 
-console.log("Saved-game contracts OK: exact day-end snapshots, atomic backup, fallback, and retry semantics checked.");
+const clearer = game.slice(game.indexOf("async function clearCheckpoints"), game.indexOf("function setCheckpointStatus"));
+assert.match(clearer, /delete\(CHECKPOINT_CURRENT\)[\s\S]*delete\(CHECKPOINT_PREVIOUS\)/,
+  "discarding a saved run removes both its current checkpoint and fallback");
+assert.match(clearer, /checkpointWriteQueue\.catch[\s\S]*then\(\(\) => clearCheckpoints\(\)\)/,
+  "checkpoint deletion waits behind any in-flight day-end save");
+const endGame = game.slice(game.indexOf("function endGame()"), game.indexOf("const ANNOUNCEMENT_GAP"));
+assert.match(endGame, /deleteSavedGame\(\); gameOver\(\)/,
+  "the player's explicit End Game action discards their saved run");
+
+console.log("Saved-game contracts OK: exact snapshots, retry fallback, and explicit End Game deletion checked.");

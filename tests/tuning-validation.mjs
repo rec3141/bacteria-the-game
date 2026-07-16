@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const game = readFileSync(new URL("../game.js", import.meta.url), "utf8");
+const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const validatorSource = game.match(/\/\/ TUNE_VALIDATOR_START[\s\S]*?\/\/ TUNE_VALIDATOR_END/)?.[0];
 assert.ok(validatorSource, "production tuning validator block is present");
 
@@ -63,5 +64,9 @@ assert.ok(adminApply.indexOf("validateTuningConfig(candidate") < adminApply.inde
   "preset validation happens before its atomic commit");
 assert.match(game, /const candidate = cloneCfg\(CFG\); cfgSet\(candidate, leaf\.path, v\);[\s\S]*?if \(errors\.length\)[\s\S]*?return false;[\s\S]*?cfgSet\(CFG, leaf\.path, v\)/,
   "single-field edits validate a clone before changing live CFG");
+assert.match(html, /id="adminStart">Start new game with these settings<\/button>/,
+  "the tuning panel exposes an explicit fresh-run action");
+assert.match(game, /el\.adminStart\.addEventListener\("click", \(\) => \{[\s\S]*?toggleAdmin\(false\);[\s\S]*?start\(\);/,
+  "the tuning action closes the panel and starts a fresh game with the live CFG");
 
 console.log("tuning validation contracts passed");
