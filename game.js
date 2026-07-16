@@ -2145,8 +2145,12 @@
     // take over your most-evolved surviving cell, not just the nearest
     let best = others[0], bs = -Infinity;
     for (const o of others) { const s = cellStrength(o); if (s > bs) { bs = s; best = o; } }
+    const revived = best.cyst;
     best.controlled = true; best.invuln = Math.max(best.invuln, 1.2);
     if (best.cyst) { best.cyst = false; best.energy = Math.max(best.energy, CFG.cell.cystReviveEnergy); } // resuscitate a cyst
+    cam.x = best.x; cam.y = best.y; // position the toast against the survivor immediately, even across the torus
+    showAnnouncement(revived ? "You died · cyst revived" : "You died · switched cells",
+      lineageKeyColor(lineageKey(best)), "☠");
     Audio.play("hit", 0.8);
   }
   function releaseGreenPhages(c) {
