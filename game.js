@@ -599,7 +599,6 @@
   // accelerate toward. `f` scales the thrust: how far the stick is pushed, or a fed cell's amble.
   const swimSpeed = (f, visc) => Math.min(CFG.cell.thrust*f/(CFG.cell.dragRate*visc),
                                           CFG.cell.maxSpeed/Math.sqrt(visc)) * swimScale();
-  const cellMotilityScale = (c) => c && c.twitching ? CFG.cell.twitchSpeedScale : 1;
   function rand(a, b) { return a + Math.random()*(b-a); }
   function wrapX(v) { return ((v % WORLD_W) + WORLD_W) % WORLD_W; }
   function wrapY(v) { return ((v % WORLD_H) + WORLD_H) % WORLD_H; }
@@ -2405,6 +2404,7 @@
       c.cyst = true;
     }
     const carrier = particleUnderCell(c); // surface attachment: ride with the drifting particle below
+    const motilityScale = carrier ? CFG.cell.twitchSpeedScale : 1; // twitching slows only while surface-bound
 
     // LOW REYNOLDS NUMBER. A bacterium has no useful inertia: viscous drag overwhelms momentum, so
     // its velocity is whatever its thrust sustains against drag, reached (and lost) almost at once.
@@ -2417,12 +2417,12 @@
         c.tumbling = false; const len = Math.hypot(a.x, a.y); c.angle = Math.atan2(a.y, a.x);
         // |a| is how far the stick is pushed (keyboard always gives a full 1), and speed is
         // proportional to thrust — so a half-push really is half speed.
-        const sp = swimSpeed(Math.min(1, len), visc)*cellMotilityScale(c);
+        const sp = swimSpeed(Math.min(1, len), visc)*motilityScale;
         c.tvx = (a.x/len)*sp; c.tvy = (a.y/len)*sp;
         c.energy -= CFG.cell.swimCost*dt;
       } else { c.tumbling = true; c.angle += Math.sin(state.elapsed*3 + c.x)*CFG.cell.playerTumbleTurn*dt; }
       if (isTouch && CFG.touch.autoEnzyme) autoEnzyme(c, dt);   // the phone fires its own enzymes
-    } else autonomousMove(c, dt);        // sets tvx/tvy, or drifts a cyst by hand
+    } else autonomousMove(c, dt, motilityScale); // sets tvx/tvy, or drifts a cyst by hand
 
     // Relax onto the target: dv/dt = k(v* - v), solved in CLOSED FORM rather than stepped. With k
     // this stiff an Euler step would tie the cell's speed to the frame rate (and blow up at k·dt>2);
@@ -2431,7 +2431,7 @@
     const relax = Math.exp(-k*dt);
     c.vx = c.tvx + (c.vx - c.tvx)*relax;
     c.vy = c.tvy + (c.vy - c.tvy)*relax;
-    const sp = Math.hypot(c.vx, c.vy), vmax = CFG.cell.maxSpeed/Math.sqrt(visc)*swimScale()*cellMotilityScale(c);
+    const sp = Math.hypot(c.vx, c.vy), vmax = CFG.cell.maxSpeed/Math.sqrt(visc)*swimScale()*motilityScale;
     if (sp > vmax) { c.vx = c.vx/sp*vmax; c.vy = c.vy/sp*vmax; }
     // MOVE IN SUBSTEPS, and collide after each one.
     // Under the old momentum physics a cell crept up on a wall: a collision killed its speed, and
@@ -2493,7 +2493,7 @@
     for (const s of substrates) { if (s.organic <= 0) continue; const d = toroDist2(c.x, c.y, s.x, s.y); if (d < bd) { bd = d; best = s; } }
     return best;
   }
-  function autonomousMove(c, dt) {
+  function autonomousMove(c, dt, motilityScale = 1) {
     const visc = env.viscosity;
     if (c.cyst) { const D = env.diffusivity*CFG.cell.cystDiffuse; c.vx += rand(-D, D)*dt; c.vy += rand(-D, D)*dt; return; } // cysts drift passively
     if (c.fed > 0) c.fed -= dt;
@@ -2518,7 +2518,7 @@
     } else {
       // a run: thrust straight ahead. Speed is thrust/drag (see updateCell), so a fed cell's
       // lower thrust is simply a slower amble — and a tumbling cell, thrusting at nothing, stops.
-      const sp = swimSpeed(fedF, visc)*cellMotilityScale(c);
+      const sp = swimSpeed(fedF, visc)*motilityScale;
       c.tvx = Math.cos(c.angle)*sp; c.tvy = Math.sin(c.angle)*sp;
       c.energy -= CFG.cell.swimCost*fedF*dt;
       // up-gradient → suppress tumbling (longer run); the suppression scales with chemoLevel
@@ -3127,9 +3127,11 @@
     const cx = sx(z.x), cy = sy(z.y); if (!onScreen(cx, cy, z.r + 5)) return;
     const fade = clamp(z.life/3, 0, 1), r = z.r;
     ctx.save(); ctx.translate(cx, cy); ctx.rotate(z.angle || 0); ctx.globalAlpha = fade;
-    // A plump, gently lobed polysaccharide blob. Every point stays inside the circular collision
-    // boundary, while midpoint curves keep the silhouette soft rather than blocky or spiky.
-    const profile = [0.91, 0.97, 0.92, 0.98, 0.90, 0.96, 0.92, 0.98, 0.91, 0.96];
+    // A plump but tortuous polysaccharide blob. Alternating outer lobes and deep inner valleys make
+    // the outline visibly convex and concave; midpoint curves keep every wiggle soft, and every
+    // point remains inside the circular collision boundary.
+    const profile = [0.97, 0.73, 0.91, 0.68, 0.98, 0.76, 0.94, 0.70,
+                     0.96, 0.72, 0.90, 0.67, 0.97, 0.74];
     const points = profile.map((scale, i) => {
       const a = i/profile.length*TAU - Math.PI/2;
       return { x: Math.cos(a)*r*scale, y: Math.sin(a)*r*scale };
@@ -4536,7 +4538,7 @@
     "cell.dragRate": "How fast velocity relaxes onto what the thrust sustains (1/s). High = the cell stops dead when you let go, which is what a real bacterium does (viscosity beats inertia at this size). Low = it coasts like a submarine, which is wrong but forgiving. Also sets free-swim speed via thrust/dragRate.",
     "cell.cystDragRate": "Same, for a dormant cyst. Kept low so a cyst keeps drifting with the water instead of freezing in place.",
     "cell.maxSpeed": "Hard cap on swim speed (px/s), applied after thrust/dragRate.",
-    "cell.twitchSpeedScale": "Self-propelled speed of a twitching cell as a fraction of ordinary flagellar swimming. Particle drift is added separately while attached to a surface.",
+    "cell.twitchSpeedScale": "Self-propelled speed of a twitching cell while it is on a particle, as a fraction of ordinary open-water swimming. Particle drift is added separately while attached.",
     "cell.uptake": "Nutrient absorbed per second while touching free motes.",
     "cell.startEnergy": "Energy a new cell begins life with.",
     "cell.maxEnergy": "Energy ceiling — a cell can't store more than this.",

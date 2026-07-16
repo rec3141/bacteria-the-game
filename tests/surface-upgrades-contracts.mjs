@@ -27,13 +27,15 @@ assert.match(movement, /collideRod\(c, !!c\.twitching\)/,
   "twitching skips particles in narrow-phase collision too");
 assert.match(game, /twitchSpeedScale: 0\.5/,
   "twitching self-propulsion starts at half ordinary speed");
-assert.match(movement, /swimSpeed\(Math\.min\(1, len\), visc\)\*cellMotilityScale\(c\)/,
-  "half-speed scaling applies to the controlled cell");
-assert.match(movement, /vmax = CFG\.cell\.maxSpeed\/Math\.sqrt\(visc\)\*swimScale\(\)\*cellMotilityScale\(c\)/,
+assert.match(movement, /const motilityScale = carrier \? CFG\.cell\.twitchSpeedScale : 1/,
+  "half speed activates only when a particle supports the twitching cell");
+assert.match(movement, /swimSpeed\(Math\.min\(1, len\), visc\)\*motilityScale/,
+  "surface-only speed scaling applies to the controlled cell");
+assert.match(movement, /vmax = CFG\.cell\.maxSpeed\/Math\.sqrt\(visc\)\*swimScale\(\)\*motilityScale/,
   "the velocity cap cannot preserve pre-upgrade flagellar speed");
-const autonomous = game.slice(game.indexOf("function autonomousMove(c, dt)"), game.indexOf("function updatePredators"));
-assert.match(autonomous, /swimSpeed\(fedF, visc\)\*cellMotilityScale\(c\)/,
-  "half-speed scaling applies to autonomous descendants");
+const autonomous = game.slice(game.indexOf("function autonomousMove("), game.indexOf("function updatePredators"));
+assert.match(autonomous, /function autonomousMove\(c, dt, motilityScale = 1\)[\s\S]*swimSpeed\(fedF, visc\)\*motilityScale/,
+  "surface-only speed scaling applies to autonomous descendants");
 assert.match(movement, /const carrier = particleUnderCell\(c\)/);
 assert.match(movement, /moveVx = c\.vx \+ \(carrier \? carrier\.vx : 0\), moveVy = c\.vy \+ \(carrier \? carrier\.vy : 0\)/,
   "a surface-attached twitching cell receives its particle's drift separately from propulsion");
@@ -61,10 +63,24 @@ assert.match(drawCell, /for \(let i = 0; i <= 14; i\+\+\)[\s\S]*?ctx\.stroke\(\)
   "twitching cells retain the ordinary flagellum as well as their pili");
 
 const drawEps = game.slice(game.indexOf("function drawEps(z)"), game.indexOf("function drawNutrient"));
-assert.match(drawEps, /const profile = \[[^\]]{30,}\][\s\S]*quadraticCurveTo/,
-  "EPS has a rounded, gently lobed bouba silhouette");
+assert.match(drawEps, /const profile = \[[^\]]{60,}\][\s\S]*quadraticCurveTo/,
+  "EPS has a rounded, tortuous bouba silhouette with alternating lobes and valleys");
 assert.doesNotMatch(drawEps, /lineTo\(/,
   "EPS has no sharp-sided block outline");
+const epsProfileText = drawEps.match(/const profile = \[([\s\S]*?)\];/)?.[1];
+assert.ok(epsProfileText, "EPS radial profile is present");
+const epsProfile = epsProfileText.split(",").map(Number);
+const epsPoints = epsProfile.map((radius, i) => {
+  const angle = i/epsProfile.length*Math.PI*2;
+  return [Math.cos(angle)*radius, Math.sin(angle)*radius];
+});
+const epsTurns = epsPoints.map((point, i) => {
+  const prev = epsPoints[(i + epsPoints.length - 1) % epsPoints.length];
+  const next = epsPoints[(i + 1) % epsPoints.length];
+  return Math.sign((point[0]-prev[0])*(next[1]-point[1]) - (point[1]-prev[1])*(next[0]-point[0]));
+});
+assert.ok(epsTurns.includes(1) && epsTurns.includes(-1),
+  "EPS profile contains both convex lobes and concave valleys");
 
 const actions = game.slice(game.indexOf("const AB = 3, EPS = 4"), game.indexOf("function lineageReps"));
 assert.match(actions, /if \(c\.eps\) o\.push\(EPS\)/);
