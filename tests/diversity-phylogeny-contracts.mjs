@@ -5,10 +5,10 @@ const game = readFileSync(new URL("../game.js", import.meta.url), "utf8");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 
 assert.match(html,
-  /id="analysisSubChart"[\s\S]*?id="analysisMortChart"[\s\S]*?Ecotype diversity[\s\S]*?id="analysisDiversityChart"/,
+  /id="analysisSubChart"[\s\S]*?id="analysisMortChart"[\s\S]*?Lineage diversity[\s\S]*?id="analysisDiversityChart"/,
   "the end screen must show food, mortality, then a dedicated diversity chart");
 assert.match(html,
-  /id="detailSubChart"[\s\S]*?id="detailMortChart"[\s\S]*?Ecotype diversity[\s\S]*?id="detailDiversityChart"/,
+  /id="detailSubChart"[\s\S]*?id="detailMortChart"[\s\S]*?Lineage diversity[\s\S]*?id="detailDiversityChart"/,
   "high-score details must show the same three companion charts");
 
 const sampleBucketsSource = game.match(/function sampleBuckets\(s\) \{[\s\S]*?\n  \}/)?.[0];
@@ -26,9 +26,11 @@ assert.deepEqual(diversityIndices({ eco: [] }), { richness: 0, shannon: 0 });
 const legacy = diversityIndices({ eco: [5, 0, 5, 0, 0, 0, 0, 0] });
 assert.equal(legacy.richness, 2, "legacy scores must derive richness through eco[] fallback buckets");
 assert.ok(Math.abs(legacy.shannon - Math.log(2)) < 1e-12, "legacy scores must derive Shannon H′ too");
-const sameEcotypeTiers = diversityIndices({ buckets: { 0: 5, 1: 5 } });
-assert.deepEqual(sameEcotypeTiers, { richness: 1, shannon: 0 },
-  "adaptation tiers within one ecotype must not inflate ecological diversity");
+const distinctTierBands = diversityIndices({ buckets: { 0: 5, 1: 5 } });
+assert.equal(distinctTierBands.richness, 2,
+  "lineage diversity counts each coexisting generation band (mask+tier): two tiers are two lineages");
+assert.ok(Math.abs(distinctTierBands.shannon - Math.log(2)) < 1e-12,
+  "two evenly-populated tier bands give Shannon H′ = ln(2)");
 
 const diversityRenderer = game.slice(game.indexOf("function renderDiversityChart"), game.indexOf("function drawHelix"));
 assert.match(diversityRenderer, /const yRichness = [\s\S]*const yShannon = /,
@@ -43,7 +45,7 @@ assert.match(game, /function toggleSubMode\(\) \{ subMode = \(subMode \+ 1\) % 3
   "the compact gameplay chart must cycle through all three companion views");
 assert.match(game, /function renderSubChart\([^)]*\) \{\s*if \(mode === 2\) \{ renderDiversityChart\(g, W, H, hist, denom\); return; \}/,
   "the third compact gameplay view must reuse the diversity renderer");
-assert.match(game, /richness S[\s\S]*Shannon H′[\s\S]*title = "ecotype diversity"/,
+assert.match(game, /richness S[\s\S]*Shannon H′[\s\S]*title = "lineage diversity"/,
   "the live diversity view must identify both indices with the analysis-chart colors");
 
 const clado = game.slice(game.indexOf("function drawClado"), game.indexOf("function showLineageCircos"));

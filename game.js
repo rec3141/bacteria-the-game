@@ -3794,15 +3794,18 @@
   // way in grantRandomUpgrade_/genomeUps). So the wire form stores only {t, abbr, acquired?} and we
   // rebuild the rest here — that's the compression that lets a marathon run keep every lineage's genome
   // without bloating the record. Prefix → gene; the trailing digits are the expression level.
+  // Colors are inlined literals (not RESOURCES/*_COLOR refs) so this block stays self-contained and the
+  // normalizer test can eval it in isolation. They MUST mirror the palette: RESOURCES[0..2].color and
+  // TOXIN_COLOR/EPS_COLOR/CRISPR_COLOR/TWITCH_COLOR above — keep them in sync if the palette changes.
   const ABBR_SPEC = {
-    L:  { name: "Lipase",             color: RESOURCES[0].color, numbered: true  },
-    P:  { name: "Protease",           color: RESOURCES[1].color, numbered: true  },
-    C:  { name: "Carbohydrase",       color: RESOURCES[2].color, numbered: true  },
-    T:  { name: "Chemotaxis",         color: "#ffd24a",          numbered: true  },
-    Ab: { name: "Antibiotic",         color: TOXIN_COLOR,        numbered: true  },
-    Eps:{ name: "EPS",                color: EPS_COLOR,          numbered: true  },
-    Cr: { name: "CRISPR",             color: CRISPR_COLOR,       numbered: false },
-    Tw: { name: "Twitching motility", color: TWITCH_COLOR,       numbered: false },
+    L:  { name: "Lipase",             color: "#efd98a", numbered: true  }, // RESOURCES[0].color
+    P:  { name: "Protease",           color: "#ef8b3c", numbered: true  }, // RESOURCES[1].color
+    C:  { name: "Carbohydrase",       color: "#6fa8ff", numbered: true  }, // RESOURCES[2].color
+    T:  { name: "Chemotaxis",         color: "#ffd24a", numbered: true  },
+    Ab: { name: "Antibiotic",         color: "#f05ad0", numbered: true  }, // TOXIN_COLOR
+    Eps:{ name: "EPS",                color: "#d8b86a", numbered: true  }, // EPS_COLOR
+    Cr: { name: "CRISPR",             color: "#c39bff", numbered: false }, // CRISPR_COLOR
+    Tw: { name: "Twitching motility", color: "#4fe3ff", numbered: false }, // TWITCH_COLOR
   };
   function normalizeClientUpgrade(value, maxTime = 86400) {
     if (!scoreClientObject(value)) return null;

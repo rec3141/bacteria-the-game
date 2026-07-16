@@ -20,21 +20,21 @@ assert.match(enzymeActions, /state\.activeEnzyme = id; announceDeployable\(id\)/
 const lineageActions = game.slice(game.indexOf("const lineageKey ="), game.indexOf("function divide"));
 assert.match(lineageActions, /population = cells\.reduce\([\s\S]*?lineageKey\(x\) === key/,
   "lineage announcements must count the currently living population of the selected color");
-assert.match(lineageActions, /showAnnouncement\(`Lineage · \$\{population\.toLocaleString\(\)\}[\s\S]*?lineageKeyColor\(key\), "●"\)/,
-  "lineage announcements must use the newly selected lineage color");
+assert.match(lineageActions, /showAnnouncement\(`Lineage · tier \$\{tier\} · \$\{population\.toLocaleString\(\)\}[\s\S]*?lineageKeyColor\(key\), "●"\)/,
+  "lineage announcements must report the tier and use the newly selected lineage color");
 assert.match(lineageActions, /target\.controlled = true;[\s\S]*?announceLineage\(target\)/,
   "control changes must announce the new lineage after selection");
 
-const deathTransfer = game.slice(game.indexOf("function transferControl(c)"), game.indexOf("function releaseGreenPhages"));
+const deathTransfer = game.slice(game.indexOf("function transferControl(c"), game.indexOf("function releaseGreenPhages"));
 assert.match(deathTransfer, /if \(!others\.length\) return/,
   "a death-switch toast requires a surviving cell to receive control");
 assert.match(deathTransfer, /const revived = best\.cyst;[\s\S]*best\.controlled = true;[\s\S]*best\.cyst = false/,
   "the transfer records whether its replacement had to be revived from a cyst");
-assert.match(deathTransfer, /cam\.x = best\.x; cam\.y = best\.y;[\s\S]*const tier = upgradeTier\(best\);[\s\S]*showAnnouncement\(\(revived \? "You died · cyst revived" : "You died · switched cells"\) \+ ` · tier \$\{tier\}`/,
-  "the death toast is positioned at the replacement, distinguishes cyst revival, and reports its tier");
+assert.match(deathTransfer, /cam\.x = best\.x; cam\.y = best\.y;[\s\S]*const tier = upgradeTier\(best\), head = \(CAUSE_WORD\[cause\] \|\| "You died"\)[\s\S]*showAnnouncement\(head \+ \(revived \? " · revived tier " : " · now tier "\) \+ tier/,
+  "the death toast is positioned at the replacement, names the cause, distinguishes cyst revival, and reports its tier");
 assert.match(deathTransfer, /lineageKeyColor\(lineageKey\(best\)\), "☠"/,
   "the death toast uses the replacement lineage color and a mortality icon");
-assert.match(game, /function onCellDeath\(c, cause\)[\s\S]*if \(c\.controlled\) transferControl\(c\)/,
-  "every controlled-cell mortality path transfers control through the announced switch");
+assert.match(game, /function onCellDeath\(c, cause\)[\s\S]*if \(c\.controlled\) transferControl\(c, cause\)/,
+  "every controlled-cell mortality path transfers control through the announced switch, passing the cause");
 
 console.log("Announcement contracts OK: gene and lineage switches are brief, distant, colored, and counted.");

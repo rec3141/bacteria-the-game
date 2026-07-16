@@ -17,7 +17,7 @@ const board = normalizeScoreList([
   {
     id: 2, date: 2, score: 20, gen: 3, dur: 4,
     hist: [
-      { eco: [1, 2, 3, 4, 5, 6, 7, 8], p: 2, v: 3, buckets: { 0: 2, 999: 5 }, sub: [1, 2, 3], mort: [4, 3, 2, 1] },
+      { eco: [1, 2, 3, 4, 5, 6, 7, 8], p: 2, v: 3, buckets: { 0: 2, 999: 5, 5000: 9 }, sub: [1, 2, 3], mort: [4, 3, 2, 1] },
       { eco: {}, p: 0, v: 0 },
     ],
     upgrades: [
@@ -30,7 +30,7 @@ const board = normalizeScoreList([
       tree: [{ t: 2, label: "Lipase 1", abbr: "L1", color: "#efd98a", acquired: true }],
       variants: [{ t: 3, ups: [], tree: [{ t: 3, label: "Lost lipase", abbr: "xL1", color: "#efd98a" }] }],
     } },
-    roleSwaps: [2, "bad", null],
+    roleSwaps: [{ t: 5, to: "protist" }, 2, "bad", null],
   },
 ]);
 
@@ -40,13 +40,13 @@ assert.deepEqual(board[0].upgrades, [], "an upgrade object must not masquerade a
 assert.deepEqual(board[0].lineages, {}, "a lineage array must not masquerade as an object map");
 assert.equal(board[1].hist.length, 1);
 assert.equal(board[1].hist[0].eco.length, 8);
-assert.deepEqual(board[1].hist[0].buckets, { 0: 2 });
+assert.deepEqual(board[1].hist[0].buckets, { 0: 2, 999: 5 }, "widened lineage buckets keep keys 0-4095; 5000 is out of range and dropped");
 assert.equal(board[1].upgrades.length, 1);
 assert.equal(board[1].lineages[64].ups.length, 1);
 assert.equal(board[1].lineages[64].tree.length, 1);
 assert.equal(board[1].lineages[64].variants.length, 1);
 assert.equal(board[1].lineages[64].variants[0].tree[0].abbr, "xL1");
-assert.deepEqual(board[1].roleSwaps, [2]);
+assert.deepEqual(board[1].roleSwaps, [{ t: 5, to: "protist" }], "role swaps are {t,to} objects now; bare numbers/nulls are dropped");
 assert.deepEqual(normalizeScoreList({ 0: board[0] }), [], "a board object must not masquerade as a list");
 
 const showScores = game.slice(game.indexOf("function showScores(opts)"), game.indexOf("function hideScores()"));

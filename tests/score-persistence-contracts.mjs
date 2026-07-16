@@ -14,12 +14,12 @@ assert.equal(scoreWorthSaving({ ...empty, gen: 2 }), true, "division is meaningf
 assert.equal(scoreWorthSaving({ ...empty, upgrades: [{ abbr: "L1" }] }), true, "an adaptation is meaningful progress");
 assert.equal(scoreWorthSaving({ ...empty, roleSwaps: [{ to: "protist" }] }), true, "a trophic-role change is meaningful progress");
 
-const record = game.slice(game.indexOf("function recordGame()"), game.indexOf("function queueScoreWrite"));
+const record = game.slice(game.indexOf("function recordGame("), game.indexOf("function queueScoreWrite"));
 const guard = record.indexOf("if (!scoreWorthSaving(rec))");
 assert.ok(guard >= 0, "recordGame must guard empty runs");
 assert.ok(guard < record.indexOf("localStorage.setItem(HS_KEY"), "the empty-run guard must precede local persistence");
 assert.ok(guard < record.indexOf("submitScore(rec)"), "the empty-run guard must precede shared submission");
-assert.match(game, /const scoreRecorded = recordGame\(\);[\s\S]*?nameRow\.classList\.toggle\("hidden", !scoreRecorded\)/,
+assert.match(game, /const scoreRecorded = recordGame\([^)]*\);[\s\S]*?nameRow\.classList\.toggle\("hidden", !scoreRecorded\)/,
   "an unsaved empty run must not ask for a leaderboard name");
 
 console.log("Score persistence contracts OK: idle runs are skipped while real progress still records.");
