@@ -183,6 +183,8 @@
       latent: [9, 15],      // seconds from green infection to lysis
       greenSeed: [5, 9], greenFloor: 27, seedBatch: 3, // reservoir: every greenSeed s, top the sampled lineage up (a few at a time) to ≥greenFloor phages tuned to ITS tier
       hostTolerance: 2,     // kill-the-winner: a phage infects only cells within this many upgrade-tiers of its host
+      twitchHalo: 4,        // pili ARE the phage receptor: a twitching cell adsorbs green phages from this many extra px out
+      twitchHostBonus: 1,   // ...and across this many extra kill-the-winner tiers, so upgrading sheds viral pursuers less easily
       goldLife: [90, 140],  // gold phage lingers far longer than green — you can chase it down
       // Gold IS the fun: it's the only thing that changes what you can do. Desktop keeps its scarcity
       // (1 on the board), but on a phone — where a run is short and a player gives you ninety seconds
@@ -919,7 +921,10 @@
   // so you can OUTRUN a virus cohort by upgrading (they turn green) until new phages evolve to your tier.
   function upgradeTier(c) { return (c.enzLvl[0] + c.enzLvl[1] + c.enzLvl[2] - 1) + c.chemoLevel +
     (c.crispr ? 1 : 0) + (c.antibiotic || 0) + (c.twitching ? 1 : 0) + (c.eps || 0); }
-  function hostMatch(phHost, tier) { return Math.abs(phHost - tier) <= CFG.phage.hostTolerance; }
+  function hostMatch(phHost, tier, tol = CFG.phage.hostTolerance) { return Math.abs(phHost - tier) <= tol; }
+  // Twitching pili are the receptor green phages attach to, so a twitching cell is easier prey: it accepts
+  // phages across a wider kill-the-winner window (upgrading shakes off pursuers less well). See CFG.phage.
+  function cellHostTol(c) { return CFG.phage.hostTolerance + (c && c.twitching ? CFG.phage.twitchHostBonus : 0); }
   // genome as a vector of loci → "genetic distance" (Manhattan) between two cells, for cross-reactive antibiotics
   function genomeOf(c) { return [c.enzLvl[0], c.enzLvl[1], c.enzLvl[2], c.chemoLevel, c.crispr ? 1 : 0,
     c.antibiotic || 0, c.twitching ? 1 : 0, c.eps || 0]; }
@@ -2642,7 +2647,7 @@
           const d = toroDist2(c.x, c.y, pr.x, pr.y); if (d < best) { best = d; threat = pr; }
         }
         for (const ph of phageSpace.query(c.x, c.y, range + SPATIAL_FRAME_PAD, phageCandidates)) {
-          if (ph.dead || ph.type !== "green" || !hostMatch(ph.host, upgradeTier(c))) continue;
+          if (ph.dead || ph.type !== "green" || !hostMatch(ph.host, upgradeTier(c), cellHostTol(c))) continue;
           const d = toroDist2(c.x, c.y, ph.x, ph.y); if (d < best) { best = d; threat = ph; }
         }
         if (threat) {
@@ -2935,16 +2940,18 @@
       // catching the gold should get easier on mobile, not catching a plague.
       const reach = (ph.type === "gold" && isTouch) ? CFG.phage.goldGrabTouch : 1;
       const infectDist = (CFG.cell.radius + ph.r + CFG.phage.infectHalo) * reach;
-      const cellReach = CFG.cell.maxHalf + infectDist + 2;
+      const twitchHalo = ph.type === "green" ? CFG.phage.twitchHalo : 0; // pili extend the adsorption reach (green only)
+      const cellReach = CFG.cell.maxHalf + infectDist + twitchHalo + 2;
       for (const c of cellSpace.query(ph.x, ph.y, cellReach, cellCandidates)) {
         if (!c.alive || c.cyst) continue;            // cysts are impervious to viruses
         if (ph.type === "gold" && !c.controlled) continue; // only YOU can grab the gold phage — daughters can't steal your adaptation
-        const hl = cellHalfLen(c) + infectDist + 2;
+        const eff = infectDist + (twitchHalo && c.twitching ? twitchHalo : 0); // a twitching cell's pili grab from farther out
+        const hl = cellHalfLen(c) + eff + 2;
         if (toroDist2(ph.x, ph.y, c.x, c.y) > hl*hl) continue;
-        if (cellDistTo(c, ph.x, ph.y) > infectDist) continue;
+        if (cellDistTo(c, ph.x, ph.y) > eff) continue;
         if (ph.type === "green") {
           if (c.infectedGreen) continue;             // already infected — drift on
-          if (!hostMatch(ph.host, upgradeTier(c))) { // kill-the-winner: this phage can't infect this cell's tier
+          if (!hostMatch(ph.host, upgradeTier(c), cellHostTol(c))) { // kill-the-winner (widened for twitching pili)
             if (c.crispr) { c.energy = Math.min(c.energy + CFG.cell.crisprEnergy, CFG.cell.maxEnergy); ph.dead = true;
               if (c.controlled) tutDid("atePhage"); burst(ph.x, ph.y, CRISPR_COLOR, 8); break; } // CRISPR harvests the immune virus for energy
             continue;
@@ -3302,7 +3309,7 @@
     // In the tutorial there IS no controlled cell, so red/green would have nothing to be relative to
     // and every phage would read harmless. Judge them against the cell the lesson is about instead.
     const pc = controlledCell() || (demo && alive(demo.hero) ? demo.hero : null);
-    const danger = pc && hostMatch(ph.host, upgradeTier(pc));
+    const danger = pc && hostMatch(ph.host, upgradeTier(pc), cellHostTol(pc)); // a twitching cell sees more phages as red
     const col = danger ? "#ff5a52" : "#7CFC5A", r = 3.8;
     ctx.fillStyle = "rgba(8,12,10,0.6)"; ctx.beginPath(); ctx.arc(0, 0, r + 1.7, 0, 6.28); ctx.fill(); // dark halo → pops against same-color blocks
     ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.beginPath();
@@ -5003,6 +5010,8 @@
     "phage.greenSeed": "Seconds between reservoir top-ups, which keep phages tuned to a sampled lineage.",
     "phage.greenFloor": "Minimum phages kept matched to the sampled lineage's tier at each top-up.",
     "phage.hostTolerance": "Kill-the-winner window: how many adaptation tiers from its host a phage can still infect. Lower = upgrading shakes off your pursuers faster.",
+    "phage.twitchHalo": "Twitching pili are the phage receptor: extra px of green-phage adsorption reach for a twitching cell. The risk half of twitching's risk/reward.",
+    "phage.twitchHostBonus": "Extra kill-the-winner tiers a green phage can span to infect a TWITCHING cell — so a twitching lineage can't outrun viruses by upgrading as easily.",
     "phage.goldLife": "Seconds the rare GOLD phage (the HGT upgrade) lingers before vanishing.",
     "phage.goldGrabTouch": "TOUCH DEVICES ONLY: multiplies the gold phage's grab radius, because catching it with a thumb is much fiddlier than with a keyboard. 1 = same as desktop. Green phages are unaffected.",
     "phage.goldCount": "How many gold phages are kept on the board at once (desktop). Gold is the only thing that changes what you can do, so this is really 'how fast can you evolve'. 1 = scarce, a hunt.",

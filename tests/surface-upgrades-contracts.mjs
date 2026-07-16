@@ -149,4 +149,26 @@ collideEpsCircle(object, 5);
 assert.equal(object.x, 129, "the object is pushed to the EPS boundary");
 assert.equal(object.vx, 0, "inward motion is removed at the EPS boundary");
 
-console.log("Surface-upgrade contracts OK: twitching traversal and temporary EPS exclusion checked.");
+// #17 twitching trade-off: pili are the phage receptor, so a twitching cell is easier for green phages
+// to infect — a wider kill-the-winner window and a longer adsorption reach.
+const hostMatchSrc = game.match(/function hostMatch\([^)]*\) \{[^\n]*\}/)?.[0];
+const cellHostTolSrc = game.match(/function cellHostTol\(c\) \{[^\n]*\}/)?.[0];
+assert.ok(hostMatchSrc && cellHostTolSrc, "hostMatch and cellHostTol must be extractable");
+const susceptibility = new Function(`
+  const CFG = { phage: { hostTolerance: 2, twitchHostBonus: 1 } };
+  ${hostMatchSrc}
+  ${cellHostTolSrc}
+  return { hostMatch, cellHostTol };
+`)();
+assert.equal(susceptibility.hostMatch(5, 8, susceptibility.cellHostTol({ twitching: false })), false,
+  "a 3-tier gap is outside the plain kill-the-winner window");
+assert.equal(susceptibility.hostMatch(5, 8, susceptibility.cellHostTol({ twitching: true })), true,
+  "twitching pili widen the window, so the same distant phage now infects");
+assert.match(game, /twitchHalo = ph\.type === "green" \? CFG\.phage\.twitchHalo/,
+  "green phages get extra adsorption reach, applied to twitching cells via eff");
+assert.match(game, /const eff = infectDist \+ \(twitchHalo && c\.twitching \? twitchHalo : 0\)/,
+  "a twitching cell's effective adsorption distance is extended");
+assert.match(game, /hostMatch\(ph\.host, upgradeTier\(c\), cellHostTol\(c\)\)/,
+  "green infection uses the twitch-widened kill-the-winner window");
+
+console.log("Surface-upgrade contracts OK: twitching traversal, phage susceptibility, and temporary EPS exclusion checked.");
