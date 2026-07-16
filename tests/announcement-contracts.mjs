@@ -30,8 +30,8 @@ assert.match(deathTransfer, /if \(!others\.length\) return/,
   "a death-switch toast requires a surviving cell to receive control");
 assert.match(deathTransfer, /const revived = best\.cyst;[\s\S]*best\.controlled = true;[\s\S]*best\.cyst = false/,
   "the transfer records whether its replacement had to be revived from a cyst");
-assert.match(deathTransfer, /cam\.x = best\.x; cam\.y = best\.y;[\s\S]*showAnnouncement\(revived \? "You died · cyst revived" : "You died · switched cells"/,
-  "the death toast is positioned at the replacement and distinguishes cyst revival");
+assert.match(deathTransfer, /cam\.x = best\.x; cam\.y = best\.y;[\s\S]*const tier = upgradeTier\(best\);[\s\S]*showAnnouncement\(\(revived \? "You died · cyst revived" : "You died · switched cells"\) \+ ` · tier \$\{tier\}`/,
+  "the death toast is positioned at the replacement, distinguishes cyst revival, and reports its tier");
 assert.match(deathTransfer, /lineageKeyColor\(lineageKey\(best\)\), "☠"/,
   "the death toast uses the replacement lineage color and a mortality icon");
 assert.match(game, /function onCellDeath\(c, cause\)[\s\S]*if \(c\.controlled\) transferControl\(c\)/,

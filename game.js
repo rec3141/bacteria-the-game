@@ -324,11 +324,13 @@
     detailBack: document.getElementById("detailBack"),
     analysisSubChart: document.getElementById("analysisSubChart"), detailSubChart: document.getElementById("detailSubChart"),
     analysisMortChart: document.getElementById("analysisMortChart"), detailMortChart: document.getElementById("detailMortChart"),
+    analysisDiversityChart: document.getElementById("analysisDiversityChart"), detailDiversityChart: document.getElementById("detailDiversityChart"),
     analysisSubLabel: document.getElementById("analysisSubLabel"), detailSubLabel: document.getElementById("detailSubLabel"),
   };
   const actx = el.analysisChart ? el.analysisChart.getContext("2d") : null;
   const asctx = el.analysisSubChart ? el.analysisSubChart.getContext("2d") : null;
   const amctx = el.analysisMortChart ? el.analysisMortChart.getContext("2d") : null;
+  const adctx = el.analysisDiversityChart ? el.analysisDiversityChart.getContext("2d") : null;
   el.enz.forEach((e, i) => { if (e) e.style.setProperty("--gc", RESOURCES[i].color); }); // per-gene color (used when owned)
   if (el.abilChemo) el.abilChemo.style.setProperty("--gc", "#ffd24a"); // chemotaxis = gold
   if (el.abilCrispr) el.abilCrispr.style.setProperty("--gc", "#c39bff"); // CRISPR = violet
@@ -2149,7 +2151,8 @@
     best.controlled = true; best.invuln = Math.max(best.invuln, 1.2);
     if (best.cyst) { best.cyst = false; best.energy = Math.max(best.energy, CFG.cell.cystReviveEnergy); } // resuscitate a cyst
     cam.x = best.x; cam.y = best.y; // position the toast against the survivor immediately, even across the torus
-    showAnnouncement(revived ? "You died · cyst revived" : "You died · switched cells",
+    const tier = upgradeTier(best);
+    showAnnouncement((revived ? "You died · cyst revived" : "You died · switched cells") + ` · tier ${tier}`,
       lineageKeyColor(lineageKey(best)), "☠");
     Audio.play("hit", 0.8);
   }
@@ -2219,10 +2222,11 @@
     });
     g.globalAlpha = 1;
   }
-  // Shared annotated renderers (game-over screen + high-score detail view): ecotype and substrate charts,
-  // both with adaptation markers so you can read "new enzyme → its substrate gets eaten → colony booms".
+  // Shared annotated renderers (game-over screen + high-score detail view): ecotype, substrate,
+  // mortality, and diversity charts all share the run's adaptation and role-swap time markers.
   function annotateRun(g, W, H, hist, upgrades, dur, swaps) { renderEcoChart(g, W, H, hist); drawAdaptationMarkers(g, W, H, upgrades, dur); drawRoleSwaps(g, W, H, swaps, dur); }
   function annotateSub(g, W, H, hist, upgrades, dur, swaps, mode) { renderSubChart(g, W, H, hist, undefined, mode); drawAdaptationMarkers(g, W, H, upgrades, dur); drawRoleSwaps(g, W, H, swaps, dur); }
+  function annotateDiversity(g, W, H, hist, upgrades, dur, swaps) { renderDiversityChart(g, W, H, hist); drawAdaptationMarkers(g, W, H, upgrades, dur); drawRoleSwaps(g, W, H, swaps, dur); }
   function runStatsHtml(hist, upgrades) {
     let peakCol = 0, peakP = 0, peakV = 0;
     for (const s of hist) { let t = 0; for (let i = 0; i < 8; i++) t += s.eco[i]; if (t > peakCol) peakCol = t; if (s.p > peakP) peakP = s.p; if ((s.v||0) > peakV) peakV = s.v; }
@@ -2239,6 +2243,11 @@
     if (amctx) {
       const mortSurface = prepareHiDpiCanvas(el.analysisMortChart, null, null, amctx);
       annotateSub(mortSurface.context, mortSurface.width, mortSurface.height, state.fullHist, state.upgrades, state.elapsed, state.roleSwaps, 1);
+    }
+    if (adctx) {
+      const diversitySurface = prepareHiDpiCanvas(el.analysisDiversityChart, null, null, adctx);
+      annotateDiversity(diversitySurface.context, diversitySurface.width, diversitySurface.height,
+        state.fullHist, state.upgrades, state.elapsed, state.roleSwaps);
     }
     if (el.analysisClado) drawClado(el.analysisClado, analysisRec());
     if (el.analysisStats) el.analysisStats.innerHTML = runStatsHtml(state.fullHist, state.upgrades);
@@ -3502,6 +3511,23 @@
     const b = {}; if (s.eco) for (let m = 0; m < 8; m++) if (s.eco[m]) b[m*64 + Math.round(s.lvl ? s.lvl[m] : 0)] = s.eco[m];
     return b;
   }
+  // Diversity is calculated across ecotypes: richness is the number present, while Shannon H'
+  // weights that richness by how evenly cells are distributed. History has always stored eco[],
+  // but aggregating buckets is a defensive fallback for any partial/imported record that lacks it.
+  function diversityIndices(s) {
+    const counts = Array(8).fill(0);
+    if (s && Array.isArray(s.eco)) {
+      for (let i = 0; i < counts.length; i++) counts[i] = Math.max(0, Number(s.eco[i]) || 0);
+    } else {
+      const buckets = sampleBuckets(s || {});
+      for (const key in buckets) counts[(+key >> 6) & 7] += Math.max(0, Number(buckets[key]) || 0);
+    }
+    let total = 0;
+    for (const n of counts) total += n;
+    let shannon = 0;
+    if (total > 0) for (const n of counts) if (n > 0) { const p = n/total; shannon -= p*Math.log(p); }
+    return { richness: counts.filter((n) => n > 0).length, shannon };
+  }
   function hexToHsl(hex) {
     const n = parseInt(hex.slice(1), 16), r = ((n>>16)&255)/255, g = ((n>>8)&255)/255, b = (n&255)/255;
     const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx+mn)/2; let h = 0, s = 0;
@@ -3614,6 +3640,34 @@
         g.closePath(); g.fill();
         for (let i = 0; i <= last; i++) cum[i] += (vals[i][k] || 0);
       }
+    }
+  }
+  const RICHNESS_COLOR = "#57e0c0", SHANNON_COLOR = "#c39bff";
+  // Third companion chart: two simultaneous lines with independent, labeled axes. Richness is a
+  // count of ecotypes; Shannon H' is dimensionless and uses natural logarithms, so sharing one numeric
+  // axis would flatten H' into the baseline whenever many lineages coexist.
+  function renderDiversityChart(g, W, H, hist, denom) {
+    g.clearRect(0, 0, W, H);
+    g.fillStyle = CHART.surface; g.fillRect(0, 0, W, H);
+    const vals = hist.map(diversityIndices), n = denom || Math.max(hist.length, 2);
+    let maxRichness = 1;
+    for (const v of vals) maxRichness = Math.max(maxRichness, v.richness);
+    const maxShannon = Math.max(Math.log(Math.max(2, maxRichness)), ...vals.map((v) => v.shannon), 0.01);
+    const pad = H < 70 ? 8 : 14, xAt = (i) => i/(n-1)*W;
+    const yRichness = (v) => H - (v/maxRichness)*(H-pad) - 2;
+    const yShannon = (v) => H - (v/maxShannon)*(H-pad) - 2;
+    g.strokeStyle = "rgba(255,255,255,0.06)"; g.lineWidth = 1;
+    for (let k = 1; k <= 3; k++) { const y = H - k/4*(H-pad) - 2; g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }
+    g.fillStyle = "rgba(215,245,238,0.58)"; g.font = "10px 'Trebuchet MS', sans-serif";
+    g.textAlign = "left"; g.fillText(`S ${maxRichness}`, 3, 10); g.fillText("0", 3, H - 3);
+    g.textAlign = "right"; g.fillText(`H′ ${maxShannon.toFixed(2)}`, W - 3, 10); g.fillText("0", W - 3, H - 3);
+    if (vals.length > 1) {
+      g.strokeStyle = RICHNESS_COLOR; g.lineWidth = H < 70 ? 1.4 : 2; g.beginPath();
+      for (let i = 0; i < vals.length; i++) { const x = xAt(i), y = yRichness(vals[i].richness); i ? g.lineTo(x, y) : g.moveTo(x, y); }
+      g.stroke();
+      g.strokeStyle = SHANNON_COLOR; g.lineWidth = H < 70 ? 1.2 : 1.8; g.beginPath();
+      for (let i = 0; i < vals.length; i++) { const x = xAt(i), y = yShannon(vals[i].shannon); i ? g.lineTo(x, y) : g.moveTo(x, y); }
+      g.stroke();
     }
   }
   function drawHelix(pc) {
@@ -3973,15 +4027,16 @@
     }
     return root;
   }
-  // Size the canvas to the tree before drawing it: a run with 16 lineages needs 16 legible rows, and
-  // a fixed height either squashes them into each other or wastes half the panel on a two-branch run.
+  // Size the down-facing tree by adaptation depth. Leaves spread across the available width, while
+  // deeper histories receive enough vertical room for their mutation labels and descending branches.
   function drawClado(canvas, rec) {
     if (!canvas || !rec) return;
     const root = buildClado(rec);
-    let leaves = 0;
-    if (root) (function count(n) { leaves += n.leaves.length; n.children.forEach(count); })(root);
+    let leaves = 0, maxDepth = 0;
+    if (root) (function count(n) { leaves += n.leaves.length; maxDepth = Math.max(maxDepth, n.depth); n.children.forEach(count); })(root);
     const logical = logicalCanvasSize(canvas);
-    const surface = prepareHiDpiCanvas(canvas, logical.width, clamp(leaves*22 + 34, 110, 520));
+    const labelBand = leaves > 20 ? 100 : 86;
+    const surface = prepareHiDpiCanvas(canvas, logical.width, clamp(maxDepth*48 + labelBand + 32, 170, 620));
     renderClado(surface.context, surface.width, surface.height, rec);
   }
   function renderClado(g, W, H, rec) {
@@ -3997,26 +4052,28 @@
     // peak population of each lineage, so a band that briefly existed doesn't look like a dynasty
     const peak = {};
     for (const s of (rec.hist || [])) { const b = sampleBuckets(s); for (const k in b) peak[k] = Math.max(peak[k] || 0, b[k]); }
-    // rows: one per terminal lineage, in depth-first order so the tree doesn't cross itself
-    const rows = [];
+    // tips: one per terminal lineage, in depth-first order so branches fan downward without crossing
+    const tips = [];
     let maxDepth = 0;
     (function walk(n) {
       maxDepth = Math.max(maxDepth, n.depth);
-      for (const k of n.leaves) rows.push({ node: n, key: k });
+      for (const k of n.leaves) tips.push({ node: n, key: k });
       for (const c of n.children) walk(c);
     })(root);
-    if (!rows.length) return;
-    const padL = 16, padR = 128, padT = 14, padB = 12;
-    const xAt = (d) => padL + (maxDepth ? d/maxDepth : 0)*(W - padL - padR);
-    const rowH = Math.min(26, (H - padT - padB)/Math.max(1, rows.length));
-    rows.forEach((r, i) => { r.y = padT + rowH*(i + 0.5); });   // every terminal lineage gets its own row
-    const yOf = new Map();                                       // a node sits at the middle of its subtree
+    if (!tips.length) return;
+    const padL = 22, padR = 84, padT = 18, labelBand = tips.length > 20 ? 98 : 82;
+    const tipY = H - labelBand, treeBottom = tipY - 10;
+    const span = Math.max(1, W - padL - padR);
+    tips.forEach((tip, i) => { tip.x = padL + span*(i + 0.5)/tips.length; });
+    const xOf = new Map(), rangeOf = new Map();                  // a node sits over the middle of its descendants
     (function place(n) {
       for (const c of n.children) place(c);
-      const ys = rows.filter((r) => r.node === n).map((r) => r.y);
-      for (const c of n.children) ys.push(yOf.get(c));
-      yOf.set(n, ys.length ? (Math.min(...ys) + Math.max(...ys))/2 : padT);
+      const xs = tips.filter((tip) => tip.node === n).map((tip) => tip.x);
+      for (const c of n.children) { const range = rangeOf.get(c); xs.push(range[0], range[1]); }
+      const range = xs.length ? [Math.min(...xs), Math.max(...xs)] : [W/2, W/2];
+      rangeOf.set(n, range); xOf.set(n, (range[0] + range[1])/2);
     })(root);
+    const yAt = (depth) => padT + (maxDepth ? depth/maxDepth : 0)*(treeBottom - padT);
     // COLOUR HAS TO TRACK THE CHART. The leaves already carry their lineage's colour (the same
     // levelColor the stacked bands use), but the BRANCHES were drawn in the colour of the GENE that
     // split them — a second, unrelated colour system — so nothing traced from a band on the chart
@@ -4038,43 +4095,39 @@
       const k = repOf.get(n);
       return k == null ? "rgba(255,255,255,.3)" : levelColor(k >> 6, k & 63);
     };
-    // DIAGONAL branches: a straight line from parent to child, so the tree reads as descent with
-    // divergence rather than as a plumbing diagram.
+    // DIAGONAL branches now descend from the founder at the top. Gene labels stay horizontal so
+    // left-leaning branches never turn their text upside down.
     g.lineWidth = 2; g.font = "9.5px 'Trebuchet MS', sans-serif"; g.textAlign = "center";
     (function draw(n) {
-      const x0 = xAt(n.depth), y0 = yOf.get(n);
+      const x0 = xOf.get(n), y0 = yAt(n.depth);
       for (const c of n.children) {
-        const x1 = xAt(c.depth), y1 = yOf.get(c);
+        const x1 = xOf.get(c), y1 = yAt(c.depth);
         g.strokeStyle = lineColor(c);                   // the LINEAGE's colour — same as its band
         g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
         g.fillStyle = c.color || "#9fc3ba";             // the GENE's colour, for the label only
-        g.save();                                       // label rides ON the branch, along its slope
-        g.translate((x0 + x1)/2, (y0 + y1)/2);
-        g.rotate(Math.atan2(y1 - y0, x1 - x0));
-        g.fillText(c.abbr, 0, -5);                      // the adaptation that split this branch off
-        g.restore();
+        g.fillText(c.abbr, (x0 + x1)/2, (y0 + y1)/2 - 5); // adaptation that split this branch off
         draw(c);
       }
     })(root);
     // the founder: the genome everything here descends from — one carbohydrase
-    const ry = yOf.get(root);
+    const rx = xOf.get(root), ry = yAt(0);
     g.fillStyle = RESOURCES[2].color;
-    g.beginPath(); g.arc(xAt(0), ry, 4, 0, TAU); g.fill();
-    g.font = "bold 9.5px 'Trebuchet MS', sans-serif"; g.textAlign = "left"; g.fillText("C1", xAt(0) - 4, ry - 11);
-    // leaves: the colored band from the chart above, so the two plots read as one thing
-    g.textAlign = "left"; g.font = "10.5px 'Trebuchet MS', sans-serif";
-    for (const r of rows) {
-      const xn = xAt(r.node.depth), y = r.y;
-      const mask = r.key >> 6, tier = r.key & 63, col = levelColor(mask, tier);
-      if (Math.abs(y - yOf.get(r.node)) > 0.5) {          // stub across to its own row — in ITS colour
-        g.strokeStyle = col; g.lineWidth = 1.5;
-        g.beginPath(); g.moveTo(xn, yOf.get(r.node)); g.lineTo(xn, y); g.stroke();
-      }
-      g.fillStyle = col; g.fillRect(xn + 6, y - 5, 10, 10);   // the same color as its band on the chart above
+    g.beginPath(); g.arc(rx, ry, 4, 0, TAU); g.fill();
+    g.font = "bold 9.5px 'Trebuchet MS', sans-serif"; g.textAlign = "center"; g.fillText("C1", rx, ry - 10);
+    // Terminal lineages align along the bottom. A thin colored continuation connects a lineage that
+    // stopped adapting early to its present-day tip without pretending another mutation occurred.
+    g.font = "10.5px 'Trebuchet MS', sans-serif";
+    for (const tip of tips) {
+      const xn = xOf.get(tip.node), yn = yAt(tip.node.depth), x = tip.x;
+      const mask = tip.key >> 6, tier = tip.key & 63, col = levelColor(mask, tier);
+      g.strokeStyle = col; g.lineWidth = 1.5;
+      g.beginPath(); g.moveTo(xn, yn); g.lineTo(x, tipY); g.stroke();
+      g.fillStyle = col; g.fillRect(x - 5, tipY - 5, 10, 10); // same color as its band on the chart above
       g.fillStyle = "rgba(215,245,238,.85)";
-      // "peak 12" was ambiguous — peak WHAT? It's the most cells this lineage ever had at one moment.
-      const n = peak[r.key] || 0;
-      g.fillText(`${n} cell${n === 1 ? "" : "s"} at peak` + (r.node.depth ? "" : " · founder, never adapted"), xn + 21, y);
+      const n = peak[tip.key] || 0;
+      g.save(); g.translate(x + 4, tipY + 9); g.rotate(Math.PI*0.34); g.textAlign = "left";
+      g.fillText(`${n} cell${n === 1 ? "" : "s"} at peak` + (tip.node.depth ? "" : " · founder, never adapted"), 0, 0);
+      g.restore();
     }
   }
   // Hovering a COLORED BAND on a run chart: that band is one lineage (an ecotype at an adaptation
@@ -4216,6 +4269,11 @@
       const mortSurface = prepareHiDpiCanvas(el.detailMortChart);
       annotateSub(mortSurface.context, mortSurface.width, mortSurface.height, rec.hist || [], rec.upgrades, rec.dur, rec.roleSwaps, 1);
     }
+    if (el.detailDiversityChart) {
+      const diversitySurface = prepareHiDpiCanvas(el.detailDiversityChart);
+      annotateDiversity(diversitySurface.context, diversitySurface.width, diversitySurface.height,
+        rec.hist || [], rec.upgrades, rec.dur, rec.roleSwaps);
+    }
     if (el.detailClado) drawClado(el.detailClado, rec);
     if (el.detailStats) el.detailStats.innerHTML = runStatsHtml(rec.hist || [], rec.upgrades);
     if (el.detailTitle) el.detailTitle.innerHTML =
@@ -4231,7 +4289,7 @@
   }
   // `liveDetail` = the PAUSE screen. Pausing to be shown a table of other people's scores is the
   // wrong answer to "how am I doing?" — what you want mid-run is your OWN run: the ecotype chart,
-  // the food/mortality panel, the phylogeny, the genome. That's the same page the leaderboard opens
+  // the food/mortality/diversity panel, the phylogeny, the genome. That's the same page the leaderboard opens
   // for a saved run, so pause just opens it on the live one. "← Back to list" from there still takes
   // you to the board, so nothing is lost.
   function showScores(opts) {
