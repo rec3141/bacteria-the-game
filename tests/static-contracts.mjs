@@ -56,12 +56,24 @@ assert.doesNotMatch(game, /geo-mean lineage|geoMeanLineage/,
 assert.match(game, /<span id="chartTitle">ecotype abundance vs time<\/span>/,
   "the live chart must retain the requested plain-language title in either scale");
 const subChartRenderer = game.slice(game.indexOf("function renderSubChart"), game.indexOf("function drawHelix"));
-assert.match(subChartRenderer, /const vals = hist\.map\(\(s\) => subVals\(s\)\.slice\(\)\)/,
+assert.match(subChartRenderer, /const vals = hist\.map\(\(s\) => subVals\(s, mode\)\.slice\(\)\)/,
   "the lower chart must render the values recorded at each sample");
 assert.doesNotMatch(subChartRenderer, /run\[k\] \+=|vals\[i\]\[k\] = run\[k\]/,
   "cause-of-mortality samples must not be accumulated a second time by the renderer");
 assert.match(game, /mort: state\.mortLive[\s\S]*?state\.mortLive = \[0, 0, 0, 0\]/,
   "live mortality counters must reset after each instantaneous sample");
+assert.match(help, /id="analysisSubChart"[\s\S]*?Cause of mortality[\s\S]*?id="analysisMortChart"/,
+  "the completion analysis must show food and mortality as separate charts");
+assert.match(help, /id="detailSubChart"[\s\S]*?Cause of mortality[\s\S]*?id="detailMortChart"/,
+  "saved-run detail must show food and mortality as separate charts");
+assert.match(game, /annotateSub\([^\n]*state\.roleSwaps, 0\)[\s\S]*?annotateSub\([^\n]*state\.roleSwaps, 1\)/,
+  "the completion screen must render fixed food and mortality modes together");
+assert.match(game, /annotateSub\([^\n]*rec\.roleSwaps, 0\)[\s\S]*?annotateSub\([^\n]*rec\.roleSwaps, 1\)/,
+  "score detail must render fixed food and mortality modes together");
+assert.doesNotMatch(game, /analysisSubChart\.addEventListener\("click"|detailSubChart\.addEventListener\("click"/,
+  "expanded analysis charts must not hide either dataset behind a click toggle");
+assert.match(game, /if \(el_subchart\) el_subchart\.addEventListener\("click"[\s\S]*?toggleSubMode/,
+  "the compact live chart must retain its click-to-swap behavior");
 
 const tutorialStart = game.indexOf("const TUT_STEPS = [");
 const tutorialEnd = game.indexOf("function startTutorial()", tutorialStart);
@@ -177,5 +189,11 @@ assert.match(help,
   "the main menu must lead with a concise, player-first gameplay hook");
 assert.doesNotMatch(help, /A drop of seawater is a world/,
   "the old explanatory main-menu copy must not return");
+assert.match(help, /<b id="colony">1<\/b>&#8202;active · <b id="cysts">0<\/b>&#8202;cysts/,
+  "the top HUD must distinguish active bacteria from dormant cysts");
+assert.match(game, /for \(const cell of cells\) if \(cell\.alive\) \{ if \(cell\.cyst\) cystCount\+\+; else activeCount\+\+; \}/,
+  "the HUD counters must partition the living population by dormancy");
+assert.match(game, /if \(best\.cyst\) \{ best\.cyst = false; best\.energy = Math\.max\(best\.energy, CFG\.cell\.cystReviveEnergy\); \}/,
+  "a cyst selected after player death must immediately resuscitate rather than remain unplayable");
 
 console.log(`Static contracts OK: ${sounds.size} sounds and ${controls.length} control${controls.length === 1 ? "" : "s"} checked.`);

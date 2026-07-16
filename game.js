@@ -259,7 +259,7 @@
 
   const el = {
     energyFill: document.getElementById("energyFill"), energyTxt: document.getElementById("energyTxt"),
-    gen: document.getElementById("gen"), score: document.getElementById("score"), colony: document.getElementById("colony"), colonyWord: document.getElementById("colonyWord"),
+    gen: document.getElementById("gen"), score: document.getElementById("score"), colony: document.getElementById("colony"), cysts: document.getElementById("cysts"),
     time: document.getElementById("time"), roleTag: document.getElementById("roleTag"),
     genome: document.getElementById("genome"), helix: document.getElementById("helix"),
     title: document.getElementById("title"), over: document.getElementById("over"), chartwrap: document.getElementById("chartwrap"), hud: document.getElementById("hud"),
@@ -317,10 +317,12 @@
     detailStats: document.getElementById("detailStats"), detailTitle: document.getElementById("detailTitle"),
     detailBack: document.getElementById("detailBack"),
     analysisSubChart: document.getElementById("analysisSubChart"), detailSubChart: document.getElementById("detailSubChart"),
+    analysisMortChart: document.getElementById("analysisMortChart"), detailMortChart: document.getElementById("detailMortChart"),
     analysisSubLabel: document.getElementById("analysisSubLabel"), detailSubLabel: document.getElementById("detailSubLabel"),
   };
   const actx = el.analysisChart ? el.analysisChart.getContext("2d") : null;
   const asctx = el.analysisSubChart ? el.analysisSubChart.getContext("2d") : null;
+  const amctx = el.analysisMortChart ? el.analysisMortChart.getContext("2d") : null;
   el.enz.forEach((e, i) => { if (e) e.style.setProperty("--gc", RESOURCES[i].color); }); // per-gene color (used when owned)
   if (el.abilChemo) el.abilChemo.style.setProperty("--gc", "#ffd24a"); // chemotaxis = gold
   if (el.abilCrispr) el.abilCrispr.style.setProperty("--gc", "#c39bff"); // CRISPR = violet
@@ -1884,6 +1886,9 @@
   // release button and the genome row can never disagree about what "carb" looks like
   const TOXIN_UI = "#f05ad0";
   const deployColor = (id) => (id === AB ? TOXIN_UI : RESOURCES[id].color);
+  const deployName = (id) => id === AB ? "Antibiotic" :
+    RESOURCES[id].enzyme[0].toUpperCase() + RESOURCES[id].enzyme.slice(1);
+  function announceDeployable(id) { showAnnouncement(`${deployName(id)} loaded`, deployColor(id), "↻"); }
   function cycleEnzyme(dir) {                // dir -1 steps back; default forward
     if (!state || !state.running) return;
     const c = controlledCell(); if (!c) return;
@@ -1891,6 +1896,7 @@
     const step = dir === -1 ? -1 : 1;
     let cur = owned.indexOf(state.activeEnzyme); if (cur < 0) cur = 0;
     state.activeEnzyme = owned[(cur + step + owned.length) % owned.length];
+    announceDeployable(state.activeEnzyme);
     Audio.play("eat", 0.3);
   }
   // directly load a specific deployable by tapping its gene (id 0-2 enzymes, 3 antibiotic); ignored if not owned
@@ -1899,7 +1905,7 @@
     const c = controlledCell(); if (!c) return;
     if (!ownedDeployables(c).includes(id)) return;
     if (state.activeEnzyme === id) return;
-    state.activeEnzyme = id; Audio.play("eat", 0.3);
+    state.activeEnzyme = id; announceDeployable(id); Audio.play("eat", 0.3);
   }
   // hand control to a DIFFERENT lineage — cycle through the distinct generations (ecotype+tier) present,
   // so you can shepherd several populations at different adaptation tiers (diversity = virus resilience).
@@ -1909,12 +1915,19 @@
   function lineageReps() {
     const reps = new Map();
     for (const c of cells) { if (!c.alive || c.cyst) continue;
-      const k = ecoMask(c)*64 + upgradeTier(c), r = reps.get(k);
+      const k = lineageKey(c), r = reps.get(k);
       if (!r || c.energy > r.energy) reps.set(k, c);
     }
     return { reps, ks: [...reps.keys()].sort((a, b) => a - b) };
   }
+  const lineageKey = (c) => ecoMask(c)*64 + upgradeTier(c);
   const lineageKeyColor = (k) => levelColor(Math.floor(k/64), k % 64); // key → the color it's drawn in
+  function announceLineage(c) {
+    if (!c) return;
+    const key = lineageKey(c), population = cells.reduce((n, x) => n + (x.alive && lineageKey(x) === key ? 1 : 0), 0);
+    showAnnouncement(`Lineage · ${population.toLocaleString()} ${population === 1 ? "bacterium" : "bacteria"}`,
+      lineageKeyColor(key), "●");
+  }
   function switchControl(dir) {              // dir -1 steps back through the lineages; default forward
     if (!state || !state.running) return;
     const step = dir === -1 ? -1 : 1;
@@ -1923,6 +1936,8 @@
       if (i >= 0 && predators.length > 1) {
         predators[i].controlled = false;
         predators[(i + step + predators.length) % predators.length].controlled = true;
+        const population = predators.reduce((n, p) => n + (!p.dead ? 1 : 0), 0);
+        showAnnouncement(`Protists · ${population.toLocaleString()}`, PROTIST_COLOR, "●");
         Audio.play("hit", 0.5);
       }
       return;
@@ -1931,7 +1946,7 @@
     const { reps, ks } = lineageReps();
     let target = null;
     if (reps.size >= 2) {                    // cycle to the next distinct lineage
-      let i = ks.indexOf(ecoMask(cur)*64 + upgradeTier(cur)); if (i < 0) i = 0;
+      let i = ks.indexOf(lineageKey(cur)); if (i < 0) i = 0;
       target = reps.get(ks[(i + step + ks.length) % ks.length]);
     } else {                                 // only one lineage — jump to the farthest other cell (a separate cluster)
       let bd = -1; for (const c of cells) { if (c === cur || !c.alive || c.cyst) continue;
@@ -1940,6 +1955,7 @@
     if (target && target !== cur) {
       cur.controlled = false; target.controlled = true;
       cam.x = target.x; cam.y = target.y;   // snap the camera to the new cell
+      announceLineage(target);
       Audio.play("eat", 0.5);
     }
   }
@@ -2045,7 +2061,7 @@
   // Shared annotated renderers (game-over screen + high-score detail view): ecotype and substrate charts,
   // both with adaptation markers so you can read "new enzyme → its substrate gets eaten → colony booms".
   function annotateRun(g, W, H, hist, upgrades, dur, swaps) { renderEcoChart(g, W, H, hist); drawAdaptationMarkers(g, W, H, upgrades, dur); drawRoleSwaps(g, W, H, swaps, dur); }
-  function annotateSub(g, W, H, hist, upgrades, dur, swaps) { renderSubChart(g, W, H, hist); drawAdaptationMarkers(g, W, H, upgrades, dur); drawRoleSwaps(g, W, H, swaps, dur); }
+  function annotateSub(g, W, H, hist, upgrades, dur, swaps, mode) { renderSubChart(g, W, H, hist, undefined, mode); drawAdaptationMarkers(g, W, H, upgrades, dur); drawRoleSwaps(g, W, H, swaps, dur); }
   function runStatsHtml(hist, upgrades) {
     let peakCol = 0, peakP = 0, peakV = 0;
     for (const s of hist) { let t = 0; for (let i = 0; i < 8; i++) t += s.eco[i]; if (t > peakCol) peakCol = t; if (s.p > peakP) peakP = s.p; if ((s.v||0) > peakV) peakV = s.v; }
@@ -2057,9 +2073,12 @@
     annotateRun(ecoSurface.context, ecoSurface.width, ecoSurface.height, state.fullHist, state.upgrades, state.elapsed, state.roleSwaps);
     if (asctx) {
       const subSurface = prepareHiDpiCanvas(el.analysisSubChart, null, null, asctx);
-      annotateSub(subSurface.context, subSurface.width, subSurface.height, state.fullHist, state.upgrades, state.elapsed, state.roleSwaps);
+      annotateSub(subSurface.context, subSurface.width, subSurface.height, state.fullHist, state.upgrades, state.elapsed, state.roleSwaps, 0);
     }
-    if (el.analysisSubLabel) el.analysisSubLabel.textContent = subLabelText();
+    if (amctx) {
+      const mortSurface = prepareHiDpiCanvas(el.analysisMortChart, null, null, amctx);
+      annotateSub(mortSurface.context, mortSurface.width, mortSurface.height, state.fullHist, state.upgrades, state.elapsed, state.roleSwaps, 1);
+    }
     if (el.analysisClado) drawClado(el.analysisClado, analysisRec());
     if (el.analysisStats) el.analysisStats.innerHTML = runStatsHtml(state.fullHist, state.upgrades);
   }
@@ -3160,9 +3179,8 @@
   // cause-of-mortality series (index order matches MORT_IDX: grazing / viral / starvation / antibiotic)
   const MORT_COLORS = [PROTIST_COLOR, VIRUS_COLOR, CYST_COLOR, TOXIN_COLOR];
   const MORT_LABELS = ["grazing", "viral", "starvation", "antibiotic"];
-  function subVals(s) { return subMode ? (s && s.mort ? s.mort : [0,0,0,0]) : (s && s.sub ? s.sub : [0,0,0]); }
-  function subColors() { return subMode ? MORT_COLORS : RESOURCES.map((r) => r.color); }
-  function subLabelText() { return subMode ? "Cause of mortality (grazing · viral · starvation · antibiotic)" : "Food available (lipid · protein · carb)"; }
+  function subVals(s, mode = subMode) { return mode ? (s && s.mort ? s.mort : [0,0,0,0]) : (s && s.sub ? s.sub : [0,0,0]); }
+  function subColors(mode = subMode) { return mode ? MORT_COLORS : RESOURCES.map((r) => r.color); }
   function updateSubLegend() {
     if (!el_subchartlegend) return;
     const items = subMode
@@ -3292,21 +3310,21 @@
   }
   // Second chart: available food of each resource type stacked over time. Watch a band get eaten down right
   // after you acquire its enzyme — that consumption is what fuels the colony boom you see on the ecotype chart.
-  function renderSubChart(g, W, H, hist, denom) {
+  function renderSubChart(g, W, H, hist, denom, mode = subMode) {
     g.clearRect(0, 0, W, H);
     g.fillStyle = CHART.surface; g.fillRect(0, 0, W, H);
-    const colors = subColors(), K = colors.length;
+    const colors = subColors(mode), K = colors.length;
     // Both food and mortality are instantaneous sample values. Mortality counters already reset
     // after every sample, so accumulating them again here would turn this into an ever-rising total.
-    const vals = hist.map((s) => subVals(s).slice());
-    let maxY = subMode ? 1 : 10;
+    const vals = hist.map((s) => subVals(s, mode).slice());
+    let maxY = mode ? 1 : 10;
     for (const v of vals) { let tot = 0; for (let k = 0; k < K; k++) tot += v[k] || 0; if (tot > maxY) maxY = tot; }
     const n = denom || Math.max(hist.length, 2), pad = H < 70 ? 8 : 14;
     const xAt = (i) => i/(n-1)*W, yAt = (v) => H - (v/maxY)*(H-pad) - 2;
     g.strokeStyle = "rgba(255,255,255,0.06)"; g.lineWidth = 1;
     for (let k = 1; k <= 3; k++) { const y = H - k/4*(H-pad) - 2; g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }
     g.fillStyle = "rgba(215,245,238,0.5)"; g.font = "10px 'Trebuchet MS', sans-serif"; g.textAlign = "left";
-    g.fillText(String(Math.round(maxY)) + (subMode ? " deaths" : ""), 3, 10); g.fillText("0", 3, H - 3);
+    g.fillText(String(Math.round(maxY)) + (mode ? " deaths" : ""), 3, 10); g.fillText("0", 3, H - 3);
     if (vals.length > 1) {
       const last = vals.length - 1, cum = vals.map(() => 0);
       for (let k = 0; k < K; k++) {
@@ -3906,9 +3924,12 @@
     annotateRun(ecoSurface.context, ecoSurface.width, ecoSurface.height, rec.hist || [], rec.upgrades, rec.dur, rec.roleSwaps);
     if (el.detailSubChart) {
       const subSurface = prepareHiDpiCanvas(el.detailSubChart);
-      annotateSub(subSurface.context, subSurface.width, subSurface.height, rec.hist || [], rec.upgrades, rec.dur, rec.roleSwaps);
+      annotateSub(subSurface.context, subSurface.width, subSurface.height, rec.hist || [], rec.upgrades, rec.dur, rec.roleSwaps, 0);
     }
-    if (el.detailSubLabel) el.detailSubLabel.textContent = subLabelText();
+    if (el.detailMortChart) {
+      const mortSurface = prepareHiDpiCanvas(el.detailMortChart);
+      annotateSub(mortSurface.context, mortSurface.width, mortSurface.height, rec.hist || [], rec.upgrades, rec.dur, rec.roleSwaps, 1);
+    }
     if (el.detailClado) drawClado(el.detailClado, rec);
     if (el.detailStats) el.detailStats.innerHTML = runStatsHtml(rec.hist || [], rec.upgrades);
     if (el.detailTitle) el.detailTitle.innerHTML =
@@ -4028,22 +4049,24 @@
   function pauseGame() { if (!state || !state.running || paused) return; paused = true; releaseStick(); showScores({ liveDetail: true }); }
   function resumeGame() { paused = false; hideScores(); }
   function endGame() { if (!state || !state.running || state.demo) return; paused = false; hideScores(); gameOver(); } // the demo has no score to end
+  const ANNOUNCEMENT_GAP = 86, ANNOUNCEMENT_MS = 1350;
   let _toastTimer = null;
-  function positionToast() { // anchor the announcement just above the controlled cell (was fixed at the top, over the HUD)
-    const pc = controlledCell(); if (!pc || !el.toast) return;
+  function positionToast() { // leave clear water between the bubble and whichever organism is controlled
+    const pc = controlledEntity(); if (!pc || !el.toast) return;
     const sc = el.game && el.game.clientWidth ? el.game.clientWidth / VIEW_W : 1; // canvas is CSS-scaled on small screens
     el.toast.style.left = Math.round(sx(pc.x) * sc) + "px";
-    el.toast.style.top = Math.round(Math.max(6, sy(pc.y) * sc - 52)) + "px";
+    el.toast.style.top = Math.round(Math.max(6, sy(pc.y) * sc - ANNOUNCEMENT_GAP)) + "px";
   }
-  function showUpgradeToast(msg, color) {
+  function showAnnouncement(msg, color, icon) {
     if (!el.toast) return;
-    el.toast.textContent = msg;
-    if (color) { el.toast.style.color = color; el.toast.style.borderColor = color; }
+    el.toast.textContent = msg; el.toast.dataset.icon = icon || "";
+    el.toast.style.color = color || "#ffe9a8"; el.toast.style.borderColor = color || "#ffd24a";
     positionToast();
     el.toast.classList.add("show");
     if (_toastTimer) clearTimeout(_toastTimer);
-    _toastTimer = setTimeout(() => el.toast.classList.remove("show"), 2600);
+    _toastTimer = setTimeout(() => el.toast.classList.remove("show"), ANNOUNCEMENT_MS);
   }
+  function showUpgradeToast(msg, color) { showAnnouncement(msg, color, "🧬"); }
   function togglePause() {
     if (paused) resumeGame();
     else if (state && state.running && el.title.classList.contains("hidden") && el.over.classList.contains("hidden")) pauseGame();
@@ -4121,7 +4144,7 @@
 
     if (el.tLin && c) {
       const { ks } = lineageReps();
-      let j = ks.indexOf(ecoMask(c)*64 + upgradeTier(c)); if (j < 0) j = 0;
+      let j = ks.indexOf(lineageKey(c)); if (j < 0) j = 0;
       const multi = ks.length > 1;
       paintRolo(el.tLin, levelColor(ecoMask(c), upgradeTier(c)),
         multi ? lineageKeyColor(ks[(j - 1 + ks.length) % ks.length]) : null,
@@ -4137,9 +4160,11 @@
     const full = protist ? CFG.predator.reproEnergy : CFG.cell.divideThreshold; // "full" = ready to divide
     el.energyFill.style.width = Math.min(100, e/full*100) + "%";
     el.energyTxt.textContent = Math.round(e);
-    el.colony.textContent = cells.length; el.gen.textContent = state.gen; el.score.textContent = Math.round(state.score);
+    let activeCount = 0, cystCount = 0;
+    for (const cell of cells) if (cell.alive) { if (cell.cyst) cystCount++; else activeCount++; }
+    el.colony.textContent = activeCount; if (el.cysts) el.cysts.textContent = cystCount;
+    el.gen.textContent = state.gen; el.score.textContent = Math.round(state.score);
     if (el.time) el.time.textContent = clockStr(); // shows the in-game time of day, not raw elapsed
-    if (el.colonyWord) el.colonyWord.textContent = cells.length === 1 ? "bacterium" : "bacteria";
     // as a protist there's no genome to show — hide the strand and flag the role instead
     if (el.genome) el.genome.style.display = protist ? "none" : "";
     if (el.roleTag) el.roleTag.classList.toggle("hidden", !protist);
@@ -4929,8 +4954,6 @@
   if (el.detailChart) el.detailChart.addEventListener("click", () => { chartLog = !chartLog; if (_detailRec) openScoreDetail(_detailRank, _detailRec); });
   // click the lower chart to swap food-available ↔ cause-of-mortality (live chart is desktop-only: tap folds it on mobile)
   if (el_subchart) el_subchart.addEventListener("click", () => { if (!document.body.classList.contains("touch")) toggleSubMode(); });
-  if (el.analysisSubChart) el.analysisSubChart.addEventListener("click", () => { toggleSubMode(); drawAnalysis(); });
-  if (el.detailSubChart) el.detailSubChart.addEventListener("click", () => { toggleSubMode(); if (_detailRec) openScoreDetail(_detailRank, _detailRec); });
   updateSubLegend();
   // Hover a colored band on either run chart → that lineage's own genome, as a circos ring.
   bindLineageHover(el.analysisChart, analysisRec);

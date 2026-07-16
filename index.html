@@ -99,8 +99,8 @@
   #subchartlegend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
   #subchartlegend span { text-transform: capitalize; }
   #subchartTitle { margin-left: auto; opacity: .55; font-style: italic; text-transform: none; }
-  #analysisSubChart { display: block; width: 100%; height: 66px; border-radius: 6px; }
-  #detailSubChart { display: block; width: 100%; height: 90px; border-radius: 6px; }
+  #analysisSubChart, #analysisMortChart { display: block; width: 100%; height: 66px; border-radius: 6px; }
+  #detailSubChart, #detailMortChart { display: block; width: 100%; height: 90px; border-radius: 6px; }
   .alabel.sublabel { margin-top: 8px; opacity: .5; text-transform: none; letter-spacing: 0; }
 
   /* Overlays (title / death / win) */
@@ -128,7 +128,7 @@
   }
   button:active { transform: translateY(3px); box-shadow: 0 1px 0 #2a9d84; }
   .hidden { display: none !important; }
-  /* upgrade announcement bubble */
+  /* brief in-world announcement bubble: adaptations, loaded genes, and lineage changes */
   #toast {
     position: absolute; top: 50%; left: 50%; z-index: 5;
     transform: translate(-50%, -100%) translateY(-10px) scale(.96);
@@ -136,7 +136,7 @@
     padding: 8px 18px; border-radius: 22px; font-weight: bold; font-size: 14px;
     white-space: nowrap; pointer-events: none; opacity: 0;
     box-shadow: 0 4px 18px rgba(0,0,0,.5);
-    transition: opacity .25s ease, transform .25s ease;
+    transition: opacity .16s ease, transform .16s ease;
   }
   #roleTag { align-self: center; font-size: 12px; font-weight: bold; letter-spacing: .5px;
     color: #ffd6ec; background: rgba(255,158,192,.16); border: 1px solid rgba(255,158,192,.5);
@@ -155,7 +155,7 @@
     padding: 5px 14px; border-radius: 16px; font-size: 12px; font-weight: bold;
     transition: opacity .2s ease, transform .2s ease; }
   #audioFlash.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-  #toast::before { content: "🧬 "; }
+  #toast::before { content: attr(data-icon); margin-right: 6px; }
   #toast.show { opacity: 1; transform: translate(-50%, -100%) translateY(0) scale(1); }
   .btnrow { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; justify-content: center; }
   button.ghost { background: transparent; color: var(--accent); box-shadow: none;
@@ -552,7 +552,7 @@
     #help, #science { z-index: 60; } /* stay above the screen they were opened from */
     .screen h1 { font-size: 30px; }
     #title .lede { font-size: 13px; line-height: 1.45; }
-    #analysisChart { height: 128px; } #analysisSubChart { height: 50px; }
+    #analysisChart { height: 128px; } #analysisSubChart, #analysisMortChart { height: 50px; }
     #analysisWrap { padding: 6px 8px; }
     #helpBody, #sciBody, #scoresList { max-height: 62vh; max-height: 62dvh; }
   }
@@ -662,7 +662,7 @@
       <div class="hudrow topline">
         <div class="bar"><span id="energyFill"></span></div>
         <span id="energyTxt" class="stat">0</span>
-        <span class="stats-inline"><b id="colony">1</b>&#8202;<span id="colonyWord">bacterium</span> · gen&#8202;<b id="gen">1</b> · <b id="score">0</b>&#8202;cal · <b id="time">0:00</b></span>
+        <span class="stats-inline"><b id="colony">1</b>&#8202;active · <b id="cysts">0</b>&#8202;cysts · gen&#8202;<b id="gen">1</b> · <b id="score">0</b>&#8202;cal · <b id="time">0:00</b></span>
         <span id="roleTag" class="hidden">🛡️ PROTIST</span>
       </div>
       <div class="hudrow genome-row">
@@ -846,6 +846,8 @@
         <canvas id="analysisChart" width="900" height="200"></canvas>
         <div class="alabel sublabel" id="analysisSubLabel">Food available (lipid · protein · carb)</div>
         <canvas id="analysisSubChart" width="900" height="96"></canvas>
+        <div class="alabel sublabel">Cause of mortality (grazing · viral · starvation · antibiotic)</div>
+        <canvas id="analysisMortChart" width="900" height="96"></canvas>
         <div class="alabel sublabel">Phylogeny — how each lineage descends from the founder</div>
         <canvas id="analysisClado" width="900" height="190"></canvas>
         <div id="analysisStats"></div>
@@ -870,6 +872,8 @@
         <canvas id="detailChart" width="900" height="240"></canvas>
         <div class="alabel sublabel" id="detailSubLabel">Food available (lipid · protein · carb)</div>
         <canvas id="detailSubChart" width="900" height="110"></canvas>
+        <div class="alabel sublabel">Cause of mortality (grazing · viral · starvation · antibiotic)</div>
+        <canvas id="detailMortChart" width="900" height="110"></canvas>
         <div class="alabel sublabel">Phylogeny — how each lineage descends from the founder</div>
         <canvas id="detailClado" width="900" height="200"></canvas>
         <div class="alabel sublabel">Genome — adaptations clockwise in the order they arrived</div>
