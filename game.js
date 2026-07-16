@@ -183,10 +183,10 @@
       latent: [9, 15],      // seconds from green infection to lysis
       greenSeed: [5, 9], greenFloor: 27, seedBatch: 3, // reservoir: every greenSeed s, top the sampled lineage up (a few at a time) to ≥greenFloor phages tuned to ITS tier
       hostTolerance: 2,     // kill-the-winner: a phage infects only cells within this many upgrade-tiers of its host
-      adsorbBase: 0.35,     // per-ENCOUNTER probability a matched green phage actually adsorbs (was effectively 1.0)
-      superinfDecay: 0.7,   // each virion already aboard multiplies further adsorption odds by this (superinfection resistance)
+      adsorbBase: 0.35,     // adsorption RATE per second of contact for a matched green phage (dt-scaled, not per-frame)
+      superinfDecay: 0.7,   // each virion already aboard multiplies further adsorption rate by this (superinfection resistance)
       maxLoad: 6,           // most virions one cell can carry at once — the multiplicity-of-infection ceiling
-      burstPerLoad: 3,      // extra virions released at lysis for every virion above the first (heavy load → bigger burst)
+      burstPerLoad: 1,      // extra virions released at lysis for every virion above the first (heavy load → slightly bigger burst)
       twitchAdsorbMult: 2.2,// pili ARE the phage receptor: they multiply a twitching cell's adsorption probability
       twitchHostBonus: 1,   // ...and widen its kill-the-winner window by this many tiers, so upgrading sheds pursuers less easily
       goldLife: [90, 140],  // gold phage lingers far longer than green — you can chase it down
@@ -2960,12 +2960,14 @@
               if (c.controlled) tutDid("atePhage"); burst(ph.x, ph.y, CRISPR_COLOR, 8); break; } // CRISPR harvests the immune virus for energy
             continue;
           }
-          // Probabilistic adsorption (was a flat 100%): twitching pili raise the odds, and each virion already
-          // aboard lowers them (superinfection resistance). A bounce leaves the phage ALIVE to try again, so
-          // multiplicity of infection builds over repeated encounters rather than one-and-done.
-          const p = clamp(CFG.phage.adsorbBase * (c.twitching ? CFG.phage.twitchAdsorbMult : 1)
-                          * Math.pow(CFG.phage.superinfDecay, c.viralLoad || 0), 0, 1);
-          if (Math.random() >= p) continue;          // bounced this encounter — phage drifts on, still infectious
+          // Adsorption is a RATE per second of contact, dt-scaled — NOT a per-frame coin flip. A phage lingers
+          // beside a cell for many frames, so a flat per-frame probability would compound to ~100% almost
+          // instantly; scaling by dt makes dwell TIME the thing that matters. Twitching pili raise the rate,
+          // and each virion already aboard lowers it (superinfection resistance). A miss leaves the phage ALIVE
+          // to keep trying, so multiplicity of infection builds the longer a cell sits in a viral cloud.
+          const rate = CFG.phage.adsorbBase * (c.twitching ? CFG.phage.twitchAdsorbMult : 1)
+                       * Math.pow(CFG.phage.superinfDecay, c.viralLoad || 0);
+          if (Math.random() >= 1 - Math.exp(-rate * dt)) continue; // didn't adsorb this frame — phage drifts on, still infectious
           c.viralLoad = (c.viralLoad || 0) + 1;      // one more virion aboard (multiplicity of infection)
           if (!c.infectedGreen) { c.infectedGreen = true; c.lysisT = rand(CFG.phage.latent[0], CFG.phage.latent[1]); if (c.controlled) tutDid("infected"); }
           ph.dead = true; break;                     // this virion is spent — stop scanning cells for it
@@ -5025,7 +5027,7 @@
     "phage.greenSeed": "Seconds between reservoir top-ups, which keep phages tuned to a sampled lineage.",
     "phage.greenFloor": "Minimum phages kept matched to the sampled lineage's tier at each top-up.",
     "phage.hostTolerance": "Kill-the-winner window: how many adaptation tiers from its host a phage can still infect. Lower = upgrading shakes off your pursuers faster.",
-    "phage.adsorbBase": "Per-ENCOUNTER chance a matched green phage actually adsorbs (0-1). Was effectively 1.0; lower it and phages bounce off, building multiplicity of infection over repeated contacts instead of one-and-done.",
+    "phage.adsorbBase": "Adsorption RATE per SECOND of contact for a matched green phage (dt-scaled, not a per-frame roll). Lower = a cell can brush past a virus and escape; infection now depends on how long it dwells in a viral cloud.",
     "phage.superinfDecay": "Superinfection resistance (0-1): each virion already inside a cell multiplies the chance of the next one adsorbing by this. <1 makes heavy loads self-limiting; 1 disables it.",
     "phage.maxLoad": "Most virions one cell can carry at once — the multiplicity-of-infection ceiling.",
     "phage.burstPerLoad": "Extra virions released at lysis for every virion above the first, so a heavily-loaded cell bursts far bigger. Raise this if bacteria outrun the plague.",
