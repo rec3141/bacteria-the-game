@@ -25,6 +25,46 @@ assert.match(movement, /if \(!c\.twitching\) for \(const p of substrates\)/,
   "twitching cells bypass food-particle collision broad phase");
 assert.match(movement, /collideRod\(c, !!c\.twitching\)/,
   "twitching skips particles in narrow-phase collision too");
+assert.match(game, /twitchSpeedScale: 0\.5/,
+  "twitching self-propulsion starts at half ordinary speed");
+assert.match(movement, /swimSpeed\(Math\.min\(1, len\), visc\)\*cellMotilityScale\(c\)/,
+  "half-speed scaling applies to the controlled cell");
+assert.match(movement, /vmax = CFG\.cell\.maxSpeed\/Math\.sqrt\(visc\)\*swimScale\(\)\*cellMotilityScale\(c\)/,
+  "the velocity cap cannot preserve pre-upgrade flagellar speed");
+const autonomous = game.slice(game.indexOf("function autonomousMove(c, dt)"), game.indexOf("function updatePredators"));
+assert.match(autonomous, /swimSpeed\(fedF, visc\)\*cellMotilityScale\(c\)/,
+  "half-speed scaling applies to autonomous descendants");
+assert.match(movement, /const carrier = particleUnderCell\(c\)/);
+assert.match(movement, /moveVx = c\.vx \+ \(carrier \? carrier\.vx : 0\), moveVy = c\.vy \+ \(carrier \? carrier\.vy : 0\)/,
+  "a surface-attached twitching cell receives its particle's drift separately from propulsion");
+
+const solidAtSource = game.match(/function solidAt\(p, gi, gj\) \{[\s\S]*?\n  \}/)?.[0];
+const solidAtWorldSource = game.match(/function solidAtWorld\(p, wx, wy\) \{[\s\S]*?\n  \}/)?.[0];
+const carrierSource = game.match(/function particleUnderCell\(c\) \{[\s\S]*?\n  \}/)?.[0];
+assert.ok(solidAtSource && solidAtWorldSource && carrierSource, "production surface-carrier lookup is present");
+const support = { x: 100, y: 100, vx: 3, vy: -2, half: 15, cs: 10, n: 3,
+  organic: 9, grid: new Float32Array(9).fill(1) };
+const particleUnderCell = new Function("substrates", "cellPolesLocal", "cellHalfLen", "dx", "dy", "toroDist2",
+  `${solidAtSource}\n${solidAtWorldSource}\n${carrierSource}\nreturn particleUnderCell;`)(
+    [support], () => [6, 0, -6, 0], () => 8, (a, b) => a - b, (a, b) => a - b,
+    (x1, y1, x2, y2) => (x1-x2)**2 + (y1-y2)**2,
+  );
+assert.equal(particleUnderCell({ x: 100, y: 100, twitching: true, cyst: false }), support,
+  "a twitching cell detects the solid particle beneath its rod");
+assert.equal(particleUnderCell({ x: 100, y: 100, twitching: false, cyst: false }), null,
+  "ordinary swimming cells do not attach to particles");
+assert.equal(particleUnderCell({ x: 100, y: 100, twitching: true, cyst: true }), null,
+  "dormant cysts do not actively attach by twitching");
+
+const drawCell = game.slice(game.indexOf("function drawCell(c)"), game.indexOf("function drawPredator"));
+assert.match(drawCell, /for \(let i = 0; i <= 14; i\+\+\)[\s\S]*?ctx\.stroke\(\);\n    if \(c\.twitching\)/,
+  "twitching cells retain the ordinary flagellum as well as their pili");
+
+const drawEps = game.slice(game.indexOf("function drawEps(z)"), game.indexOf("function drawNutrient"));
+assert.match(drawEps, /const profile = \[[^\]]{30,}\][\s\S]*quadraticCurveTo/,
+  "EPS has a rounded, gently lobed bouba silhouette");
+assert.doesNotMatch(drawEps, /lineTo\(/,
+  "EPS has no sharp-sided block outline");
 
 const actions = game.slice(game.indexOf("const AB = 3, EPS = 4"), game.indexOf("function lineageReps"));
 assert.match(actions, /if \(c\.eps\) o\.push\(EPS\)/);

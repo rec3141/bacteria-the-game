@@ -39,7 +39,7 @@
       // thrust and dragRate therefore only matter as a RATIO — 21270/60 = 354 px/s of free-swim
       // speed, which maxSpeed then caps at 240. Raising dragRate alone makes the cell slower AND
       // crisper; raising both together keeps the speed and just kills the glide.
-      thrust: 21270, dragRate: 60, cystDragRate: 2.2, maxSpeed: 240, uptake: 14,
+      thrust: 21270, dragRate: 60, cystDragRate: 2.2, maxSpeed: 240, twitchSpeedScale: 0.5, uptake: 14,
       startEnergy: 110, maxEnergy: 230, divideThreshold: 175, // energy a cell must bank before it splits.
                            // 200 was too high to be REACHABLE: an autonomous carb-only cell tops out around
                            // 110-170 energy, so it never divided — it just encysted, and a colony left to
@@ -599,6 +599,7 @@
   // accelerate toward. `f` scales the thrust: how far the stick is pushed, or a fed cell's amble.
   const swimSpeed = (f, visc) => Math.min(CFG.cell.thrust*f/(CFG.cell.dragRate*visc),
                                           CFG.cell.maxSpeed/Math.sqrt(visc)) * swimScale();
+  const cellMotilityScale = (c) => c && c.twitching ? CFG.cell.twitchSpeedScale : 1;
   function rand(a, b) { return a + Math.random()*(b-a); }
   function wrapX(v) { return ((v % WORLD_W) + WORLD_W) % WORLD_W; }
   function wrapY(v) { return ((v % WORLD_H) + WORLD_H) % WORLD_H; }
@@ -979,6 +980,35 @@
   function solidAt(p, gi, gj) {
     if (gi < 0 || gi >= p.n || gj < 0 || gj >= p.n) return false;
     return p.grid[gj*p.n + gi] > 0;
+  }
+
+  function solidAtWorld(p, wx, wy) {
+    const lx = dx(wx, p.x), ly = dy(wy, p.y);
+    if (Math.abs(lx) > p.half || Math.abs(ly) > p.half) return false;
+    return solidAt(p, Math.floor((lx + p.half)/p.cs), Math.floor((ly + p.half)/p.cs));
+  }
+
+  // A twitching cell is attached to the surface beneath its rod. Sample along its length and choose
+  // the particle supporting the most probes, so overlapping particle bounds do not make it flicker
+  // between two different drift velocities from one frame to the next.
+  function particleUnderCell(c) {
+    if (!c || !c.twitching || c.cyst) return null;
+    const p = cellPolesLocal(c);
+    const reach = cellHalfLen(c);
+    const probes = [[c.x, c.y], [c.x + p[0], c.y + p[1]], [c.x + p[2], c.y + p[3]],
+      [c.x + p[0]*0.5, c.y + p[1]*0.5], [c.x + p[2]*0.5, c.y + p[3]*0.5]];
+    let best = null, bestHits = 0, bestDist = Infinity;
+    for (const s of substrates) {
+      if (s.organic <= 0 || Math.abs(dx(c.x, s.x)) > s.half + reach ||
+          Math.abs(dy(c.y, s.y)) > s.half + reach) continue;
+      let hits = 0;
+      for (const q of probes) if (solidAtWorld(s, q[0], q[1])) hits++;
+      const dist = toroDist2(c.x, c.y, s.x, s.y);
+      if (hits > bestHits || (hits === bestHits && hits > 0 && dist < bestDist)) {
+        best = s; bestHits = hits; bestDist = dist;
+      }
+    }
+    return best;
   }
 
   // push a circle (world wx,wy,radius) out of a particle's solid voxels; returns {x,y} or null
@@ -2374,6 +2404,7 @@
       if (c.infectedGreen) { onCellDeath(c, "lysis"); return; } // an infected cell can't wait it out in a cyst — starvation bursts it, releasing virions
       c.cyst = true;
     }
+    const carrier = particleUnderCell(c); // surface attachment: ride with the drifting particle below
 
     // LOW REYNOLDS NUMBER. A bacterium has no useful inertia: viscous drag overwhelms momentum, so
     // its velocity is whatever its thrust sustains against drag, reached (and lost) almost at once.
@@ -2386,7 +2417,7 @@
         c.tumbling = false; const len = Math.hypot(a.x, a.y); c.angle = Math.atan2(a.y, a.x);
         // |a| is how far the stick is pushed (keyboard always gives a full 1), and speed is
         // proportional to thrust — so a half-push really is half speed.
-        const sp = swimSpeed(Math.min(1, len), visc);
+        const sp = swimSpeed(Math.min(1, len), visc)*cellMotilityScale(c);
         c.tvx = (a.x/len)*sp; c.tvy = (a.y/len)*sp;
         c.energy -= CFG.cell.swimCost*dt;
       } else { c.tumbling = true; c.angle += Math.sin(state.elapsed*3 + c.x)*CFG.cell.playerTumbleTurn*dt; }
@@ -2400,7 +2431,7 @@
     const relax = Math.exp(-k*dt);
     c.vx = c.tvx + (c.vx - c.tvx)*relax;
     c.vy = c.tvy + (c.vy - c.tvy)*relax;
-    const sp = Math.hypot(c.vx, c.vy), vmax = CFG.cell.maxSpeed/Math.sqrt(visc)*swimScale();
+    const sp = Math.hypot(c.vx, c.vy), vmax = CFG.cell.maxSpeed/Math.sqrt(visc)*swimScale()*cellMotilityScale(c);
     if (sp > vmax) { c.vx = c.vx/sp*vmax; c.vy = c.vy/sp*vmax; }
     // MOVE IN SUBSTEPS, and collide after each one.
     // Under the old momentum physics a cell crept up on a wall: a collision killed its speed, and
@@ -2410,7 +2441,10 @@
     // inside, pushCircleOut's summed voxel overlaps point every which way and cancel, so instead of
     // ejecting the cell it can walk it straight through. Capping each step to ~2px keeps every
     // penetration shallow, which is the only regime that push-out reliably resolves.
-    const stepDist = Math.hypot(c.vx, c.vy)*dt;
+    // Self-propulsion and particle advection are separate: letting go stops twitching, but the
+    // attachment still carries the cell with its substrate until it crawls off the solid surface.
+    const moveVx = c.vx + (carrier ? carrier.vx : 0), moveVy = c.vy + (carrier ? carrier.vy : 0);
+    const stepDist = Math.hypot(moveVx, moveVy)*dt;
     // BROAD PHASE FIRST. collideRod walks every particle's voxels, so substepping it blindly would
     // multiply the hot path by 8 and tank the frame rate (it did). Almost every cell, almost every
     // frame, is in open water — one cheap bounding-box pass proves that, and then it just moves.
@@ -2424,11 +2458,11 @@
     if (!near) for (const z of epsSpace.query(c.x, c.y, bpReach + CFG.eps.radius, epsCandidates)) {
       if (z.life > 0 && toroDist2(c.x, c.y, z.x, z.y) < (bpReach + z.r)**2) { near = true; break; }
     }
-    if (!near) { c.x = wrapX(c.x + c.vx*dt); c.y = wrapY(c.y + c.vy*dt); }
+    if (!near) { c.x = wrapX(c.x + moveVx*dt); c.y = wrapY(c.y + moveVy*dt); }
     else {
       const steps = clamp(Math.ceil(stepDist/2), 1, 8);
       for (let s = 0; s < steps; s++) {
-        c.x = wrapX(c.x + c.vx*dt/steps); c.y = wrapY(c.y + c.vy*dt/steps);
+        c.x = wrapX(c.x + moveVx*dt/steps); c.y = wrapY(c.y + moveVy*dt/steps);
         collideRod(c, !!c.twitching);
       }
     }
@@ -2484,7 +2518,7 @@
     } else {
       // a run: thrust straight ahead. Speed is thrust/drag (see updateCell), so a fed cell's
       // lower thrust is simply a slower amble — and a tumbling cell, thrusting at nothing, stops.
-      const sp = swimSpeed(fedF, visc);
+      const sp = swimSpeed(fedF, visc)*cellMotilityScale(c);
       c.tvx = Math.cos(c.angle)*sp; c.tvy = Math.sin(c.angle)*sp;
       c.energy -= CFG.cell.swimCost*fedF*dt;
       // up-gradient → suppress tumbling (longer run); the suppression scales with chemoLevel
@@ -3093,17 +3127,28 @@
     const cx = sx(z.x), cy = sy(z.y); if (!onScreen(cx, cy, z.r + 5)) return;
     const fade = clamp(z.life/3, 0, 1), r = z.r;
     ctx.save(); ctx.translate(cx, cy); ctx.rotate(z.angle || 0); ctx.globalAlpha = fade;
-    ctx.fillStyle = "rgba(216,184,106,0.48)"; ctx.strokeStyle = "rgba(255,228,155,0.9)"; ctx.lineWidth = 1.5;
-    // A soft-cornered polysaccharide block. Physics uses its circumscribed circle so no organism
-    // can leak through a visual corner at speed.
-    const q = r*0.69, corner = r*0.24;
+    // A plump, gently lobed polysaccharide blob. Every point stays inside the circular collision
+    // boundary, while midpoint curves keep the silhouette soft rather than blocky or spiky.
+    const profile = [0.91, 0.97, 0.92, 0.98, 0.90, 0.96, 0.92, 0.98, 0.91, 0.96];
+    const points = profile.map((scale, i) => {
+      const a = i/profile.length*TAU - Math.PI/2;
+      return { x: Math.cos(a)*r*scale, y: Math.sin(a)*r*scale };
+    });
+    const first = points[0], last = points[points.length - 1];
     ctx.beginPath();
-    ctx.moveTo(-q + corner, -q); ctx.lineTo(q - corner, -q); ctx.quadraticCurveTo(q, -q, q, -q + corner);
-    ctx.lineTo(q, q - corner); ctx.quadraticCurveTo(q, q, q - corner, q);
-    ctx.lineTo(-q + corner, q); ctx.quadraticCurveTo(-q, q, -q, q - corner);
-    ctx.lineTo(-q, -q + corner); ctx.quadraticCurveTo(-q, -q, -q + corner, -q); ctx.closePath();
+    ctx.moveTo((last.x + first.x)/2, (last.y + first.y)/2);
+    for (let i = 0; i < points.length; i++) {
+      const p = points[i], next = points[(i + 1) % points.length];
+      ctx.quadraticCurveTo(p.x, p.y, (p.x + next.x)/2, (p.y + next.y)/2);
+    }
+    ctx.closePath();
+    const matrix = ctx.createRadialGradient(-r*0.25, -r*0.28, r*0.08, 0, 0, r);
+    matrix.addColorStop(0, "rgba(255,238,180,0.68)");
+    matrix.addColorStop(0.7, "rgba(216,184,106,0.52)");
+    matrix.addColorStop(1, "rgba(166,132,66,0.58)");
+    ctx.fillStyle = matrix; ctx.strokeStyle = "rgba(255,235,178,0.92)"; ctx.lineWidth = 1.5;
     ctx.fill(); ctx.stroke();
-    ctx.fillStyle = "rgba(255,246,207,0.34)";
+    ctx.fillStyle = "rgba(255,248,218,0.40)";
     for (const [x, y] of [[-0.34,-0.28],[0.28,-0.31],[-0.12,0.22],[0.39,0.28]]) {
       ctx.beginPath(); ctx.arc(x*r, y*r, Math.max(1.2, r*0.08), 0, TAU); ctx.fill();
     }
@@ -4491,6 +4536,7 @@
     "cell.dragRate": "How fast velocity relaxes onto what the thrust sustains (1/s). High = the cell stops dead when you let go, which is what a real bacterium does (viscosity beats inertia at this size). Low = it coasts like a submarine, which is wrong but forgiving. Also sets free-swim speed via thrust/dragRate.",
     "cell.cystDragRate": "Same, for a dormant cyst. Kept low so a cyst keeps drifting with the water instead of freezing in place.",
     "cell.maxSpeed": "Hard cap on swim speed (px/s), applied after thrust/dragRate.",
+    "cell.twitchSpeedScale": "Self-propelled speed of a twitching cell as a fraction of ordinary flagellar swimming. Particle drift is added separately while attached to a surface.",
     "cell.uptake": "Nutrient absorbed per second while touching free motes.",
     "cell.startEnergy": "Energy a new cell begins life with.",
     "cell.maxEnergy": "Energy ceiling — a cell can't store more than this.",
@@ -4675,6 +4721,7 @@
     "diel.q10RefC": { min: -50, max: 60 },
     "cell.driftOnUpgrade": { min: 0, max: 1, integer: true },
     "cell.driftGainChance": { min: 0, max: 1 },
+    "cell.twitchSpeedScale": { min: 0, max: 1 },
     "touch.autoEnzyme": { min: 0, max: 1, integer: true },
     "predator.cystEatChance": { min: 0, max: 1 },
     "predator.cystMealFactor": { min: 0, max: 1 },
