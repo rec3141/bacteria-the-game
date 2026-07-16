@@ -183,8 +183,12 @@
       latent: [9, 15],      // seconds from green infection to lysis
       greenSeed: [5, 9], greenFloor: 27, seedBatch: 3, // reservoir: every greenSeed s, top the sampled lineage up (a few at a time) to ≥greenFloor phages tuned to ITS tier
       hostTolerance: 2,     // kill-the-winner: a phage infects only cells within this many upgrade-tiers of its host
-      twitchHalo: 4,        // pili ARE the phage receptor: a twitching cell adsorbs green phages from this many extra px out
-      twitchHostBonus: 1,   // ...and across this many extra kill-the-winner tiers, so upgrading sheds viral pursuers less easily
+      adsorbBase: 0.35,     // per-ENCOUNTER probability a matched green phage actually adsorbs (was effectively 1.0)
+      superinfDecay: 0.7,   // each virion already aboard multiplies further adsorption odds by this (superinfection resistance)
+      maxLoad: 6,           // most virions one cell can carry at once — the multiplicity-of-infection ceiling
+      burstPerLoad: 3,      // extra virions released at lysis for every virion above the first (heavy load → bigger burst)
+      twitchAdsorbMult: 2.2,// pili ARE the phage receptor: they multiply a twitching cell's adsorption probability
+      twitchHostBonus: 1,   // ...and widen its kill-the-winner window by this many tiers, so upgrading sheds pursuers less easily
       goldLife: [90, 140],  // gold phage lingers far longer than green — you can chase it down
       // Gold IS the fun: it's the only thing that changes what you can do. Desktop keeps its scarcity
       // (1 on the board), but on a phone — where a run is short and a player gives you ninety seconds
@@ -878,7 +882,7 @@
       controlled: false, alive: true, invuln: CFG.cell.invulnTime, cyst: false,
       tumbling: false, runTimer: rand(CFG.cell.runMin, CFG.cell.runMax), tumbleT: 0, tumbleTarget: angle,
       fed: 0, enzCd: rand(CFG.cell.enzymeCooldown[0], CFG.cell.enzymeCooldown[1]),
-      infectedGreen: false, lysisT: 0, chemotaxis: false, chemoLevel: 0, crispr: false, antibiotic: 0,
+      infectedGreen: false, viralLoad: 0, lysisT: 0, chemotaxis: false, chemoLevel: 0, crispr: false, antibiotic: 0,
       twitching: false, eps: 0, epsCd: rand(CFG.eps.cooldown[0], CFG.eps.cooldown[1]), toxT: 0,
       // This cell's OWN adaptation log, in the order it was acquired — inherited whole by its
       // daughters. The player's run-level log (state.upgrades) only ever knew about the cell you were
@@ -1517,7 +1521,7 @@
       goalDesktop: "Use <b>WASD</b> or the <b>arrow keys</b> to catch the <b class='c-gold'>gold phage</b> — it carries <b class='c-crispr'>CRISPR</b>",
       goalTouch: "Push the <b>joystick</b> toward the <b class='c-gold'>gold phage</b> — it carries <b class='c-crispr'>CRISPR</b>",
       setup: () => { clearCast(true); const c = centre(ctrlCell()); if (!c) return;
-        c.infectedGreen = false; c.crispr = false;      // a clean slate, so the gene is the news
+        c.infectedGreen = false; c.viralLoad = 0; c.crispr = false;      // a clean slate, so the gene is the news
         const ph = makePhage("gold", 0, 0); focusTutorial(ph); ph.vx = ph.vy = 0;
         phages.push(ph); },
       done: () => { const c = ctrlCell(); return !!(tut.flags.adapted || (c && c.crispr)); } },
@@ -1589,7 +1593,7 @@
     tut.i = clamp(i, 0, TUT_STEPS.length - 1);
     tut.flags = {}; tut.done = false; tut.doneT = 0; tut.complete = false; tut.completeT = 0;
     const c = ctrlCell();
-    if (c) { c.energy = Math.max(c.energy, CFG.cell.startEnergy); c.infectedGreen = false; }
+    if (c) { c.energy = Math.max(c.energy, CFG.cell.startEnergy); c.infectedGreen = false; c.viralLoad = 0; }
     TUT_STEPS[tut.i].setup();
     renderTutStep();
   }
@@ -2156,7 +2160,7 @@
     d1.enzLvl = c.enzLvl.slice(); d2.enzLvl = c.enzLvl.slice();
     d1.ups = d2.ups = c.ups || [];   // the adaptation log is heritable too (shared until one of them adapts)
     d1.phylo = d2.phylo = c.phylo || c.ups || []; // event ancestry survives gain and gene loss alike
-    if (c.infectedGreen) { d2.infectedGreen = true; d2.lysisT = c.lysisT; burst(c.x, c.y, "#7CFC5A", 8); } // virus segregates into one daughter; d1 (your lineage) stays clean
+    if (c.infectedGreen) { d2.infectedGreen = true; d2.lysisT = c.lysisT; d2.viralLoad = c.viralLoad; burst(c.x, c.y, "#7CFC5A", 8); } // virus (whole load) segregates into one daughter; d1 (your lineage) stays clean
     cells.splice(cells.indexOf(c), 1, d1, d2);
     if (c.controlled) state.gen++; // count a generation only when the cell YOU are steering divides
     burst(c.x, c.y, "#ffd24a", 14);
@@ -2182,7 +2186,9 @@
     Audio.play("hit", 0.8);
   }
   function releaseGreenPhages(c) {
-    const n = Math.floor(rand(CFG.phage.burst[0], CFG.phage.burst[1] + 1)), host = upgradeTier(c); // progeny track this host's adaptation tier
+    const load = Math.max(1, c.viralLoad || 0); // more virions replicating inside → a bigger burst comes out
+    const n = Math.floor(rand(CFG.phage.burst[0], CFG.phage.burst[1] + 1)) + (load - 1) * CFG.phage.burstPerLoad;
+    const host = upgradeTier(c); // progeny track this host's adaptation tier
     for (let i = 0; i < n && phages.length < CFG.phage.maxCount; i++) {
       const a = rand(0, 6.28), d = rand(5, 13); // scatter a few px so virions don't spawn stacked on each other
       phages.push(makePhage("green", c.x + Math.cos(a)*d, c.y + Math.sin(a)*d, host));
@@ -2940,25 +2946,29 @@
       // catching the gold should get easier on mobile, not catching a plague.
       const reach = (ph.type === "gold" && isTouch) ? CFG.phage.goldGrabTouch : 1;
       const infectDist = (CFG.cell.radius + ph.r + CFG.phage.infectHalo) * reach;
-      const twitchHalo = ph.type === "green" ? CFG.phage.twitchHalo : 0; // pili extend the adsorption reach (green only)
-      const cellReach = CFG.cell.maxHalf + infectDist + twitchHalo + 2;
+      const cellReach = CFG.cell.maxHalf + infectDist + 2;
       for (const c of cellSpace.query(ph.x, ph.y, cellReach, cellCandidates)) {
         if (!c.alive || c.cyst) continue;            // cysts are impervious to viruses
         if (ph.type === "gold" && !c.controlled) continue; // only YOU can grab the gold phage — daughters can't steal your adaptation
-        const eff = infectDist + (twitchHalo && c.twitching ? twitchHalo : 0); // a twitching cell's pili grab from farther out
-        const hl = cellHalfLen(c) + eff + 2;
+        const hl = cellHalfLen(c) + infectDist + 2;
         if (toroDist2(ph.x, ph.y, c.x, c.y) > hl*hl) continue;
-        if (cellDistTo(c, ph.x, ph.y) > eff) continue;
+        if (cellDistTo(c, ph.x, ph.y) > infectDist) continue;
         if (ph.type === "green") {
-          if (c.infectedGreen) continue;             // already infected — drift on
+          if ((c.viralLoad || 0) >= CFG.phage.maxLoad) continue; // receptors saturated — no more virions fit
           if (!hostMatch(ph.host, upgradeTier(c), cellHostTol(c))) { // kill-the-winner (widened for twitching pili)
             if (c.crispr) { c.energy = Math.min(c.energy + CFG.cell.crisprEnergy, CFG.cell.maxEnergy); ph.dead = true;
               if (c.controlled) tutDid("atePhage"); burst(ph.x, ph.y, CRISPR_COLOR, 8); break; } // CRISPR harvests the immune virus for energy
             continue;
           }
-          c.infectedGreen = true; c.lysisT = rand(CFG.phage.latent[0], CFG.phage.latent[1]);
-          if (c.controlled) tutDid("infected");
-          ph.dead = true;
+          // Probabilistic adsorption (was a flat 100%): twitching pili raise the odds, and each virion already
+          // aboard lowers them (superinfection resistance). A bounce leaves the phage ALIVE to try again, so
+          // multiplicity of infection builds over repeated encounters rather than one-and-done.
+          const p = clamp(CFG.phage.adsorbBase * (c.twitching ? CFG.phage.twitchAdsorbMult : 1)
+                          * Math.pow(CFG.phage.superinfDecay, c.viralLoad || 0), 0, 1);
+          if (Math.random() >= p) continue;          // bounced this encounter — phage drifts on, still infectious
+          c.viralLoad = (c.viralLoad || 0) + 1;      // one more virion aboard (multiplicity of infection)
+          if (!c.infectedGreen) { c.infectedGreen = true; c.lysisT = rand(CFG.phage.latent[0], CFG.phage.latent[1]); if (c.controlled) tutDid("infected"); }
+          ph.dead = true; break;                     // this virion is spent — stop scanning cells for it
         } else {                                     // gold: transduce a random upgrade
           // The tutorial promises CRISPR by name, and then has to teach eating a phage with it — so
           // there it grants CRISPR outright rather than rolling the dice on the lesson.
@@ -5015,7 +5025,11 @@
     "phage.greenSeed": "Seconds between reservoir top-ups, which keep phages tuned to a sampled lineage.",
     "phage.greenFloor": "Minimum phages kept matched to the sampled lineage's tier at each top-up.",
     "phage.hostTolerance": "Kill-the-winner window: how many adaptation tiers from its host a phage can still infect. Lower = upgrading shakes off your pursuers faster.",
-    "phage.twitchHalo": "Twitching pili are the phage receptor: extra px of green-phage adsorption reach for a twitching cell. The risk half of twitching's risk/reward.",
+    "phage.adsorbBase": "Per-ENCOUNTER chance a matched green phage actually adsorbs (0-1). Was effectively 1.0; lower it and phages bounce off, building multiplicity of infection over repeated contacts instead of one-and-done.",
+    "phage.superinfDecay": "Superinfection resistance (0-1): each virion already inside a cell multiplies the chance of the next one adsorbing by this. <1 makes heavy loads self-limiting; 1 disables it.",
+    "phage.maxLoad": "Most virions one cell can carry at once — the multiplicity-of-infection ceiling.",
+    "phage.burstPerLoad": "Extra virions released at lysis for every virion above the first, so a heavily-loaded cell bursts far bigger. Raise this if bacteria outrun the plague.",
+    "phage.twitchAdsorbMult": "Twitching pili ARE the phage receptor: multiplies a twitching cell's per-encounter adsorption probability. The risk half of twitching's risk/reward.",
     "phage.twitchHostBonus": "Extra kill-the-winner tiers a green phage can span to infect a TWITCHING cell — so a twitching lineage can't outrun viruses by upgrading as easily.",
     "phage.goldLife": "Seconds the rare GOLD phage (the HGT upgrade) lingers before vanishing.",
     "phage.goldGrabTouch": "TOUCH DEVICES ONLY: multiplies the gold phage's grab radius, because catching it with a thumb is much fiddlier than with a keyboard. 1 = same as desktop. Green phages are unaffected.",
@@ -5065,6 +5079,8 @@
     "diel.twilight": { min: 0, max: 1 },
     "diel.goldTint": { min: 0, max: 1 },
     "diel.q10RefC": { min: -50, max: 60 },
+    "phage.adsorbBase": { min: 0, max: 1 },
+    "phage.superinfDecay": { min: 0, max: 1 },
     "cell.driftOnUpgrade": { min: 0, max: 1, integer: true },
     "cell.driftGainChance": { min: 0, max: 1 },
     "cell.twitchSpeedScale": { min: 0, max: 1 },
@@ -5086,7 +5102,7 @@
     "cycle.preyFloor", "predator.count", "predator.minCount", "predator.immigrateCap",
     "predator.immigrateMax", "predator.killMotes", "phage.greenCount", "phage.seedBatch",
     "phage.greenFloor", "phage.goldCount", "phage.goldCountTouch", "phage.hostTolerance",
-    "phage.burst.0", "phage.burst.1", "toxin.crossDist", "eps.maxCount",
+    "phage.burst.0", "phage.burst.1", "phage.maxLoad", "phage.burstPerLoad", "toxin.crossDist", "eps.maxCount",
   ]);
   const TUNE_POSITIVE_PATHS = new Set([
     "cell.radius", "cell.baseHalf", "cell.maxHalf", "cell.dragRate", "cell.cystDragRate",
@@ -5101,7 +5117,7 @@
     "predator.maturity", "predator.reproCooldown", "predator.immigrateEvery", "predator.respawnFloor",
     "phage.radius", "phage.life.0", "phage.life.1", "phage.latent.0", "phage.latent.1",
     "phage.greenSeed.0", "phage.greenSeed.1", "phage.goldLife.0", "phage.goldLife.1",
-    "touch.zoom", "diel.q10",
+    "phage.twitchAdsorbMult", "touch.zoom", "diel.q10",
   ]);
   const TUNE_ORDERED_RANGES = [
     ["cell.baseHalf", "cell.maxHalf"], ["cell.runMin", "cell.runMax"],

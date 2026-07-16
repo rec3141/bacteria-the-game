@@ -149,8 +149,8 @@ collideEpsCircle(object, 5);
 assert.equal(object.x, 129, "the object is pushed to the EPS boundary");
 assert.equal(object.vx, 0, "inward motion is removed at the EPS boundary");
 
-// #17 twitching trade-off: pili are the phage receptor, so a twitching cell is easier for green phages
-// to infect — a wider kill-the-winner window and a longer adsorption reach.
+// #17 twitching trade-off: pili are the phage receptor, so a twitching cell is easier for green phages to
+// infect — a higher per-encounter adsorption PROBABILITY (twitchAdsorbMult) and a wider kill-the-winner window.
 const hostMatchSrc = game.match(/function hostMatch\([^)]*\) \{[^\n]*\}/)?.[0];
 const cellHostTolSrc = game.match(/function cellHostTol\(c\) \{[^\n]*\}/)?.[0];
 assert.ok(hostMatchSrc && cellHostTolSrc, "hostMatch and cellHostTol must be extractable");
@@ -164,11 +164,22 @@ assert.equal(susceptibility.hostMatch(5, 8, susceptibility.cellHostTol({ twitchi
   "a 3-tier gap is outside the plain kill-the-winner window");
 assert.equal(susceptibility.hostMatch(5, 8, susceptibility.cellHostTol({ twitching: true })), true,
   "twitching pili widen the window, so the same distant phage now infects");
-assert.match(game, /twitchHalo = ph\.type === "green" \? CFG\.phage\.twitchHalo/,
-  "green phages get extra adsorption reach, applied to twitching cells via eff");
-assert.match(game, /const eff = infectDist \+ \(twitchHalo && c\.twitching \? twitchHalo : 0\)/,
-  "a twitching cell's effective adsorption distance is extended");
+// probabilistic multiplicity-of-infection model (replaces the old flat 100% single-hit adsorption)
+assert.match(game, /const p = clamp\(CFG\.phage\.adsorbBase \* \(c\.twitching \? CFG\.phage\.twitchAdsorbMult : 1\)/,
+  "green adsorption is probabilistic and twitching multiplies the odds");
+assert.match(game, /Math\.pow\(CFG\.phage\.superinfDecay, c\.viralLoad \|\| 0\)/,
+  "each virion already aboard lowers the odds of the next (superinfection resistance)");
+assert.match(game, /if \(Math\.random\(\) >= p\) continue;/,
+  "a failed adsorption leaves the phage alive to try again — MOI builds over encounters");
+assert.match(game, /c\.viralLoad = \(c\.viralLoad \|\| 0\) \+ 1;/,
+  "a successful adsorption raises the cell's viral load rather than being one-and-done");
+assert.match(game, /\(c\.viralLoad \|\| 0\) >= CFG\.phage\.maxLoad/,
+  "viral load is capped at the multiplicity ceiling");
 assert.match(game, /hostMatch\(ph\.host, upgradeTier\(c\), cellHostTol\(c\)\)/,
   "green infection uses the twitch-widened kill-the-winner window");
+// burst scales with the load the lysing cell was carrying
+const releaseSrc = game.slice(game.indexOf("function releaseGreenPhages"), game.indexOf("function releaseGreenPhages") + 400);
+assert.match(releaseSrc, /\(load - 1\) \* CFG\.phage\.burstPerLoad/,
+  "a heavier viral load bursts into proportionally more phages");
 
 console.log("Surface-upgrade contracts OK: twitching traversal, phage susceptibility, and temporary EPS exclusion checked.");
