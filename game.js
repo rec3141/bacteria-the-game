@@ -3,9 +3,8 @@
  *
  * You are a bacterium in a wide, wrapping patch of ocean, dwarfed by particles
  * of marine snow, fecal pellets, diatoms and chitin. The particles are SOLID:
- * you cannot swim through them, but you can dissolve them with extracellular
- * enzymes — carving tunnels, burrowing to the nutrient-rich core, and sheltering
- * inside where the big protist grazers can't reach. Absorb enough dissolved
+ * normally you cannot swim through them, but you can dissolve them with extracellular
+ * enzymes — or evolve twitching motility and crawl across them. Absorb enough dissolved
  * nutrient and the rod elongates and divides; each daughter forages on its own.
  *
  * The world is a torus (edges wrap) and much larger than the screen; the camera
@@ -125,6 +124,10 @@
     enzyme: { life: 5.0, maxRadius: 24, growTime: 0.4 },
     toxin: { life: 4.5, maxRadius: 40, growTime: 0.4, dose: 55, potency: 18, radiusPer: 0.34, // anti-protist antibiotic: fixed `dose` hit + lingering `potency`/s (NOT scaled by level); leveling GROWS the radius (radiusPer) so it hits more protists at once
              crossDist: 3, crossFactor: 1 }, // cross-reactive: bacteria a genetic distance ≥ crossDist from the releaser also take damage (×crossFactor)
+    // EPS is a physical extracellular-polysaccharide block: it cannot be enzymatically digested,
+    // but it ages away so a defended colony cannot permanently wall off the toroidal ocean.
+    eps: { life: 30, radius: 24, growTime: 0.3, cost: 8, maxCount: 240,
+           cooldown: [12, 18], threatRange: 95 },
     nutrient: { life: 16, radius: 3.2, maxCount: 600 },
     // trophic role-swap: when your whole population dies you flip to the other trophic level
     // instead of a game-over — bacteria extinct → you become a protist (grazer); protists extinct → back to a bacterium.
@@ -271,7 +274,8 @@
     admin: document.getElementById("admin"), adminBody: document.getElementById("adminBody"),
     adminDoc: document.getElementById("adminDoc"),
     adminSearch: document.getElementById("adminSearch"), adminCount: document.getElementById("adminCount"),
-    adminName: document.getElementById("adminName"), adminSave: document.getElementById("adminSave"),
+    adminName: document.getElementById("adminName"), adminStart: document.getElementById("adminStart"),
+    adminSave: document.getElementById("adminSave"),
     adminLoad: document.getElementById("adminLoad"), adminReset: document.getElementById("adminReset"),
     adminFile: document.getElementById("adminFile"), adminStatus: document.getElementById("adminStatus"),
     overTitle: document.getElementById("overTitle"), overMsg: document.getElementById("overMsg"),
@@ -283,7 +287,8 @@
     updateBtn: document.getElementById("updateBtn"),
     enz: [document.getElementById("enz0"), document.getElementById("enz1"), document.getElementById("enz2")],
     abilChemo: document.getElementById("abilChemo"), abilCrispr: document.getElementById("abilCrispr"),
-    enzTox: document.getElementById("enzTox"),
+    abilTwitch: document.getElementById("abilTwitch"), enzTox: document.getElementById("enzTox"),
+    enzEps: document.getElementById("enzEps"),
     chart: document.getElementById("chart"), legend: document.getElementById("chartlegend"),
     scores: document.getElementById("scores"), scoresList: document.getElementById("scoresList"),
     scoresKey: document.getElementById("scoresKey"), scoresTitle: document.getElementById("scoresTitle"),
@@ -312,7 +317,7 @@
     science: document.getElementById("science"), sciBody: document.getElementById("sciBody"), sciBack: document.getElementById("sciBack"),
     sciBtn: document.getElementById("sciBtn"), sciBtn2: document.getElementById("sciBtn2"), sciBtn3: document.getElementById("sciBtn3"),
     analysisChart: document.getElementById("analysisChart"), analysisStats: document.getElementById("analysisStats"),
-    nameInput: document.getElementById("nameInput"),
+    nameRow: document.getElementById("nameRow"), nameInput: document.getElementById("nameInput"),
     scoreDetail: document.getElementById("scoreDetail"), detailChart: document.getElementById("detailChart"),
     detailStats: document.getElementById("detailStats"), detailTitle: document.getElementById("detailTitle"),
     detailBack: document.getElementById("detailBack"),
@@ -327,6 +332,8 @@
   if (el.abilChemo) el.abilChemo.style.setProperty("--gc", "#ffd24a"); // chemotaxis = gold
   if (el.abilCrispr) el.abilCrispr.style.setProperty("--gc", "#c39bff"); // CRISPR = violet
   if (el.enzTox) el.enzTox.style.setProperty("--gc", "#f05ad0"); // antibiotic = magenta
+  if (el.abilTwitch) el.abilTwitch.style.setProperty("--gc", "#4fe3ff"); // twitching pili = cyan
+  if (el.enzEps) el.enzEps.style.setProperty("--gc", "#d8b86a"); // EPS matrix = amber
   const cctx = el.chart ? el.chart.getContext("2d") : null;
   const hlxCtx = el.helix ? el.helix.getContext("2d") : null;
   const el_subchart = document.getElementById("subchart");
@@ -662,17 +669,23 @@
   const predatorSpace = new TorusSpatialGrid(WORLD_W, WORLD_H, SPATIAL_CELL_SIZE);
   const phageSpace = new TorusSpatialGrid(WORLD_W, WORLD_H, SPATIAL_CELL_SIZE);
   const nutrientSpace = new TorusSpatialGrid(WORLD_W, WORLD_H, SPATIAL_CELL_SIZE);
-  const cellCandidates = [], predatorCandidates = [], phageCandidates = [], nutrientCandidates = [];
+  const epsSpace = new TorusSpatialGrid(WORLD_W, WORLD_H, SPATIAL_CELL_SIZE);
+  const cellCandidates = [], predatorCandidates = [], phageCandidates = [], nutrientCandidates = [], epsCandidates = [];
   function rebuildSpatialIndexes() {
-    for (const grid of [cellSpace, predatorSpace, phageSpace, nutrientSpace]) grid.resize(WORLD_W, WORLD_H);
+    for (const grid of [cellSpace, predatorSpace, phageSpace, nutrientSpace, epsSpace]) grid.resize(WORLD_W, WORLD_H);
     cellSpace.rebuild(cells, (c) => c.alive);
     predatorSpace.rebuild(predators, (p) => !p.dead);
     phageSpace.rebuild(phages, (p) => !p.dead);
     nutrientSpace.rebuild(nutrients, (n) => !n.dead);
+    epsSpace.rebuild(epsBlocks, (z) => z.life > 0);
   }
   function rebuildCellSpace() {
     cellSpace.resize(WORLD_W, WORLD_H);
     cellSpace.rebuild(cells, (c) => c.alive);
+  }
+  function rebuildEpsSpace() {
+    epsSpace.resize(WORLD_W, WORLD_H);
+    epsSpace.rebuild(epsBlocks, (z) => z.life > 0);
   }
   function segDist(px, py, x1, y1, x2, y2) {
     const ex = x2-x1, ey = y2-y1, l2 = ex*ex + ey*ey || 1;
@@ -682,7 +695,7 @@
   function angleTo(from, to) { let d = to - from; while (d > Math.PI) d -= 2*Math.PI; while (d < -Math.PI) d += 2*Math.PI; return d; }
 
   // --------------------------------------------------------------- game state
-  let state = null, cells = [], substrates = [], enzymes = [], toxins = [], nutrients = [],
+  let state = null, cells = [], substrates = [], enzymes = [], toxins = [], epsBlocks = [], nutrients = [],
       predators = [], phages = [], particles = [], flagPhase = 0, cam = { x: 0, y: 0 }, paused = false;
   let ZOOM = 1; // world magnification — bumped on touch devices so cells aren't tiny on a small screen
   let isTouch = false; // coarse-pointer device → mobile control + HUD layout (minimap top-left, etc.)
@@ -704,8 +717,8 @@
   }
 
   // The adaptation pool a gold phage transduces: one option per enzyme (acquire it if locked, else
-  // raise its expression), plus chemotaxis / antibiotic / CRISPR. Genes aren't guaranteed each time,
-  // so runs skew per-skill. Shared with cell.startUpgrades, which pre-loads the starting cell.
+  // raise its expression), plus chemotaxis / antibiotic / CRISPR / twitching / EPS. Genes aren't
+  // guaranteed each time, so runs skew per-skill. Shared with cell.startUpgrades.
   // Losing a gene is as real as gaining one — carrying a gene you aren't using costs upkeep, and
   // streamlining is what actually happens to marine genomes. This is the other half of the drift.
   // The founding carbohydrase is never lost: without it a cell can eat nothing at all.
@@ -717,10 +730,14 @@
     if (c.chemoLevel > 0) opts.push("chemo");
     if (c.crispr) opts.push("crispr");
     if (c.antibiotic > 0) opts.push("antibiotic");
+    if (c.twitching) opts.push("twitching");
+    if (c.eps) opts.push("eps");
     if (!opts.length) return null;
     const pick = opts[(Math.random()*opts.length)|0];
     let locus, color;
-    if (pick === "crispr") { c.crispr = false; locus = "Cr"; color = CRISPR_COLOR; }
+    if (pick === "twitching") { c.twitching = false; locus = "Tw"; color = TWITCH_COLOR; }
+    else if (pick === "eps") { c.eps = false; locus = "Eps"; color = EPS_COLOR; }
+    else if (pick === "crispr") { c.crispr = false; locus = "Cr"; color = CRISPR_COLOR; }
     else if (pick === "antibiotic") { c.antibiotic--; locus = "Ab"; color = TOXIN_COLOR; }
     else if (pick === "chemo") { c.chemoLevel--; if (!c.chemoLevel) c.chemotaxis = false; locus = "T"; color = "#ffd24a"; }
     else { c.enzLvl[pick]--; locus = ["L","P","C"][pick]; color = RESOURCES[pick].color; }
@@ -794,7 +811,17 @@
   function grantRandomUpgrade_(c) {
     const pool = ["chemo", "enz0", "enz1", "enz2", "antibiotic"];
     if (!c.crispr) pool.push("crispr");            // one-time: phage-immune-harvesting defense system
+    if (!c.twitching) pool.push("twitching");      // one-time: type-IV-pilus crawling over particles
+    if (!c.eps) pool.push("eps");                  // one-time: deployable extracellular matrix
     const pick = pool[(Math.random()*pool.length)|0];
+    if (pick === "twitching") {
+      c.twitching = true;
+      return { msg: "Twitching motility", color: TWITCH_COLOR, abbr: "Tw", acquired: true };
+    }
+    if (pick === "eps") {
+      c.eps = true;
+      return { msg: "EPS production", color: EPS_COLOR, abbr: "Eps", acquired: true };
+    }
     if (pick === "crispr") {
       c.crispr = true;
       return { msg: "CRISPR", color: CRISPR_COLOR, abbr: "Cr", acquired: true };
@@ -819,7 +846,8 @@
       controlled: false, alive: true, invuln: CFG.cell.invulnTime, cyst: false,
       tumbling: false, runTimer: rand(CFG.cell.runMin, CFG.cell.runMax), tumbleT: 0, tumbleTarget: angle,
       fed: 0, enzCd: rand(CFG.cell.enzymeCooldown[0], CFG.cell.enzymeCooldown[1]),
-      infectedGreen: false, lysisT: 0, chemotaxis: false, chemoLevel: 0, crispr: false, antibiotic: 0, toxT: 0,
+      infectedGreen: false, lysisT: 0, chemotaxis: false, chemoLevel: 0, crispr: false, antibiotic: 0,
+      twitching: false, eps: false, epsCd: rand(CFG.eps.cooldown[0], CFG.eps.cooldown[1]), toxT: 0,
       // This cell's OWN adaptation log, in the order it was acquired — inherited whole by its
       // daughters. The player's run-level log (state.upgrades) only ever knew about the cell you were
       // steering; this is what lets every lineage on the chart show its own genome. phylo preserves
@@ -841,6 +869,8 @@
     for (let k = 1; k <= (c.chemoLevel || 0); k++) push("Chemotaxis " + k, "T" + k, "#ffd24a", k === 1);
     if (c.crispr) push("CRISPR", "Cr", CRISPR_COLOR, true);
     for (let k = 1; k <= (c.antibiotic || 0); k++) push("Antibiotic " + k, "Ab" + k, TOXIN_COLOR, k === 1);
+    if (c.twitching) push("Twitching motility", "Tw", TWITCH_COLOR, true);
+    if (c.eps) push("EPS production", "Eps", EPS_COLOR, true);
     return u;
   }
   function ownedEnzymes(c) { const o = []; for (let i = 0; i < 3; i++) if (c.enzLvl[i] > 0) o.push(i); return o; }
@@ -857,13 +887,16 @@
   // kill-the-winner keyed to ADAPTATION LEVEL: a phage tracks the upgrade tier of the cell it lysed,
   // and infects only cells within hostTolerance tiers of it. Every upgrade you take shifts your tier,
   // so you can OUTRUN a virus cohort by upgrading (they turn green) until new phages evolve to your tier.
-  function upgradeTier(c) { return (c.enzLvl[0] + c.enzLvl[1] + c.enzLvl[2] - 1) + c.chemoLevel + (c.crispr ? 1 : 0) + (c.antibiotic || 0); }
+  function upgradeTier(c) { return (c.enzLvl[0] + c.enzLvl[1] + c.enzLvl[2] - 1) + c.chemoLevel +
+    (c.crispr ? 1 : 0) + (c.antibiotic || 0) + (c.twitching ? 1 : 0) + (c.eps ? 1 : 0); }
   function hostMatch(phHost, tier) { return Math.abs(phHost - tier) <= CFG.phage.hostTolerance; }
   // genome as a vector of loci → "genetic distance" (Manhattan) between two cells, for cross-reactive antibiotics
-  function genomeOf(c) { return [c.enzLvl[0], c.enzLvl[1], c.enzLvl[2], c.chemoLevel, c.crispr ? 1 : 0, c.antibiotic || 0]; }
+  function genomeOf(c) { return [c.enzLvl[0], c.enzLvl[1], c.enzLvl[2], c.chemoLevel, c.crispr ? 1 : 0,
+    c.antibiotic || 0, c.twitching ? 1 : 0, c.eps ? 1 : 0]; }
   function genDist(g, c) {
     return Math.abs(g[0]-c.enzLvl[0]) + Math.abs(g[1]-c.enzLvl[1]) + Math.abs(g[2]-c.enzLvl[2])
-         + Math.abs(g[3]-c.chemoLevel) + Math.abs(g[4]-(c.crispr?1:0)) + Math.abs(g[5]-(c.antibiotic||0));
+         + Math.abs(g[3]-c.chemoLevel) + Math.abs(g[4]-(c.crispr?1:0)) + Math.abs(g[5]-(c.antibiotic||0))
+         + Math.abs((g[6]||0)-(c.twitching?1:0)) + Math.abs((g[7]||0)-(c.eps?1:0));
   }
 
   // ----------------------------------------------------- destructible particle
@@ -969,19 +1002,34 @@
   // Resolve the rod against every solid particle: three probes — both poles and the centre.
   // (The gaps BETWEEN probes are why a very long cell can still clip a one-voxel wall; substepping
   // stops the tunnelling, not the sampling. Worth more probes on a long cell if that ever shows.)
-  function collideRod(c) {
+  function collideRod(c, skipParticles) {
     const pl = cellPolesLocal(c);
     const pts = [[c.x + pl[0], c.y + pl[1]], [c.x, c.y], [c.x + pl[2], c.y + pl[3]]];
     for (const [px, py] of pts) {
       const probe = { x: px, y: py, vx: c.vx, vy: c.vy };
-      collideCircle(probe, CFG.cell.radius);
+      collideCircle(probe, CFG.cell.radius, skipParticles);
       c.x = wrapX(c.x + (probe.x - px)); c.y = wrapY(c.y + (probe.y - py));
       c.vx = probe.vx; c.vy = probe.vy;
     }
   }
-  // resolve a moving circle against all particles: shift out and kill inward velocity
-  function collideCircle(obj, radius) {
-    for (const p of substrates) {
+  // EPS blocks are circular in the physics layer (the render gives them their irregular block shape).
+  // Querying their grid keeps this bounded even when a large colony has built the global maximum.
+  function collideEpsCircle(obj, radius) {
+    for (const z of epsSpace.query(obj.x, obj.y, radius + CFG.eps.radius + 2, epsCandidates)) {
+      if (z.life <= 0) continue;
+      let ex = dx(obj.x, z.x), ey = dy(obj.y, z.y), d = Math.hypot(ex, ey);
+      const overlap = z.r + radius - d;
+      if (overlap <= 0) continue;
+      if (d < 0.001) { ex = Math.cos(z.angle || 0); ey = Math.sin(z.angle || 0); d = 1; }
+      const nx = ex/d, ny = ey/d;
+      obj.x = wrapX(obj.x + nx*overlap); obj.y = wrapY(obj.y + ny*overlap);
+      const vn = obj.vx*nx + obj.vy*ny;
+      if (vn < 0) { obj.vx -= vn*nx; obj.vy -= vn*ny; }
+    }
+  }
+  // Resolve a moving circle against food particles and EPS. Twitching cells skip only the former.
+  function collideCircle(obj, radius, skipParticles = false) {
+    if (!skipParticles) for (const p of substrates) {
       const push = pushCircleOut(p, obj.x, obj.y, radius);
       if (!push) continue;
       const mag = Math.hypot(push.x, push.y) || 1;
@@ -989,6 +1037,7 @@
       const nx = push.x/mag, ny = push.y/mag, vn = obj.vx*nx + obj.vy*ny;
       if (vn < 0) { obj.vx -= vn*nx; obj.vy -= vn*ny; }
     }
+    collideEpsCircle(obj, radius);
   }
 
   function makePredator(x, y, energy, age) {
@@ -1024,7 +1073,7 @@
       do { x = rand(0, WORLD_W); y = rand(0, WORLD_H); } while (toroDist2(x, y, WORLD_W/2, WORLD_H/2) < 550*550);
       predators.push(makePredator(x, y, null, rand(0, 25)));
     }
-    enzymes = []; toxins = []; nutrients = []; particles = [];
+    enzymes = []; toxins = []; epsBlocks = []; nutrients = []; particles = [];
     phages = [];
     if (!isDemo) for (let i = 0; i < CFG.phage.greenCount; i++) { // seed OFFSCREEN so no virus is on the opening view — they diffuse in
       const a = rand(0, 6.28), d = Math.hypot(VIEW_W, VIEW_H)/2 + rand(80, 500);
@@ -1083,7 +1132,7 @@
       world: { width: WORLD_W, height: WORLD_H }, cam: { x: cam.x, y: cam.y }, flagPhase,
       cfg: JSON.parse(JSON.stringify(CFG)), state,
       entities: {
-        cells, substrates: substrates.map(checkpointSubstrate), enzymes, toxins,
+        cells, substrates: substrates.map(checkpointSubstrate), enzymes, toxins, eps: epsBlocks,
         nutrients, predators, phages, particles,
       },
     };
@@ -1116,10 +1165,12 @@
     if (!Number.isFinite(record.world.width) || !Number.isFinite(record.world.height) ||
         !record.cam || !Number.isFinite(record.cam.x) || !Number.isFinite(record.cam.y)) return false;
     const E = record.entities;
-    const limits = { cells: 200000, substrates: 10000, enzymes: 100000, toxins: 100000,
+    const limits = { cells: 200000, substrates: 10000, enzymes: 100000, toxins: 100000, eps: 10000,
                      nutrients: 500000, predators: 100000, phages: 500000, particles: 500000 };
-    for (const [name, limit] of Object.entries(limits))
-      if (!Array.isArray(E[name]) || E[name].length > limit) return false;
+    for (const [name, limit] of Object.entries(limits)) {
+      const list = name === "eps" && E[name] == null ? [] : E[name]; // checkpoints from before EPS remain loadable
+      if (!Array.isArray(list) || list.length > limit) return false;
+    }
     for (const p of E.substrates) {
       if (!p || !Object.prototype.hasOwnProperty.call(PARTICLES, p.kind) ||
           !Number.isInteger(p.n) || p.n < 1 || p.n > 2048 ||
@@ -1188,6 +1239,33 @@
     });
   }
 
+  async function clearCheckpoints() {
+    const db = await openCheckpointDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(CHECKPOINT_STORE, "readwrite"), store = tx.objectStore(CHECKPOINT_STORE);
+      store.delete(CHECKPOINT_CURRENT);
+      store.delete(CHECKPOINT_PREVIOUS); // the fallback belongs to the same saved run
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error("Could not remove the saved game"));
+      tx.onabort = () => reject(tx.error || new Error("Saved-game removal was interrupted"));
+    });
+  }
+
+  function deleteSavedGame() {
+    ++checkpointCardRequest;
+    if (el.savedContinueBtn) el.savedContinueBtn.classList.add("hidden");
+    // End Game can be pressed just after Continue while the sunset snapshot is still being written.
+    // Queue the deletion behind it so that late write cannot recreate the save we just discarded.
+    const task = checkpointWriteQueue.catch(() => undefined).then(() => clearCheckpoints());
+    checkpointWriteQueue = task.catch(() => undefined);
+    task.then(() => refreshCheckpointCard()).catch((error) => {
+      console.warn("Could not remove saved game", error);
+      setCheckpointStatus("Your saved game could not be removed.", "warn");
+      refreshCheckpointCard();
+    });
+    return task;
+  }
+
   function setCheckpointStatus(message, kind) {
     if (!el.saveStatus) return;
     el.saveStatus.textContent = message || "";
@@ -1253,7 +1331,7 @@
     substrates = E.substrates.map((saved) => ({
       ...saved, spec: PARTICLES[saved.kind], cache: null, depthBuf: null, dirty: true,
     }));
-    enzymes = E.enzymes; toxins = E.toxins; nutrients = E.nutrients;
+    enzymes = E.enzymes; toxins = E.toxins; epsBlocks = Array.isArray(E.eps) ? E.eps : []; nutrients = E.nutrients;
     predators = E.predators; phages = E.phages; particles = E.particles;
     cam = { x: record.cam.x, y: record.cam.y }; flagPhase = Number(record.flagPhase) || 0;
     state.running = false; state.demo = false; demoWorld = false; paused = false;
@@ -1667,7 +1745,7 @@
     const ox = (WORLD_DEF_W - WORLD_W)/2, oy = (WORLD_DEF_H - WORLD_H)/2;
     setWorld(WORLD_DEF_W, WORLD_DEF_H);
     const shift = (e) => { e.x += ox; e.y += oy; };
-    [cells, predators, phages, substrates, nutrients, particles, enzymes, toxins].forEach((list) => list.forEach(shift));
+    [cells, predators, phages, substrates, nutrients, particles, enzymes, toxins, epsBlocks].forEach((list) => list.forEach(shift));
     cam.x += ox; cam.y += oy;
     demo.dish = false; demo.rim = 1;      // rim fades out over CFG.demo.rimFade seconds
     demoWorld = false;                    // particles spawning into the open ocean are full size again
@@ -1727,7 +1805,8 @@
     if (!state || c.cyst === undefined) return;
     state.dead = state.dead || [];
     state.dead.push({ enzLvl: c.enzLvl.slice(), chemotaxis: !!c.chemotaxis, chemoLevel: c.chemoLevel || 0,
-                      crispr: !!c.crispr, antibiotic: c.antibiotic || 0, ups: (c.ups || []).slice(0, 32),
+                      crispr: !!c.crispr, antibiotic: c.antibiotic || 0, twitching: !!c.twitching, eps: !!c.eps,
+                      ups: (c.ups || []).slice(0, 32),
                       phylo: (c.phylo || c.ups || []).slice(0, 32) });
     if (state.dead.length > 400) state.dead.shift();   // a rolling bank, not an ever-growing one
   }
@@ -1736,7 +1815,8 @@
     if (!bank.length) return false;
     const g = bank[(Math.random()*bank.length)|0];
     c.enzLvl = g.enzLvl.slice(); c.chemotaxis = g.chemotaxis; c.chemoLevel = g.chemoLevel;
-    c.crispr = g.crispr; c.antibiotic = g.antibiotic; c.ups = (g.ups || []).slice();
+    c.crispr = g.crispr; c.antibiotic = g.antibiotic; c.twitching = !!g.twitching; c.eps = !!g.eps;
+    c.ups = (g.ups || []).slice();
     c.phylo = (g.phylo || g.ups || []).slice();
     return true;
   }
@@ -1753,6 +1833,8 @@
         if (Math.random() < 0.40) { c.chemotaxis = true; c.chemoLevel = 1 + (Math.random() < 0.3 ? 1 : 0); }
         if (Math.random() < 0.22) c.crispr = true;
         if (Math.random() < 0.30) c.antibiotic = 1;
+        if (Math.random() < 0.18) c.twitching = true;
+        if (Math.random() < 0.18) c.eps = true;
         c.ups = genomeUps(c);   // it arrived already carrying these — read the log off the genome
         c.phylo = c.ups.slice();
       }
@@ -1810,8 +1892,22 @@
     enzymes.push({ x: wrapX(c.x + p[0]), y: wrapY(c.y + p[1]), r: 4, life: CFG.enzyme.life, age: 0, res, maxR });
     return true;
   }
-  const AB = 3; // antibiotic deployable id (0-2 are the enzymes)
-  function ownedDeployables(c) { const o = ownedEnzymes(c); if (c.antibiotic > 0) o.push(AB); return o; }
+  const AB = 3, EPS = 4; // deployable ids (0-2 are the enzymes)
+  function ownedDeployables(c) {
+    const o = ownedEnzymes(c);
+    if (c.antibiotic > 0) o.push(AB);
+    if (c.eps) o.push(EPS);
+    return o;
+  }
+  function releaseEps(c, angle = c.angle) {
+    const E = CFG.eps;
+    if (!c.eps || c.energy < E.cost || epsBlocks.length >= E.maxCount) return false;
+    c.energy -= E.cost;
+    const d = cellHalfLen(c) + E.radius + 3;
+    epsBlocks.push({ x: wrapX(c.x + Math.cos(angle)*d), y: wrapY(c.y + Math.sin(angle)*d),
+      angle: angle + Math.PI/4, r: 4, maxR: E.radius, life: E.life, age: 0 });
+    return true;
+  }
   // A grazer has no enzymes, so Space (and the phone's release button) becomes a sprint instead.
   function protistTurbo() {
     const pr = controlledProtist(); if (!pr) return;
@@ -1829,6 +1925,9 @@
     if (!ownedDeployables(c).includes(state.activeEnzyme)) state.activeEnzyme = ownedDeployables(c)[0] ?? 2;
     if (state.activeEnzyme === AB) {
       if (releaseAntibiotic(c)) Audio.play("enzyme", 0.55);
+    }
+    else if (state.activeEnzyme === EPS) {
+      if (releaseEps(c)) Audio.play("enzyme", 0.5);
     }
     else if (releaseEnzyme(c, state.activeEnzyme)) Audio.play("enzyme", 0.7);
   }
@@ -1885,8 +1984,9 @@
   // a deployable's color + short label — same colors the gene chips use, so the phone's
   // release button and the genome row can never disagree about what "carb" looks like
   const TOXIN_UI = "#f05ad0";
-  const deployColor = (id) => (id === AB ? TOXIN_UI : RESOURCES[id].color);
-  const deployName = (id) => id === AB ? "Antibiotic" :
+  const EPS_UI = "#d8b86a";
+  const deployColor = (id) => id === AB ? TOXIN_UI : id === EPS ? EPS_UI : RESOURCES[id].color;
+  const deployName = (id) => id === AB ? "Antibiotic" : id === EPS ? "EPS" :
     RESOURCES[id].enzyme[0].toUpperCase() + RESOURCES[id].enzyme.slice(1);
   function announceDeployable(id) { showAnnouncement(`${deployName(id)} loaded`, deployColor(id), "↻"); }
   function cycleEnzyme(dir) {                // dir -1 steps back; default forward
@@ -1899,7 +1999,7 @@
     announceDeployable(state.activeEnzyme);
     Audio.play("eat", 0.3);
   }
-  // directly load a specific deployable by tapping its gene (id 0-2 enzymes, 3 antibiotic); ignored if not owned
+  // directly load a specific deployable by tapping its gene (0-2 enzymes, 3 antibiotic, 4 EPS)
   function selectEnzyme(id) {
     if (!state || !state.running) return;
     const c = controlledCell(); if (!c) return;
@@ -1971,6 +2071,8 @@
     d1.chemoLevel = d2.chemoLevel = c.chemoLevel;
     d1.crispr = d2.crispr = c.crispr;
     d1.antibiotic = d2.antibiotic = c.antibiotic;
+    d1.twitching = d2.twitching = !!c.twitching;
+    d1.eps = d2.eps = !!c.eps;
     d1.enzLvl = c.enzLvl.slice(); d2.enzLvl = c.enzLvl.slice();
     d1.ups = d2.ups = c.ups || [];   // the adaptation log is heritable too (shared until one of them adapts)
     d1.phylo = d2.phylo = c.phylo || c.ups || []; // event ancestry survives gain and gene loss alike
@@ -1981,7 +2083,7 @@
     if (c.controlled) Audio.play("divide", 0.7);
   }
 
-  function cellStrength(c) { return (c.enzLvl[0]+c.enzLvl[1]+c.enzLvl[2]-1) + c.chemoLevel + (c.crispr ? 2 : 0) + c.energy*0.01; }
+  function cellStrength(c) { return upgradeTier(c) + (c.crispr ? 1 : 0) + c.energy*0.01; }
   function transferControl(c) {
     const others = cells.filter((o) => o.alive && o !== c);
     if (!others.length) return;
@@ -2087,7 +2189,8 @@
                                         gen: state.gen, score: state.score, dur: state.elapsed, roleSwaps: state.roleSwaps });
   function gameOver(dayComplete) {
     state.running = false;
-    recordGame();
+    const scoreRecorded = recordGame();
+    if (el.nameRow) el.nameRow.classList.toggle("hidden", !scoreRecorded);
     const cal = `<b>${Math.round(state.score).toLocaleString()}</b> calories`;
     // a run played with the tuning panel open isn't comparable to anyone else's — say so
     const tuned = cfgTuned() ? `<br><span style="font-size:12px;opacity:.7;color:#ffd24a">tuned run — kept local, not sent to the shared leaderboard</span>` : "";
@@ -2211,7 +2314,8 @@
         if (live.length) startDissolve(live[(Math.random()*live.length)|0]);
       }
     }
-    updateEnzymes(dt); updateToxins(dt); updateNutrients(dt); updatePredators(dt); updatePhages(dt);
+    updateEnzymes(dt); updateToxins(dt); updateEps(dt); rebuildEpsSpace();
+    updateNutrients(dt); updatePredators(dt); updatePhages(dt);
     // while you're a protist: keep control on a living grazer. Falling back to a bacterium needs EVERY
     // grazer dead at once, which their immigration all but rules out — so in practice, grazer is for keeps.
     if (state.role === "protist" && !controlledProtist()) {
@@ -2312,15 +2416,20 @@
     // frame, is in open water — one cheap bounding-box pass proves that, and then it just moves.
     const bpReach = stepDist + cellHalfLen(c) + CFG.cell.radius + 4;
     let near = false;
-    for (const p of substrates) {
+    // Twitching motility is surface crawling: food particles no longer stop this cell. EPS is a
+    // separate extracellular wall and remains solid even to another twitching bacterium.
+    if (!c.twitching) for (const p of substrates) {
       if (Math.abs(dx(c.x, p.x)) < p.half + bpReach && Math.abs(dy(c.y, p.y)) < p.half + bpReach) { near = true; break; }
+    }
+    if (!near) for (const z of epsSpace.query(c.x, c.y, bpReach + CFG.eps.radius, epsCandidates)) {
+      if (z.life > 0 && toroDist2(c.x, c.y, z.x, z.y) < (bpReach + z.r)**2) { near = true; break; }
     }
     if (!near) { c.x = wrapX(c.x + c.vx*dt); c.y = wrapY(c.y + c.vy*dt); }
     else {
       const steps = clamp(Math.ceil(stepDist/2), 1, 8);
       for (let s = 0; s < steps; s++) {
         c.x = wrapX(c.x + c.vx*dt/steps); c.y = wrapY(c.y + c.vy*dt/steps);
-        collideRod(c);
+        collideRod(c, !!c.twitching);
       }
     }
 
@@ -2410,6 +2519,28 @@
         if (threatened) { releaseAntibiotic(c); c.toxCd = rand(4.5, 8); } else c.toxCd = 0.6; // else re-check shortly
       }
     }
+    // EPS producers place a block BETWEEN themselves and a nearby infectious phage or grazer.
+    // A long cooldown and global cap keep a large colony from paving the whole ocean in one tick.
+    if (c.eps && !c.controlled && c.energy > CFG.eps.cost*3) {
+      c.epsCd = (c.epsCd || 0) - dt;
+      if (c.epsCd <= 0) {
+        const range = CFG.eps.threatRange, range2 = range*range;
+        let threat = null, best = range2;
+        for (const pr of predatorSpace.query(c.x, c.y, range + SPATIAL_FRAME_PAD, predatorCandidates)) {
+          if (pr.dead) continue;
+          const d = toroDist2(c.x, c.y, pr.x, pr.y); if (d < best) { best = d; threat = pr; }
+        }
+        for (const ph of phageSpace.query(c.x, c.y, range + SPATIAL_FRAME_PAD, phageCandidates)) {
+          if (ph.dead || ph.type !== "green" || !hostMatch(ph.host, upgradeTier(c))) continue;
+          const d = toroDist2(c.x, c.y, ph.x, ph.y); if (d < best) { best = d; threat = ph; }
+        }
+        if (threat) {
+          const angle = Math.atan2(dy(threat.y, c.y), dx(threat.x, c.x));
+          if (releaseEps(c, angle)) c.epsCd = rand(CFG.eps.cooldown[0], CFG.eps.cooldown[1]);
+          else c.epsCd = 0.8;
+        } else c.epsCd = 0.8;
+      }
+    }
   }
 
   function updateEnzymes(dt) {
@@ -2461,6 +2592,15 @@
       }
     }
     toxins = toxins.filter((z) => z.life > 0);
+  }
+
+  function updateEps(dt) {
+    const E = CFG.eps;
+    for (const z of epsBlocks) {
+      z.age += dt; z.life -= dt;
+      z.r = z.maxR*Math.min(1, z.age/E.growTime); // solid while present; never touched by enzymes
+    }
+    epsBlocks = epsBlocks.filter((z) => z.life > 0);
   }
 
   function startDissolve(p) {
@@ -2652,6 +2792,7 @@
         ph.x = wrapX(ph.x + ph.vx*dt); ph.y = wrapY(ph.y + ph.vy*dt);
         ph.life -= dt; if (ph.life <= 0) { ph.dead = true; continue; }
       }
+      collideEpsCircle(ph, ph.r);                       // EPS excludes green and gold phages alike
       // A GRAZER can grab the gold phage too — it's the protist's version of an adaptation, and it
       // lengthens your turbo burst for the rest of the run. (Without this the gold star on the map
       // was just taunting you: as a protist there was nothing you could do with it.)
@@ -2797,6 +2938,7 @@
     if (ZOOM !== 1) { ctx.translate(VIEW_W/2, VIEW_H/2); ctx.scale(ZOOM, ZOOM); ctx.translate(-VIEW_W/2, -VIEW_H/2); }
     drawDish();                       // the glass, and the dark beyond it
     for (const p of substrates) drawSubstrate(p);
+    for (const z of epsBlocks) drawEps(z);
     for (const z of enzymes) drawEnzyme(z);
     for (const z of toxins) drawToxin(z);
     for (const n of visibleSpatial(nutrientSpace, nutrientCandidates, CFG.nutrient.radius + 4)) drawNutrient(n);
@@ -2947,6 +3089,26 @@
     ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, z.r, 0, 6.28); ctx.fill();
     ctx.restore();
   }
+  function drawEps(z) {
+    const cx = sx(z.x), cy = sy(z.y); if (!onScreen(cx, cy, z.r + 5)) return;
+    const fade = clamp(z.life/3, 0, 1), r = z.r;
+    ctx.save(); ctx.translate(cx, cy); ctx.rotate(z.angle || 0); ctx.globalAlpha = fade;
+    ctx.fillStyle = "rgba(216,184,106,0.48)"; ctx.strokeStyle = "rgba(255,228,155,0.9)"; ctx.lineWidth = 1.5;
+    // A soft-cornered polysaccharide block. Physics uses its circumscribed circle so no organism
+    // can leak through a visual corner at speed.
+    const q = r*0.69, corner = r*0.24;
+    ctx.beginPath();
+    ctx.moveTo(-q + corner, -q); ctx.lineTo(q - corner, -q); ctx.quadraticCurveTo(q, -q, q, -q + corner);
+    ctx.lineTo(q, q - corner); ctx.quadraticCurveTo(q, q, q - corner, q);
+    ctx.lineTo(-q + corner, q); ctx.quadraticCurveTo(-q, q, -q, q - corner);
+    ctx.lineTo(-q, -q + corner); ctx.quadraticCurveTo(-q, -q, -q + corner, -q); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = "rgba(255,246,207,0.34)";
+    for (const [x, y] of [[-0.34,-0.28],[0.28,-0.31],[-0.12,0.22],[0.39,0.28]]) {
+      ctx.beginPath(); ctx.arc(x*r, y*r, Math.max(1.2, r*0.08), 0, TAU); ctx.fill();
+    }
+    ctx.restore();
+  }
   function drawNutrient(n) {
     const cx = sx(n.x), cy = sy(n.y); if (!onScreen(cx, cy, 6)) return;
     ctx.save(); ctx.globalAlpha = clamp(n.life/2, 0.25, 1);
@@ -3012,6 +3174,13 @@
     ctx.lineWidth = 1.6; ctx.beginPath();
     for (let i = 0; i <= 14; i++) { const t = i/14; ctx[i ? "lineTo" : "moveTo"](-hl - t*22, Math.sin(flagPhase + t*8 + c.x*0.1)*4*t); }
     ctx.stroke();
+    if (c.twitching) { // retractile type-IV pili: the machinery that lets this lineage crawl on particles
+      ctx.strokeStyle = "rgba(79,227,255,0.82)"; ctx.lineWidth = 0.9;
+      for (const side of [-1, 1]) for (const x of [-hl*0.45, hl*0.2]) {
+        ctx.beginPath(); ctx.moveTo(x, side*rad*0.75);
+        ctx.lineTo(x + Math.sin(flagPhase*0.3 + x)*4, side*(rad + 7 + (x > 0 ? 2 : 0))); ctx.stroke();
+      }
+    }
     const g = ctx.createLinearGradient(-hl, 0, hl, 0);
     if (c.controlled) { g.addColorStop(0, "#3fbfa0"); g.addColorStop(0.5, "#8dffdc"); g.addColorStop(1, "#3fbfa0"); }
     else { g.addColorStop(0, "#3a9d92"); g.addColorStop(0.5, "#7fd8c4"); g.addColorStop(1, "#3a9d92"); }
@@ -3029,6 +3198,8 @@
     if (c.chemotaxis) { ctx.strokeStyle = "rgba(255,210,90,0.9)"; ctx.lineWidth = 1.3; roundedCapsule(ctx, hl + 1.6, rad + 1.3); ctx.stroke(); }
     // CRISPR gene: dashed violet outline (a spacer-array look)
     if (c.crispr) { ctx.strokeStyle = "rgba(195,155,255,0.95)"; ctx.lineWidth = 1.4; ctx.setLineDash([2.2, 2]); roundedCapsule(ctx, hl + 3.4, rad + 3); ctx.stroke(); ctx.setLineDash([]); }
+    // EPS-production gene: amber dotted matrix around the envelope (the deployed blocks use the same color)
+    if (c.eps) { ctx.strokeStyle = "rgba(216,184,106,0.9)"; ctx.lineWidth = 1.2; ctx.setLineDash([1, 3]); roundedCapsule(ctx, hl + 5, rad + 4.5); ctx.stroke(); ctx.setLineDash([]); }
     const near = (c.energy - CFG.cell.lenBaseEnergy)/(CFG.cell.divideThreshold - CFG.cell.lenBaseEnergy);
     if (near > 0.75) { ctx.strokeStyle = "rgba(20,80,66,0.6)"; ctx.lineWidth = 1.5;
       const pinch = rad*(1 - (near-0.75)/0.25*0.7); ctx.beginPath(); ctx.moveTo(0, -pinch); ctx.lineTo(0, pinch); ctx.stroke(); }
@@ -3175,7 +3346,8 @@
   // Colors: dataviz skill's validated 8-hue categorical palette (dark, CVD-safe order).
   const CHART = { interval: 0.5, samples: 200, W: 800, H: 96, subH: 64, surface: "#06181d" };
   const ECO_COLOR = ["#3987e5", "#199e70", "#c98500", "#008300", "#9085e9", "#e66767", "#d55181", "#d95926"];
-  const PROTIST_COLOR = "#ff9ec0", VIRUS_COLOR = "#8bf06a", CYST_COLOR = "#9aa6a0", CRISPR_COLOR = "#c39bff", TOXIN_COLOR = "#f05ad0";
+  const PROTIST_COLOR = "#ff9ec0", VIRUS_COLOR = "#8bf06a", CYST_COLOR = "#9aa6a0", CRISPR_COLOR = "#c39bff", TOXIN_COLOR = "#f05ad0",
+        TWITCH_COLOR = "#4fe3ff", EPS_COLOR = "#d8b86a";
   // cause-of-mortality series (index order matches MORT_IDX: grazing / viral / starvation / antibiotic)
   const MORT_COLORS = [PROTIST_COLOR, VIRUS_COLOR, CYST_COLOR, TOXIN_COLOR];
   const MORT_LABELS = ["grazing", "viral", "starvation", "antibiotic"];
@@ -3474,8 +3646,13 @@
   function loadScores() { try { return normalizeScoreList(JSON.parse(localStorage.getItem(HS_KEY))); } catch (e) { return []; } }
   function escapeHtml(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
   let justFinishedTs = null; // marks the run just completed, to highlight it in the list
+  function scoreWorthSaving(rec) {
+    return !!(rec && (rec.score > 0 || rec.gen > 1 ||
+      (Array.isArray(rec.upgrades) && rec.upgrades.length > 0) ||
+      (Array.isArray(rec.roleSwaps) && rec.roleSwaps.length > 0)));
+  }
   function recordGame() {
-    if (!state) return;
+    if (!state) return false;
     // Keyed on the RUN, not on the moment. Surviving another day re-records under the same id, so
     // the board UPDATES that one entry instead of stacking a fresh row for every day you get
     // through — the backend upserts by id, and the local list replaces by id below.
@@ -3483,6 +3660,7 @@
     const rec = { id, score: Math.round(state.score), gen: state.gen, date: id, dur: Math.round(state.elapsed), hist: state.fullHist, upgrades: state.upgrades, name: playerName,
                   day: state.day || 1, device: state.device || "desktop", lineages: state.lineages, roleSwaps: state.roleSwaps,
                   tuned: cfgTuned() || undefined }; // undefined → omitted by JSON.stringify, so untuned runs are unchanged on the wire
+    if (!scoreWorthSaving(rec)) { justFinishedTs = null; lastRec = null; return false; }
     justFinishedTs = id; lastRec = rec;
     try {
       const arr = loadScores().filter((r) => r.id !== id); // replace this run's row rather than duplicating it
@@ -3490,6 +3668,7 @@
       localStorage.setItem(HS_KEY, JSON.stringify(arr.slice(0, HS_MAX)));
     } catch (e) { /* storage unavailable — high scores just won't persist */ }
     submitScore(rec); // push to the shared leaderboard (fire-and-forget, safe if the backend isn't there)
+    return true;
   }
   function queueScoreWrite(payload) {
     if (typeof fetch !== "function" || !payload) return;
@@ -4048,7 +4227,10 @@
   function toggleHelp() { helpOpen ? hideHelp() : showHelp(); }
   function pauseGame() { if (!state || !state.running || paused) return; paused = true; releaseStick(); showScores({ liveDetail: true }); }
   function resumeGame() { paused = false; hideScores(); }
-  function endGame() { if (!state || !state.running || state.demo) return; paused = false; hideScores(); gameOver(); } // the demo has no score to end
+  function endGame() {
+    if (!state || !state.running || state.demo) return;
+    paused = false; hideScores(); deleteSavedGame(); gameOver();
+  } // the demo has no score or checkpoint to end
   const ANNOUNCEMENT_GAP = 86, ANNOUNCEMENT_MS = 1350;
   let _toastTimer = null;
   function positionToast() { // leave clear water between the bubble and whichever organism is controlled
@@ -4184,8 +4366,13 @@
       el.enzTox.classList.toggle("owned", owned);
       el.enzTox.classList.toggle("active", owned && state.activeEnzyme === 3);
       el.enzTox.innerHTML = "antibiotic" + (owned ? amp(lvl) : ""); }
+    if (el.enzEps) { const owned = !!(pc && pc.eps);
+      el.enzEps.classList.toggle("owned", owned);
+      el.enzEps.classList.toggle("active", owned && state.activeEnzyme === EPS);
+      el.enzEps.textContent = "EPS"; }
     if (el.abilChemo) { const on = !!(pc && pc.chemotaxis); el.abilChemo.classList.toggle("owned", on); el.abilChemo.innerHTML = "chemotaxis" + (on ? amp(pc.chemoLevel) : ""); }
     if (el.abilCrispr) el.abilCrispr.classList.toggle("owned", !!(pc && pc.crispr));
+    if (el.abilTwitch) el.abilTwitch.classList.toggle("owned", !!(pc && pc.twitching));
   }
 
   // -------------------------------------------------------------------- loop
@@ -4395,6 +4582,13 @@
     "toxin.crossDist": "Cross-reactivity: bacteria at least this genetic distance from the releaser are harmed by its antibiotic too.",
     "toxin.crossFactor": "How hard that cross-reactive dose lands on those distant lineages (1 = the full dose).",
     "toxin.radiusPer": "Cloud radius gained per antibiotic level — leveling widens the cloud rather than strengthening it.",
+    "eps.life": "Seconds an EPS block remains in the ocean before its matrix ages away.",
+    "eps.radius": "Collision radius of one EPS block (px).",
+    "eps.growTime": "Seconds a newly released EPS block takes to reach full size.",
+    "eps.cost": "Energy spent per EPS block released.",
+    "eps.maxCount": "Global cap on live EPS blocks — the performance and ocean-access backstop.",
+    "eps.cooldown": "Seconds between autonomous EPS releases (picked at random in this range).",
+    "eps.threatRange": "How close a dangerous phage or protist must be before an autonomous producer releases EPS.",
     "nutrient.life": "Seconds a freed nutrient mote floats before decaying.",
     "nutrient.radius": "Pickup radius of a nutrient mote (px).",
     "nutrient.maxCount": "Cap on free-floating nutrient motes.",
@@ -4490,6 +4684,7 @@
     "cell.maxCells": { min: 1, max: 200000, integer: true },
     "predator.safetyMax": { min: 1, max: 2000, integer: true },
     "phage.maxCount": { min: 1, max: 10000, integer: true },
+    "eps.maxCount": { min: 0, max: 2000, integer: true },
     "nutrient.maxCount": { min: 1, max: 10000, integer: true },
     "substrate.count": { min: 0, max: 1000, integer: true },
   };
@@ -4498,7 +4693,7 @@
     "cycle.preyFloor", "predator.count", "predator.minCount", "predator.immigrateCap",
     "predator.immigrateMax", "predator.killMotes", "phage.greenCount", "phage.seedBatch",
     "phage.greenFloor", "phage.goldCount", "phage.goldCountTouch", "phage.hostTolerance",
-    "phage.burst.0", "phage.burst.1", "toxin.crossDist",
+    "phage.burst.0", "phage.burst.1", "toxin.crossDist", "eps.maxCount",
   ]);
   const TUNE_POSITIVE_PATHS = new Set([
     "cell.radius", "cell.baseHalf", "cell.maxHalf", "cell.dragRate", "cell.cystDragRate",
@@ -4508,6 +4703,7 @@
     "substrate.sizeMin", "substrate.sizeMax", "substrate.lifeMin", "substrate.lifeMax",
     "substrate.dissolveTime", "enzyme.life", "enzyme.maxRadius", "enzyme.growTime", "toxin.life",
     "toxin.maxRadius", "toxin.growTime", "nutrient.life", "nutrient.radius", "cycle.preyEvery",
+    "eps.life", "eps.radius", "eps.growTime", "eps.cooldown.0", "eps.cooldown.1", "eps.threatRange",
     "cycle.turboSecs", "cycle.turboMaxSecs", "predator.radius", "predator.satiatedTime",
     "predator.maturity", "predator.reproCooldown", "predator.immigrateEvery", "predator.respawnFloor",
     "phage.radius", "phage.life.0", "phage.life.1", "phage.latent.0", "phage.latent.1",
@@ -4521,6 +4717,7 @@
     ["phage.life.0", "phage.life.1"], ["phage.burst.0", "phage.burst.1"],
     ["phage.latent.0", "phage.latent.1"], ["phage.greenSeed.0", "phage.greenSeed.1"],
     ["phage.goldLife.0", "phage.goldLife.1"], ["cycle.turboSecs", "cycle.turboMaxSecs"],
+    ["eps.cooldown.0", "eps.cooldown.1"],
   ];
   const TUNE_RELATIONS = [
     ["cell.startEnergy", "cell.maxEnergy", "start energy cannot exceed max energy"],
@@ -4776,6 +4973,10 @@
     }
   });
   if (el.adminSave) el.adminSave.addEventListener("click", adminSave);
+  if (el.adminStart) el.adminStart.addEventListener("click", () => {
+    toggleAdmin(false);
+    start(); // newGame reads the live CFG; it does not reset the selected tuning
+  });
   if (el.adminReset) el.adminReset.addEventListener("click", () => {
     commitCfg(cloneCfg(CFG_DEFAULTS)); syncAdmin();
     adminStatus("all values reset to defaults");
@@ -4902,9 +5103,10 @@
       fn();
     });
     act(el.tPause, togglePause, false); // must also work while paused, to un-pause
-    // tap a gene to load that enzyme/antibiotic (pointerdown covers mouse clicks too)
+    // tap a deployable gene to load it (pointerdown covers mouse clicks too)
     el.enz.forEach((g, i) => act(g, () => selectEnzyme(i), false));
     act(el.enzTox, () => selectEnzyme(3), false);
+    act(el.enzEps, () => selectEnzyme(EPS), false);
 
     // Rolodex buttons: TAP does the thing, SWIPE up/down cycles what's loaded. Telling the two
     // apart means we can only commit on pointerUP — you can't know a press was a swipe until the
