@@ -45,7 +45,7 @@ function score_buckets($value) {
     if (count($out) >= 64 || !preg_match('/^(?:0|[1-9][0-9]*)$/', (string)$key)) continue;
     $bucket = (int)$key;
     $number = score_number($count, 0, 100000, null);
-    if ($bucket < 0 || $bucket > 511 || $number === null) continue;
+    if ($bucket < 0 || $bucket > 4095 || $number === null) continue;
     $out[$bucket] = (int)round($number);
   }
   ksort($out, SORT_NUMERIC);
@@ -56,17 +56,16 @@ function score_upgrade($value, $maxTime = 86400) {
   if (!is_object($value)) return null;
   $abbr = preg_replace('/[^A-Za-z0-9]/', '', score_text(score_value($value, 'abbr', ''), 12));
   if (!is_string($abbr) || $abbr === '') return null;
+  $out = ['t' => score_number(score_value($value, 't', 0), 0, $maxTime, 0), 'abbr' => $abbr];
+  if (score_value($value, 'acquired', false) === true) $out['acquired'] = true; // omit the common false
+  // label & color are OPTIONAL: a compact record omits them and the client rebuilds both from the abbr.
+  // Keep them only when actually supplied (legacy full-form records), so a stored default can never
+  // override the client's reconstruction.
   $label = score_text(score_value($value, 'label', ''), 64);
-  if ($label === '') $label = $abbr;
+  if ($label !== '') $out['label'] = $label;
   $color = score_text(score_value($value, 'color', ''), 9);
-  if (!preg_match('/^#[0-9A-Fa-f]{3,8}$/', $color)) $color = '#9fc3ba';
-  return [
-    't' => score_number(score_value($value, 't', 0), 0, $maxTime, 0),
-    'label' => $label,
-    'abbr' => $abbr,
-    'color' => $color,
-    'acquired' => score_value($value, 'acquired', false) === true,
-  ];
+  if (preg_match('/^#[0-9A-Fa-f]{3,8}$/', $color)) $out['color'] = $color;
+  return $out;
 }
 
 function score_upgrades($value, $limit = 200, $maxTime = 86400) {
@@ -95,7 +94,7 @@ function score_history_sample($value) {
   if ($sub !== null) $out['sub'] = $sub;
   $mort = score_vector(score_value($value, 'mort'), 4, 1000000);
   if ($mort !== null) $out['mort'] = $mort;
-  $levels = score_vector(score_value($value, 'lvl'), 8, 63);
+  $levels = score_vector(score_value($value, 'lvl'), 8, 511);
   if ($levels !== null) $out['lvl'] = $levels;
   return $out;
 }
@@ -115,9 +114,9 @@ function score_lineages($value) {
   if (!is_object($value)) return new stdClass();
   $out = [];
   foreach (get_object_vars($value) as $key => $lineage) {
-    if (count($out) >= 64 || !preg_match('/^(?:0|[1-9][0-9]*)$/', (string)$key) || !is_object($lineage)) continue;
+    if (count($out) >= 512 || !preg_match('/^(?:0|[1-9][0-9]*)$/', (string)$key) || !is_object($lineage)) continue; // keep every band's genome (compact encoding keeps this cheap)
     $bucket = (int)$key;
-    if ($bucket < 0 || $bucket > 511) continue;
+    if ($bucket < 0 || $bucket > 4095) continue;
     $entry = [
       't' => score_number(score_value($lineage, 't', 0), 0, 86400, 0),
       'ups' => score_upgrades(score_value($lineage, 'ups'), 32),
@@ -179,6 +178,7 @@ function score_normalize_record($record, $now) {
     'upgrades' => score_upgrades(score_value($record, 'upgrades')),
     'device' => score_value($record, 'device', '') === 'touch' ? 'touch' : 'desktop',
     'day' => score_integer(score_value($record, 'day', 1), 1, 3650, 1),
+    'live' => score_value($record, 'live', false) === true, // run is still continuable — PUBLIC in-progress flag
     'lineages' => score_lineages(score_value($record, 'lineages')),
     'roleSwaps' => score_role_swaps(score_value($record, 'roleSwaps')),
   ];

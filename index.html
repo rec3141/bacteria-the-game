@@ -102,6 +102,10 @@
   #analysisSubChart, #analysisMortChart, #analysisDiversityChart { display: block; width: 100%; height: 66px; border-radius: 6px; }
   #detailSubChart, #detailMortChart, #detailDiversityChart { display: block; width: 100%; height: 90px; border-radius: 6px; }
   .alabel.sublabel { margin-top: 8px; opacity: .5; text-transform: none; letter-spacing: 0; }
+  .zoomhint { font-size: 10px; opacity: .55; font-weight: normal; text-transform: none; letter-spacing: 0; font-style: italic; margin-left: 4px; }
+  .zoomctl { display: flex; align-items: center; gap: 6px; margin: 1px 0 5px; }
+  .zoomctl button { font: inherit; font-size: 11px; line-height: 1; padding: 3px 10px; border-radius: 10px; border: 1px solid rgba(87,224,192,.4); background: transparent; color: var(--accent); cursor: pointer; }
+  .zoomctl button:hover { background: rgba(87,224,192,.12); }
 
   /* Overlays (title / death / win) */
   #help { z-index: 20; }  /* always above the pause / death screens it can be opened from */
@@ -223,6 +227,7 @@
   #scoresTable tr.srow:hover td { background: rgba(87,224,192,.09); }
   #scoresTable tr.current td { background: rgba(87,224,192,.13); }
   #scoresTable .lead { font-size: 11px; }
+  #scoresTable .brew { margin-right: 4px; font-size: 12px; vertical-align: middle; cursor: help; }
   #scoresTable .run { text-align: center; }
   #scoresTable td.chart { padding: 3px 8px; }
   #scoresTable td.chart canvas { display: block; width: 132px; height: 30px; border-radius: 4px; }
@@ -857,12 +862,13 @@
         <div id="nameRow"><label for="nameInput">Name for the leaderboard</label>
           <input id="nameInput" maxlength="18" placeholder="your name" autocomplete="off" spellcheck="false"></div>
         <div class="alabel">Bacteria &amp; your adaptations over the run</div>
+        <div class="zoomctl"><button data-days="1">1d</button><button data-days="7">7d</button><button data-days="0">all</button><span class="zoomhint">drag or scroll to pan · double-click resets</span></div>
         <canvas id="analysisChart" width="900" height="200"></canvas>
         <div class="alabel sublabel" id="analysisSubLabel">Food available (lipid · protein · carb)</div>
         <canvas id="analysisSubChart" width="900" height="96"></canvas>
         <div class="alabel sublabel">Cause of mortality (grazing · viral · starvation · antibiotic)</div>
         <canvas id="analysisMortChart" width="900" height="96"></canvas>
-        <div class="alabel sublabel">Ecotype diversity (<span style="color:#57e0c0">richness S</span> · <span style="color:#c39bff">Shannon H′</span>)</div>
+        <div class="alabel sublabel">Lineage diversity (<span style="color:#57e0c0">richness S</span> · <span style="color:#c39bff">Shannon H′</span>)</div>
         <canvas id="analysisDiversityChart" width="900" height="96"></canvas>
         <div class="alabel sublabel">Phylogeny — how each lineage descends from the founder</div>
         <canvas id="analysisClado" width="900" height="190"></canvas>
@@ -885,12 +891,13 @@
       <div id="scoresList"></div>
       <div id="scoreDetail" class="hidden">
         <div class="alabel" id="detailTitle"></div>
+        <div class="zoomctl"><button data-days="1">1d</button><button data-days="7">7d</button><button data-days="0">all</button><span class="zoomhint">drag or scroll to pan · double-click resets</span></div>
         <canvas id="detailChart" width="900" height="240"></canvas>
         <div class="alabel sublabel" id="detailSubLabel">Food available (lipid · protein · carb)</div>
         <canvas id="detailSubChart" width="900" height="110"></canvas>
         <div class="alabel sublabel">Cause of mortality (grazing · viral · starvation · antibiotic)</div>
         <canvas id="detailMortChart" width="900" height="110"></canvas>
-        <div class="alabel sublabel">Ecotype diversity (<span style="color:#57e0c0">richness S</span> · <span style="color:#c39bff">Shannon H′</span>)</div>
+        <div class="alabel sublabel">Lineage diversity (<span style="color:#57e0c0">richness S</span> · <span style="color:#c39bff">Shannon H′</span>)</div>
         <canvas id="detailDiversityChart" width="900" height="110"></canvas>
         <div class="alabel sublabel">Phylogeny — how each lineage descends from the founder</div>
         <canvas id="detailClado" width="900" height="200"></canvas>

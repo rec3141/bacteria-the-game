@@ -129,7 +129,10 @@
     // expression level is countable, and each level adds lifePerLevel seconds to a released block.
     eps: { lifePerLevel: 4, radius: 24, growTime: 0.3, cost: 4, maxCount: 240,
            cooldown: [12, 18], threatRange: 95 },
-    nutrient: { life: 16, radius: 3.2, maxCount: 600 },
+    nutrient: { life: 16, radius: 3.2, maxCount: 600 }, // GLOBAL cap across the whole sea, and — since digestion now
+    // waits on a free mote slot instead of destroying food — the THROTTLE on how fast blocks dissolve. LOWER = blocks
+    // persist longer (dissolution paced by absorption); HIGHER = blocks vanish on sight. 600 keeps that pacing. Tunable
+    // live via the ` panel if the sea ever feels too greedy or too slow.
     // trophic role-swap: when your whole population dies you flip to the other trophic level
     // instead of a game-over — bacteria extinct → you become a protist (grazer); protists extinct → back to a bacterium.
     cycle: { reseedBacteria: 16, reseedProtists: 4, protistThrust: 240, protistEatScore: 30,
@@ -781,14 +784,20 @@
   // That keeps a spread of genomes alive around you, which is what makes the ecotype chart (and
   // kill-the-winner, which needs variety in adaptation level to bite) mean anything.
   function lineageSignature(path) { return (path || []).map((u) => u && u.abbr).filter(Boolean).join("|"); }
+  // Every distinct band (ecotype+tier) keeps its genome for the whole run — extinct lineages stay
+  // hoverable in the charts, never evicted. The old 64 ceiling froze the map early (so a long or
+  // continued run left most bands reading "no genome recorded"); this is high enough to hold a
+  // marathon's worth. Records stay small because the wire encoding drops everything derivable — see
+  // compactUpgrades/hydrateUpgrade — rather than by throwing lineages away.
+  const LINEAGE_CAP = 512;
   function rememberLineage(c) {
     if (!state || !state.lineages || !c) return;
-    const key = ecoMask(c)*64 + Math.min(63, upgradeTier(c));
+    const key = ecoMask(c)*512 + Math.min(511, upgradeTier(c));
     const snapshot = { t: +state.elapsed.toFixed(1), ups: (c.ups || []).slice(0, 32),
       tree: (c.phylo || c.ups || []).slice(0, 32) };
     const entry = state.lineages[key];
     if (!entry) {
-      if (Object.keys(state.lineages).length < 64) state.lineages[key] = snapshot;
+      if (Object.keys(state.lineages).length < LINEAGE_CAP) state.lineages[key] = snapshot;
       return;
     }
     // Several real genomes can share the chart's compact ecotype+tier bucket. Keep those terminal
@@ -1342,6 +1351,8 @@
     try {
       const found = await loadBestCheckpoint();
       if (requestId !== checkpointCardRequest) return;
+      savedRun = found ? savedRunFromCheckpoint(found.record) : null; // keep the leaderboard's 🌱 in sync
+      refreshScoreListIfOpen();
       if (!found) { if (el.savedContinueBtn) el.savedContinueBtn.classList.add("hidden"); return; }
       formatCheckpointCard(found.record, found.slot === CHECKPOINT_PREVIOUS);
       if (el.savedContinueBtn) el.savedContinueBtn.classList.remove("hidden");
@@ -1945,7 +1956,9 @@
     c.energy -= CFG.cell.enzymeCost;
     const p = cellPolesLocal(c);
     const maxR = CFG.enzyme.maxRadius * (1 + (c.enzLvl[res]-1)*CFG.cell.exprBoost); // this enzyme's expression → radius
-    enzymes.push({ x: wrapX(c.x + p[0]), y: wrapY(c.y + p[1]), r: 4, life: CFG.enzyme.life, age: 0, res, maxR });
+    // The cell YOU steer is priority: its enzyme always frees food (it bypasses the mote cap) so the
+    // contract "release an enzyme → something happens" is never broken by background cells hogging motes.
+    enzymes.push({ x: wrapX(c.x + p[0]), y: wrapY(c.y + p[1]), r: 4, life: CFG.enzyme.life, age: 0, res, maxR, player: !!c.controlled });
     return true;
   }
   const AB = 3, EPS = 4; // deployable ids (0-2 are the enzymes)
@@ -2077,12 +2090,17 @@
     }
     return { reps, ks: [...reps.keys()].sort((a, b) => a - b) };
   }
-  const lineageKey = (c) => ecoMask(c)*64 + upgradeTier(c);
-  const lineageKeyColor = (k) => levelColor(Math.floor(k/64), k % 64); // key → the color it's drawn in
+  // Lineage identity packs the 3-bit ecotype mask (0-7) above a 9-bit adaptation tier (0-511):
+  // key = mask*512 + tier. The tier field was 6 bits (0-63), which capped the chart/circos at tier 63 —
+  // every adaptation past that pinned the lineage to one band. 9 bits lifts that ceiling to 511. Tier is
+  // clamped to 511 so it can never overflow into the mask bits (which previously mis-colored / crashed).
+  const lineageKey = (c) => ecoMask(c)*512 + Math.min(511, upgradeTier(c));
+  const lineageKeyColor = (k) => levelColor(Math.floor(k/512), k % 512); // key → the color it's drawn in
   function announceLineage(c) {
     if (!c) return;
-    const key = lineageKey(c), population = cells.reduce((n, x) => n + (x.alive && lineageKey(x) === key ? 1 : 0), 0);
-    showAnnouncement(`Lineage · ${population.toLocaleString()} ${population === 1 ? "bacterium" : "bacteria"}`,
+    const key = lineageKey(c), tier = upgradeTier(c);
+    const population = cells.reduce((n, x) => n + (x.alive && lineageKey(x) === key ? 1 : 0), 0);
+    showAnnouncement(`Lineage · tier ${tier} · ${population.toLocaleString()} ${population === 1 ? "bacterium" : "bacteria"}`,
       lineageKeyColor(key), "●");
   }
   function switchControl(dir) {              // dir -1 steps back through the lineages; default forward
@@ -2141,7 +2159,9 @@
   }
 
   function cellStrength(c) { return upgradeTier(c) + (c.crispr ? 1 : 0) + c.energy*0.01; }
-  function transferControl(c) {
+  // one brief word for what killed you, leading the death toast (map keyed by onCellDeath's cause)
+  const CAUSE_WORD = { predator: "Grazed", lysis: "Lysed", starve: "Starved", toxin: "Poisoned" };
+  function transferControl(c, cause) {
     const others = cells.filter((o) => o.alive && o !== c);
     if (!others.length) return;
     // take over your most-evolved surviving cell, not just the nearest
@@ -2151,8 +2171,8 @@
     best.controlled = true; best.invuln = Math.max(best.invuln, 1.2);
     if (best.cyst) { best.cyst = false; best.energy = Math.max(best.energy, CFG.cell.cystReviveEnergy); } // resuscitate a cyst
     cam.x = best.x; cam.y = best.y; // position the toast against the survivor immediately, even across the torus
-    const tier = upgradeTier(best);
-    showAnnouncement((revived ? "You died · cyst revived" : "You died · switched cells") + ` · tier ${tier}`,
+    const tier = upgradeTier(best), head = (CAUSE_WORD[cause] || "You died") + "!";
+    showAnnouncement(head + (revived ? " · revived tier " : " · now tier ") + tier,
       lineageKeyColor(lineageKey(best)), "☠");
     Audio.play("hit", 0.8);
   }
@@ -2174,7 +2194,7 @@
     rememberGenome(c);   // the sea keeps a seed bank of everything that has ever lived in it
     if (c.infectedGreen) releaseGreenPhages(c);
     burst(c.x, c.y, cause === "predator" ? "#ff7a6b" : cause === "lysis" ? "#7CFC5A" : "#9fb0aa", 18);
-    if (c.controlled) transferControl(c);
+    if (c.controlled) transferControl(c, cause);
   }
   function killCell(c, byPredator) {
     if (!c.alive || c.invuln > 0) return;
@@ -2184,11 +2204,26 @@
   // The trophic role-swap is the biggest thing that can happen in a run — your whole kind dies and
   // you come back as the thing that was eating you. It deserves more than a colour change on the
   // chart: a full-height divider, so "before I was bacteria / after I was the grazer" is unmissable.
-  function drawRoleSwaps(g, W, H, swaps, dur) {
+  // X-ZOOM. The run charts share one time axis; chartView is the visible fraction [a,b] of the whole
+  // run. Wheel zooms about the cursor, drag pans, double-click resets — see bindChartZoom. Every stacked
+  // chart and its markers read this same window, so they stay locked together. Markers are given the
+  // window's TIME bounds (t0,t1) rather than the run's duration, so they slide and clip with the view.
+  let chartView = { a: 0, b: 1 };
+  const chartZoomed = () => chartView.a > 0.0001 || chartView.b < 0.9999;
+  function resetChartView() { chartView = { a: 0, b: 1 }; }
+  function sliceHistView(hist) { // the samples currently visible, plus the window's time fractions
+    const n = hist ? hist.length : 0;
+    if (n < 2 || !chartZoomed()) return { hist: hist || [], t0f: 0, t1f: 1 };
+    const i0 = Math.max(0, Math.floor(chartView.a * (n - 1)));
+    const i1 = Math.min(n, Math.ceil(chartView.b * (n - 1)) + 1);
+    return { hist: hist.slice(i0, i1), t0f: i0 / (n - 1), t1f: (i1 - 1) / (n - 1) };
+  }
+  function drawRoleSwaps(g, W, H, swaps, t0, t1) {
     if (!swaps || !swaps.length) return;
-    const d = Math.max(1, dur), fs = H > 150 ? 11 : 9;
+    const span = Math.max(1e-4, t1 - t0), fs = H > 150 ? 11 : 9;
     for (const s of swaps) {
-      const x = clamp(s.t/d, 0, 1)*W, toProtist = s.to === "protist";
+      if (s.t < t0 - 1e-6 || s.t > t1 + 1e-6) continue;      // outside the zoomed window
+      const x = clamp((s.t - t0)/span, 0, 1)*W, toProtist = s.to === "protist";
       const col = toProtist ? PROTIST_COLOR : "#57e0c0";
       g.save();
       g.strokeStyle = col; g.lineWidth = 2; g.setLineDash([4, 3]);
@@ -2206,27 +2241,29 @@
     }
   }
   // vertical markers where each adaptation happened — overlaid on both the ecotype and substrate charts
-  function drawAdaptationMarkers(g, W, H, upgrades, dur) {
+  function drawAdaptationMarkers(g, W, H, upgrades, t0, t1) {
     if (!upgrades || !upgrades.length) return;
-    const d = Math.max(1, dur), fs = H > 150 ? 11 : 9, rows = H > 150 ? 4 : 3;
-    for (const u of upgrades) { // bright vertical line for gene acquisitions, faint for level-ups
-      const x = clamp(u.t/d, 0, 1)*W;
+    const span = Math.max(1e-4, t1 - t0), fs = H > 150 ? 11 : 9, rows = H > 150 ? 4 : 3;
+    const visible = upgrades.filter((u) => u.t >= t0 - 1e-6 && u.t <= t1 + 1e-6);
+    for (const u of visible) { // bright vertical line for gene acquisitions, faint for level-ups
+      const x = clamp((u.t - t0)/span, 0, 1)*W;
       g.globalAlpha = u.acquired ? 0.95 : 0.28; g.strokeStyle = u.color; g.lineWidth = u.acquired ? 1.6 : 1;
       g.beginPath(); g.moveTo(x, fs + 2); g.lineTo(x, H - 2); g.stroke();
     }
     g.globalAlpha = 1; g.font = fs + "px 'Trebuchet MS', sans-serif"; g.textAlign = "center";
-    upgrades.forEach((u, k) => {                       // abbreviated tags: C/L/P/T/Ab + level, staggered rows
-      const x = clamp(u.t/d, 0, 1)*W;
+    visible.forEach((u, k) => {                        // abbreviated tags: C/L/P/T/Ab + level, staggered rows
+      const x = clamp((u.t - t0)/span, 0, 1)*W;
       g.globalAlpha = u.acquired ? 1 : 0.65; g.fillStyle = u.color;
       g.fillText(u.abbr, clamp(x, 12, W-12), fs - 1 + (k % rows)*(fs + 1));
     });
     g.globalAlpha = 1;
   }
   // Shared annotated renderers (game-over screen + high-score detail view): ecotype, substrate,
-  // mortality, and diversity charts all share the run's adaptation and role-swap time markers.
-  function annotateRun(g, W, H, hist, upgrades, dur, swaps) { renderEcoChart(g, W, H, hist); drawAdaptationMarkers(g, W, H, upgrades, dur); drawRoleSwaps(g, W, H, swaps, dur); }
-  function annotateSub(g, W, H, hist, upgrades, dur, swaps, mode) { renderSubChart(g, W, H, hist, undefined, mode); drawAdaptationMarkers(g, W, H, upgrades, dur); drawRoleSwaps(g, W, H, swaps, dur); }
-  function annotateDiversity(g, W, H, hist, upgrades, dur, swaps) { renderDiversityChart(g, W, H, hist); drawAdaptationMarkers(g, W, H, upgrades, dur); drawRoleSwaps(g, W, H, swaps, dur); }
+  // mortality, and diversity charts all share the run's adaptation and role-swap time markers — and the
+  // same zoom window (sliceHistView), so zooming one axis zooms the whole stack in lockstep.
+  function annotateRun(g, W, H, hist, upgrades, dur, swaps) { const v = sliceHistView(hist); renderEcoChart(g, W, H, v.hist); drawAdaptationMarkers(g, W, H, upgrades, v.t0f*dur, v.t1f*dur); drawRoleSwaps(g, W, H, swaps, v.t0f*dur, v.t1f*dur); }
+  function annotateSub(g, W, H, hist, upgrades, dur, swaps, mode) { const v = sliceHistView(hist); renderSubChart(g, W, H, v.hist, undefined, mode); drawAdaptationMarkers(g, W, H, upgrades, v.t0f*dur, v.t1f*dur); drawRoleSwaps(g, W, H, swaps, v.t0f*dur, v.t1f*dur); }
+  function annotateDiversity(g, W, H, hist, upgrades, dur, swaps) { const v = sliceHistView(hist); renderDiversityChart(g, W, H, v.hist); drawAdaptationMarkers(g, W, H, upgrades, v.t0f*dur, v.t1f*dur); drawRoleSwaps(g, W, H, swaps, v.t0f*dur, v.t1f*dur); }
   function runStatsHtml(hist, upgrades) {
     let peakCol = 0, peakP = 0, peakV = 0;
     for (const s of hist) { let t = 0; for (let i = 0; i < 8; i++) t += s.eco[i]; if (t > peakCol) peakCol = t; if (s.p > peakP) peakP = s.p; if ((s.v||0) > peakV) peakV = s.v; }
@@ -2257,7 +2294,7 @@
                                         gen: state.gen, score: state.score, dur: state.elapsed, roleSwaps: state.roleSwaps });
   function gameOver(dayComplete) {
     state.running = false;
-    const scoreRecorded = recordGame();
+    const scoreRecorded = recordGame(dayComplete); // survived the day → the run is continuable ("live" on the board)
     if (el.nameRow) el.nameRow.classList.toggle("hidden", !scoreRecorded);
     const cal = `<b>${Math.round(state.score).toLocaleString()}</b> calories`;
     // a run played with the tuning panel open isn't comparable to anyone else's — say so
@@ -2292,6 +2329,7 @@
     if (el.continueBtn) el.continueBtn.classList.toggle("hidden", !dayComplete);
     if (el.continueBtn && dayComplete) el.continueBtn.textContent = `Continue to day ${dayN + 1}`;
     if (dayComplete) saveCompletedDay(); else setCheckpointStatus("");
+    resetChartView(); // a fresh run's charts open fully zoomed out
     drawAnalysis();
     if (el.nameInput) el.nameInput.value = playerName; // prefill with the remembered name
     Audio.play(dayComplete ? "spawn" : "death", dayComplete ? 0.7 : 0.9);
@@ -2621,6 +2659,7 @@
       z.age += dt; z.life -= dt;
       const grow = Math.min(1, z.age/CFG.enzyme.growTime);
       z.r = (z.maxR || CFG.enzyme.maxRadius)*grow*(0.6 + 0.4*clamp(z.life/CFG.enzyme.life, 0, 1));
+      const capN = z.player ? CFG.nutrient.maxCount * 3 : CFG.nutrient.maxCount; // your cell always digests; background waits at the plain cap
       // carve overlapping solid voxels into dissolved nutrient motes
       for (const p of substrates) {
         if (p.organic <= 0) continue;
@@ -2635,13 +2674,18 @@
           if (p.gtype[idx] !== z.res) continue; // this enzyme only dissolves its resource
           const clx = (gi+0.5)*cs - half, cly = (gj+0.5)*cs - half;
           if ((clx-lx)**2 + (cly-ly)**2 > r2) continue;
+          // A voxel only DISSOLVES when a nutrient mote can carry off what it frees. At the cap — a big
+          // high-expression cloud can free hundreds of voxels in one frame — leave the voxel intact rather
+          // than deleting its organic into nothing (food vanishing unabsorbed). Digestion then proceeds no
+          // faster than motes are taken up: mass-conserving, uptake-limited. BUT the cell you steer gets a
+          // far higher ceiling (never the plain cap), so your own release always visibly frees food while
+          // only background cells wait their turn — the throttle happens offscreen, never to you.
+          if (p.grid[idx] - CFG.substrate.carveRate*dt <= 0 && nutrients.length >= capN) continue;
           p.grid[idx] -= CFG.substrate.carveRate*dt; p.dirty = true;
           if (p.grid[idx] <= 0) {
             p.grid[idx] = 0; p.organic--; p.orgByType[z.res]--;
-            if (nutrients.length < CFG.nutrient.maxCount) {
-              const wx = wrapX(p.x + clx), wy = wrapY(p.y + cly), a = rand(0, 6.28);
-              nutrients.push({ x: wx, y: wy, vx: Math.cos(a)*rand(3, 10), vy: Math.sin(a)*rand(3, 10), life: CFG.nutrient.life, dead: false, res: z.res });
-            }
+            const wx = wrapX(p.x + clx), wy = wrapY(p.y + cly), a = rand(0, 6.28);
+            nutrients.push({ x: wx, y: wy, vx: Math.cos(a)*rand(3, 10), vy: Math.sin(a)*rand(3, 10), life: CFG.nutrient.life, dead: false, res: z.res });
             // when fully consumed the lifecycle sweep respawns it (drifting in from offscreen)
           }
         }
@@ -3359,7 +3403,7 @@
 
   const MINIMAP_CELL_DOT_LIMIT = 500, MINIMAP_SAMPLE_INTERVAL = 0.5;
   let minimapCellSample = [], minimapCellSampleRun = null, minimapCellSampleT = -Infinity;
-  const minimapPointBuckets = Array.from({ length: 512 }, () => []);
+  const minimapPointBuckets = Array.from({ length: 4096 }, () => []); // indexed by packed lineage key (mask*512+tier), max 7*512+511
   function sampledMinimapCells() {
     if (cells.length <= MINIMAP_CELL_DOT_LIMIT) return cells;
     const run = state && state.runId, now = state ? state.elapsed : 0;
@@ -3426,14 +3470,14 @@
       const used = [];
       for (const c of sampledMinimapCells()) {
         if (!c.alive || c.controlled || c.cyst) continue;
-        const key = ecoMask(c)*64 + Math.min(63, upgradeTier(c)), bucket = minimapPointBuckets[key];
+        const key = ecoMask(c)*512 + Math.min(511, upgradeTier(c)), bucket = minimapPointBuckets[key];
         if (!bucket.length) used.push(key);
         bucket.push(MX(c.x) - 1, MY(c.y) - 1);
       }
       // One path fill per lineage color instead of a fillStyle change + fillRect for every cell.
       for (const key of used) {
         const bucket = minimapPointBuckets[key];
-        ctx.fillStyle = levelColor(key >> 6, key & 63); ctx.beginPath();
+        ctx.fillStyle = levelColor(key >> 9, key & 511); ctx.beginPath();
         for (let i = 0; i < bucket.length; i += 2) ctx.rect(bucket[i], bucket[i + 1], 2, 2);
         ctx.fill(); bucket.length = 0;
       }
@@ -3481,7 +3525,7 @@
     } else {
       items = `<span><i style="background:${RICHNESS_COLOR}"></i>richness S</span>` +
               `<span><i style="background:${SHANNON_COLOR}"></i>Shannon H′</span>`;
-      title = "ecotype diversity";
+      title = "lineage diversity";
     }
     el_subchartlegend.innerHTML = items + `<span id="subchartTitle">${title} vs. time · click to cycle</span>`;
   }
@@ -3507,7 +3551,7 @@
     const eco = [0,0,0,0,0,0,0,0], buckets = {};
     for (const c of cells) {
       const m = ecoMask(c); eco[m]++;          // cysts included in their generation bucket (colored, not a separate gray band)
-      const key = m*64 + Math.min(63, upgradeTier(c)); // mask (0-7) high bits, tier low bits
+      const key = m*512 + Math.min(511, upgradeTier(c)); // mask (0-7) high bits, tier (0-511) low bits
       buckets[key] = (buckets[key] || 0) + 1;
       // Remember the genomes behind every colored band. Same-band variants are deduplicated by their
       // ancestry, so sampling can discover real diversity without copying it into every history row.
@@ -3517,25 +3561,25 @@
   }
   function sampleBuckets(s) { // legacy high-score saves stored eco[]/lvl[] not buckets — synthesize one bucket per ecotype
     if (s.buckets) return s.buckets;
-    const b = {}; if (s.eco) for (let m = 0; m < 8; m++) if (s.eco[m]) b[m*64 + Math.round(s.lvl ? s.lvl[m] : 0)] = s.eco[m];
+    const b = {}; if (s.eco) for (let m = 0; m < 8; m++) if (s.eco[m]) b[m*512 + Math.min(511, Math.round(s.lvl ? s.lvl[m] : 0))] = s.eco[m];
     return b;
   }
-  // Diversity is calculated across ecotypes: richness is the number present, while Shannon H'
-  // weights that richness by how evenly cells are distributed. History has always stored eco[],
-  // but aggregating buckets is a defensive fallback for any partial/imported record that lacks it.
+  // Diversity of the community AS THE CHART DRAWS IT — one entry per coexisting generation
+  // (ecotype + adaptation tier), i.e. per colored band. The old version measured only the 3-bit
+  // ecotype, which collapses to richness 1 the moment the population converges on one trait set
+  // (it always does once every cell carries both enzymes + chemotaxis) — so a visibly rainbow-diverse
+  // community read as "1 ecotype". Counting the generation buckets instead makes richness track the
+  // bands you can see. sampleBuckets returns the real per-generation buckets, or synthesizes one per
+  // ecotype for any legacy record too old to carry them (a graceful fallback, not the common path).
   function diversityIndices(s) {
-    const counts = Array(8).fill(0);
-    if (s && Array.isArray(s.eco)) {
-      for (let i = 0; i < counts.length; i++) counts[i] = Math.max(0, Number(s.eco[i]) || 0);
-    } else {
-      const buckets = sampleBuckets(s || {});
-      for (const key in buckets) counts[(+key >> 6) & 7] += Math.max(0, Number(buckets[key]) || 0);
-    }
+    const buckets = sampleBuckets(s || {});
+    const counts = [];
+    for (const key in buckets) { const n = Math.max(0, Number(buckets[key]) || 0); if (n > 0) counts.push(n); }
     let total = 0;
     for (const n of counts) total += n;
     let shannon = 0;
-    if (total > 0) for (const n of counts) if (n > 0) { const p = n/total; shannon -= p*Math.log(p); }
-    return { richness: counts.filter((n) => n > 0).length, shannon };
+    if (total > 0) for (const n of counts) { const p = n/total; shannon -= p*Math.log(p); }
+    return { richness: counts.length, shannon };
   }
   function hexToHsl(hex) {
     const n = parseInt(hex.slice(1), 16), r = ((n>>16)&255)/255, g = ((n>>8)&255)/255, b = (n&255)/255;
@@ -3545,8 +3589,19 @@
     return [h, s*100, l*100];
   }
   const ECO_HSL = ECO_COLOR.map(hexToHsl);
+  // The ecotype mask is only 3 bits — 8 designed colors — but a very long run's upgradeTier overflows
+  // the tier field of a packed lineage key and pushes the mask index past 7 (see levelColor's callers).
+  // Instead of wrapping back onto the same 8 hues (which made two far-apart lineages share a color, and
+  // before that indexed off the end of the array and crashed the frame), fan out fresh, evenly-spaced
+  // hues by the golden angle for every index beyond the palette — an unlimited supply of distinct colors.
+  function baseHsl(m) {
+    const i = Number.isFinite(m) ? Math.max(0, Math.floor(m)) : 0;
+    if (i < ECO_HSL.length) return ECO_HSL[i];
+    const ref = ECO_HSL[i % ECO_HSL.length];
+    return [(i * 137.508) % 360, ref[1], ref[2]]; // 137.508° = golden angle → maximally-separated hues
+  }
   function levelColor(m, lvl) { // DISCRETE staggered color per generation → sharp transitions, not a smooth rainbow
-    const L = Math.round(lvl), hsl = ECO_HSL[m];
+    const L = Math.round(lvl), hsl = baseHsl(m); // baseHsl never returns undefined and mints new hues past the 8th
     const hue = (((hsl[0] + L*58) % 360) + 360) % 360;        // big hue jumps so consecutive levels contrast
     const light = clamp(hsl[2] + (L % 2 ? -13 : 9), 24, 74);  // alternate darker/lighter to separate them further
     return `hsl(${hue.toFixed(0)}, ${hsl[1].toFixed(0)}%, ${light.toFixed(0)}%)`;
@@ -3603,7 +3658,7 @@
       // Each new lineage = a new color that grows in and fades out as its population rises and falls.
       const bks = S.bks, cum = hist.map(() => 0);
       for (const key of S.keys) {
-        const mask = key >> 6, tier = key & 63;
+        const mask = key >> 9, tier = key & 511;
         g.fillStyle = levelColor(mask, tier);
         g.beginPath(); g.moveTo(xAt(0), yAt(cum[0]));
         for (let i = 1; i <= last; i++) g.lineTo(xAt(i), yAt(cum[i]));
@@ -3713,7 +3768,7 @@
 
   // ---------------------------------------------------------------- high scores
   // SCORE_NORMALIZER_START — kept pure so tests can execute this exact production block.
-  const SCORE_CLIENT_LIMITS = { rows: 100, hist: 800, upgrades: 200, lineages: 64 };
+  const SCORE_CLIENT_LIMITS = { rows: 100, hist: 800, upgrades: 200, lineages: 512 }; // keep every band's genome
   const scoreClientObject = (value) => !!value && typeof value === "object" && !Array.isArray(value);
   function scoreClientNumber(value, min, max, fallback = 0) {
     return Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
@@ -3730,21 +3785,38 @@
     const out = {};
     for (const [rawKey, rawCount] of Object.entries(value).slice(0, 64)) {
       const key = Number(rawKey);
-      if (!Number.isInteger(key) || key < 0 || key > 511 || !Number.isFinite(rawCount)) continue;
+      if (!Number.isInteger(key) || key < 0 || key > 4095 || !Number.isFinite(rawCount)) continue;
       out[key] = scoreClientInteger(rawCount, 0, 100000);
     }
     return out;
   }
+  // Every adaptation's label AND color are fully determined by its abbr (the code assigns them that
+  // way in grantRandomUpgrade_/genomeUps). So the wire form stores only {t, abbr, acquired?} and we
+  // rebuild the rest here — that's the compression that lets a marathon run keep every lineage's genome
+  // without bloating the record. Prefix → gene; the trailing digits are the expression level.
+  const ABBR_SPEC = {
+    L:  { name: "Lipase",             color: RESOURCES[0].color, numbered: true  },
+    P:  { name: "Protease",           color: RESOURCES[1].color, numbered: true  },
+    C:  { name: "Carbohydrase",       color: RESOURCES[2].color, numbered: true  },
+    T:  { name: "Chemotaxis",         color: "#ffd24a",          numbered: true  },
+    Ab: { name: "Antibiotic",         color: TOXIN_COLOR,        numbered: true  },
+    Eps:{ name: "EPS",                color: EPS_COLOR,          numbered: true  },
+    Cr: { name: "CRISPR",             color: CRISPR_COLOR,       numbered: false },
+    Tw: { name: "Twitching motility", color: TWITCH_COLOR,       numbered: false },
+  };
   function normalizeClientUpgrade(value, maxTime = 86400) {
     if (!scoreClientObject(value)) return null;
     const abbr = (typeof value.abbr === "string" ? value.abbr : "").replace(/[^A-Za-z0-9]/g, "").slice(0, 12);
     if (!abbr) return null;
+    const m = abbr.match(/^([A-Za-z]+)(\d*)$/), spec = m && ABBR_SPEC[m[1]]; // reconstruct label/color from the abbr
+    const derivedLabel = spec ? (spec.numbered && m[2] ? spec.name + " " + m[2] : spec.name) : abbr;
+    const rawLabel = typeof value.label === "string" ? value.label.replace(/[\x00-\x1F<>]/g, "").slice(0, 64) : "";
     const rawColor = typeof value.color === "string" ? value.color.slice(0, 9) : "";
     return {
       t: scoreClientNumber(value.t, 0, maxTime),
-      label: (typeof value.label === "string" ? value.label : abbr).replace(/[\x00-\x1F<>]/g, "").slice(0, 64) || abbr,
+      label: rawLabel || derivedLabel,        // present on legacy records; derived for compact ones
       abbr,
-      color: /^#[0-9A-Fa-f]{3,8}$/.test(rawColor) ? rawColor : "#9fc3ba",
+      color: /^#[0-9A-Fa-f]{3,8}$/.test(rawColor) ? rawColor : (spec ? spec.color : "#9fc3ba"),
       acquired: value.acquired === true,
     };
   }
@@ -3760,7 +3832,7 @@
     const buckets = scoreClientBuckets(value.buckets); if (buckets) out.buckets = buckets;
     const sub = scoreClientVector(value.sub, 3, 1000000); if (sub) out.sub = sub;
     const mort = scoreClientVector(value.mort, 4, 1000000); if (mort) out.mort = mort;
-    const lvl = scoreClientVector(value.lvl, 8, 63); if (lvl) out.lvl = lvl;
+    const lvl = scoreClientVector(value.lvl, 8, 511); if (lvl) out.lvl = lvl;
     return out;
   }
   function normalizeClientLineages(value) {
@@ -3768,7 +3840,7 @@
     const out = {};
     for (const [rawKey, lineage] of Object.entries(value).slice(0, SCORE_CLIENT_LIMITS.lineages)) {
       const key = Number(rawKey);
-      if (!Number.isInteger(key) || key < 0 || key > 511 || !scoreClientObject(lineage)) continue;
+      if (!Number.isInteger(key) || key < 0 || key > 4095 || !scoreClientObject(lineage)) continue;
       const entry = { t: scoreClientNumber(lineage.t, 0, 86400), ups: normalizeClientUpgrades(lineage.ups, 32) };
       if (Array.isArray(lineage.tree)) entry.tree = normalizeClientUpgrades(lineage.tree, 32);
       if (Array.isArray(lineage.variants)) entry.variants = lineage.variants.slice(0, 4)
@@ -3795,9 +3867,12 @@
       upgrades: normalizeClientUpgrades(value.upgrades),
       device: value.device === "touch" ? "touch" : "desktop",
       day: scoreClientInteger(value.day, 1, 3650, 1),
+      live: value.live === true, // run is still continuable (survived its last day) — public "in progress" flag
       lineages: normalizeClientLineages(value.lineages),
+      // A role swap is {t, to}, NOT a bare number: reading it as a number (Number.isFinite on an object
+      // is false) silently dropped every divider on incoming records. Preserve the object shape.
       roleSwaps: Array.isArray(value.roleSwaps)
-        ? value.roleSwaps.slice(0, 32).filter(Number.isFinite).map((v) => scoreClientNumber(v, 0, 86400)) : [],
+        ? value.roleSwaps.slice(0, 32).filter(scoreClientObject).map((v) => ({ t: scoreClientNumber(v.t, 0, 86400), to: v.to === "bacterium" ? "bacterium" : "protist" })) : [],
     };
   }
   function normalizeScoreList(value) {
@@ -3809,12 +3884,31 @@
   const API_URL = "scores.php"; // shared leaderboard on the game's own origin; if it's absent/offline we fall back to localStorage
   let playerName = ""; try { playerName = localStorage.getItem(NAME_KEY) || ""; } catch (e) {}
   let globalScores = null;      // last-fetched shared leaderboard (null = not loaded / offline → use local)
+  let savedRun = null;          // this browser's resumable "brew" (the day-checkpoint), shown in the list with a 🌱
   let scoreFetchPromise = null; // one cold-start request; opening the board twice must not race two replacements
   let lastRec = null;           // the run just finished (so a later name edit re-submits the same id)
   let scoreWriteQueue = Promise.resolve(); // serialize writes so an older request can never land last
   const NAME_UPDATE_DELAY = 500;
   let nameUpdateTimer = null, pendingNameUpdate = null;
   function loadScores() { try { return normalizeScoreList(JSON.parse(localStorage.getItem(HS_KEY))); } catch (e) { return []; } }
+  // A resumable checkpoint, shaped like a leaderboard row so the list can rank/badge/chart it exactly
+  // like a finished run. Its id is the run's stable runId, so it dedupes against the same run already on
+  // the board (each surviving day re-submits under that id) — we badge that row rather than double it.
+  function savedRunFromCheckpoint(rec) {
+    const st = rec && rec.state;
+    if (!st || st.runId == null) return null;
+    return { id: st.runId, date: st.runId, name: playerName,
+      score: Math.round(st.score || 0), gen: st.gen || 0, dur: Math.round(st.elapsed || 0),
+      hist: st.fullHist || [], upgrades: st.upgrades || [],
+      device: st.device || "desktop", lineages: st.lineages || {}, roleSwaps: st.roleSwaps || [],
+      savedDay: rec.completedDay || st.day || 1 };
+  }
+  function ensureSavedRun() { // refresh the cached brew when the board opens, then repaint if it changed anything
+    loadBestCheckpoint().then((found) => {
+      savedRun = found ? savedRunFromCheckpoint(found.record) : null;
+      refreshScoreListIfOpen();
+    }).catch(() => {});
+  }
   function escapeHtml(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
   let justFinishedTs = null; // marks the run just completed, to highlight it in the list
   function scoreWorthSaving(rec) {
@@ -3822,7 +3916,7 @@
       (Array.isArray(rec.upgrades) && rec.upgrades.length > 0) ||
       (Array.isArray(rec.roleSwaps) && rec.roleSwaps.length > 0)));
   }
-  function recordGame() {
+  function recordGame(dayComplete) {
     if (!state) return false;
     // Keyed on the RUN, not on the moment. Surviving another day re-records under the same id, so
     // the board UPDATES that one entry instead of stacking a fresh row for every day you get
@@ -3830,6 +3924,7 @@
     const id = state.runId || Date.now();
     const rec = { id, score: Math.round(state.score), gen: state.gen, date: id, dur: Math.round(state.elapsed), hist: state.fullHist, upgrades: state.upgrades, name: playerName,
                   day: state.day || 1, device: state.device || "desktop", lineages: state.lineages, roleSwaps: state.roleSwaps,
+                  live: dayComplete || undefined, // survived to sunrise → continuable; PUBLIC, so every viewer sees it's still going. Omitted (cleared) once the run finally dies out.
                   tuned: cfgTuned() || undefined }; // undefined → omitted by JSON.stringify, so untuned runs are unchanged on the wire
     if (!scoreWorthSaving(rec)) { justFinishedTs = null; lastRec = null; return false; }
     justFinishedTs = id; lastRec = rec;
@@ -3851,13 +3946,54 @@
       .catch(() => null);
     return scoreWriteQueue;
   }
+  // scores.php rejects any record whose JSON tops MAX_RECORD_BYTES (400 KB) or whose body tops
+  // MAX_BODY_BYTES (512 KB) with a 413 — and a long, lineage-rich run can still blow past both, so the
+  // run would silently never reach the board. The per-sample chart `buckets` are the bulk, so coarsen
+  // the history to fit rather than lose the whole run: keep score, generation, lineages and role swaps
+  // (what people actually compare) at full fidelity, and only thin the chart resolution. Kept just under
+  // the server record cap so ordinary long runs pass untouched and only extreme ones get thinned.
+  const WIRE_BUDGET = 384 * 1024; // under both server caps, with headroom for the JSON we don't re-measure
+  // Drop everything re-derivable from `abbr` (label, color) and any acquired:false — the reader rebuilds
+  // them (normalizeClientUpgrade). Roughly a 3× shrink on the upgrade-heavy lineage genomes, so every
+  // band's genome survives to the board instead of being trimmed away.
+  const compactUpgrade = (u) => { const o = { t: u.t, abbr: u.abbr }; if (u.acquired === true) o.acquired = true; return o; };
+  const compactUpgrades = (a) => (Array.isArray(a) ? a.map(compactUpgrade) : a);
+  function compactLineages(lin) {
+    if (!lin || typeof lin !== "object") return lin;
+    const out = {};
+    for (const k in lin) {
+      const e = lin[k]; if (!e) continue;
+      const c = { t: e.t, ups: compactUpgrades(e.ups || []) };
+      if (Array.isArray(e.tree)) c.tree = compactUpgrades(e.tree);
+      if (Array.isArray(e.variants)) c.variants = e.variants.map((v) => {
+        const cv = { t: v.t, ups: compactUpgrades(v.ups || []) };
+        if (Array.isArray(v.tree)) cv.tree = compactUpgrades(v.tree);
+        return cv;
+      });
+      out[k] = c;
+    }
+    return out;
+  }
+  function fitRecordForWire(rec) {
+    if (!rec) return rec;
+    // Always compact first — label/color come back on read, so this is free fidelity, not a cut.
+    const out = { ...rec, upgrades: compactUpgrades(rec.upgrades), lineages: compactLineages(rec.lineages) };
+    const size = (r) => JSON.stringify(r).length;
+    if (size(out) <= WIRE_BUDGET) return out;
+    let hist = Array.isArray(out.hist) ? out.hist.slice() : [];
+    // still over (a truly enormous run)? thin the chart HISTORY — never the lineage genomes.
+    while (hist.length > 40 && size({ ...out, hist }) > WIRE_BUDGET) hist = hist.filter((_, i) => i % 2 === 0);
+    out.hist = hist;
+    if (size(out) > WIRE_BUDGET) out.hist = hist.map((s) => { const { buckets, ...rest } = s; return rest; });
+    return out;
+  }
   function submitScore(rec) { // POST a run to the shared leaderboard; ignored gracefully if offline / no backend
     if (!rec) return;
     // A run played on tuned constants (` panel) isn't comparable to anyone else's,
     // so it stays in this browser's local list. Guarded here rather than at the call
     // sites so the later name-edit re-submit can't sneak it onto the shared board.
     if (rec.tuned) return;
-    try { return queueScoreWrite(rec); } catch (e) {}
+    try { return queueScoreWrite(fitRecordForWire(rec)); } catch (e) {}
   }
   function scheduleNameUpdate(rec) {
     if (!rec || rec.tuned) return;
@@ -3893,15 +4029,23 @@
   function renderScoreList() {
     if (!el.scoresList) return;
     let arr = (globalScores || loadScores()).slice(); // shared list when we have it, else this browser's local runs
+    // Your resumable brew: unless it's the run you're actively steering right now (which already shows as
+    // "this run"), fold the saved checkpoint into the board — badged 🌱 — so a lineage you tend over days
+    // is always here to find and continue, even if its score never made the shared top 100.
+    const liveRunId = (state && state.running && !state.demo) ? state.runId : null;
+    const brew = (savedRun && savedRun.id !== liveRunId) ? savedRun : null;
+    const brewId = brew ? recId(brew) : null;
     // TOUCH AND DESKTOP ARE DIFFERENT SPORTS — the phone runs at a different swim speed, zoom and
     // gold-phage capture radius — so they get separate boards rather than one hopeless mixed one.
     const counts = { desktop: 0, touch: 0 };
     for (const r of arr) counts[deviceOf(r)]++;
+    if (brew && !arr.some((r) => recId(r) === brewId)) counts[deviceOf(brew)]++; // count an off-board brew in its tab
     arr = arr.filter((r) => deviceOf(r) === scoreDevice);
     renderDeviceTabs(counts);
     // paused mid-game: drop the live run into the list so you can see exactly where it ranks
     const liveLine = (state && state.running && !state.demo && state.device === scoreDevice) ? currentRunLine() : null; // the background sim is not a run
     if (liveLine) arr.push(liveLine);
+    if (brew && deviceOf(brew) === scoreDevice && !arr.some((r) => recId(r) === brewId)) arr.push(brew); // inject if not already on the board
     if (!arr.length) {
       el.scoresList.innerHTML = `<p class="empty">No ${scoreDevice === "touch" ? "mobile" : "desktop"} runs yet. Play a game and your lineage's evolutionary history will appear here.</p>`;
       return;
@@ -3920,8 +4064,11 @@
     h += `<th class="run">Run</th></tr></thead><tbody>`;
     arr.forEach((r, i) => {
       const isLive = r === liveLine;
-      h += `<tr class="srow${isLive || recId(r) === justFinishedTs ? " current" : ""}" data-id="${recId(r)}"><td class="rk">${i+1}</td>`;
-      h += `<td class="nm">${isLive ? '<span class="livedot"></span>' : ''}${r.name ? escapeHtml(r.name) : `<span class="anon">${isLive ? "this run" : "anon"}</span>`}</td>`;
+      const isOwnBrew = brewId != null && !isLive && recId(r) === brewId;
+      const inProgress = !isLive && (isOwnBrew || r.live === true); // 🧫 = still being cultivated (public to everyone)
+      const brewTag = inProgress ? `<span class="brew" title="${isOwnBrew ? `Your saved brew — still going · continue to day ${brew.savedDay + 1} from the menu` : "Still in progress — this lineage is being cultivated"}">🔬</span>` : "";
+      h += `<tr class="srow${isLive || isOwnBrew || recId(r) === justFinishedTs ? " current" : ""}" data-id="${recId(r)}"><td class="rk">${i+1}</td>`;
+      h += `<td class="nm">${isLive ? '<span class="livedot"></span>' : ''}${brewTag}${r.name ? escapeHtml(r.name) : `<span class="anon">${isLive ? "this run" : "anon"}</span>`}</td>`;
       h += `<td class="num">${SCORE_VAL.score(r).toLocaleString()}${badge("score", r)}</td>`;
       h += `<td class="num">${SCORE_VAL.gen(r)}${badge("gen", r)}</td>`;
       h += `<td class="num">${fmtDur(SCORE_VAL.dur(r))}${badge("dur", r)}</td>`;
@@ -4103,7 +4250,7 @@
     })(root);
     const lineColor = (n) => {
       const k = repOf.get(n);
-      return k == null ? "rgba(255,255,255,.3)" : levelColor(k >> 6, k & 63);
+      return k == null ? "rgba(255,255,255,.3)" : levelColor(k >> 9, k & 511);
     };
     // DIAGONAL branches now descend from the founder at the top. Gene labels stay horizontal so
     // left-leaning branches never turn their text upside down.
@@ -4129,7 +4276,7 @@
     g.font = "10.5px 'Trebuchet MS', sans-serif";
     for (const tip of tips) {
       const xn = xOf.get(tip.node), yn = yAt(tip.node.depth), x = tip.x;
-      const mask = tip.key >> 6, tier = tip.key & 63, col = levelColor(mask, tier);
+      const mask = tip.key >> 9, tier = tip.key & 511, col = levelColor(mask, tier);
       g.strokeStyle = col; g.lineWidth = 1.5;
       g.beginPath(); g.moveTo(xn, yn); g.lineTo(x, tipY); g.stroke();
       g.fillStyle = col; g.fillRect(x - 5, tipY - 5, 10, 10); // same color as its band on the chart above
@@ -4172,6 +4319,7 @@
   // Which stacked band is under the cursor? Re-derives exactly what renderEcoChart drew, so the
   // hit-test can't drift away from the picture.
   function ecoBandAt(hist, W, H, mx, my) {
+    hist = sliceHistView(hist).hist;                   // hit-test the ZOOMED window, exactly what's drawn
     if (!hist || hist.length < 2) return null;
     const S = ecoScale(hist, H);                       // the SAME scale the renderer used
     const n = Math.max(hist.length, 2);
@@ -4181,10 +4329,56 @@
       const cnt = S.bks[i][key] || 0;
       const h = bandVal(cnt);
       if (cnt > 0 && my <= S.yAt(cum) && my >= S.yAt(cum + h))
-        return { key, count: cnt, mask: key >> 6, tier: key & 63 };
+        return { key, count: cnt, mask: key >> 9, tier: key & 511 };
       cum += h;
     }
     return null;
+  }
+  // The window WIDTH is set by the 1d / 7d / all buttons; here we only PAN it (scroll wheel or drag),
+  // shared across every run chart via chartView so one gesture moves the whole stack. Zoom-by-scroll was
+  // dropped — it felt wonky. When fully zoomed out there's nothing to pan, so the wheel falls through to
+  // normal page scrolling. chartPanMoved lets the log/linear click handler tell a real click from a drag.
+  let chartPanMoved = false;
+  function panChart(dfrac, redraw) {
+    if (!chartZoomed()) return;
+    let a = chartView.a + dfrac, b = chartView.b + dfrac;
+    if (a < 0) { b -= a; a = 0; }
+    if (b > 1) { a -= (b - 1); b = 1; }
+    chartView = { a: clamp(a, 0, 1), b: clamp(b, 0, 1) };
+    redraw();
+  }
+  function bindChartZoom(canvas, redraw) {
+    if (!canvas) return;
+    canvas.addEventListener("wheel", (e) => {
+      if (!chartZoomed()) return;                          // zoomed out → let the page scroll normally
+      e.preventDefault();
+      const r = canvas.getBoundingClientRect(); if (!r.width) return;
+      const span = chartView.b - chartView.a;
+      panChart((e.deltaX || e.deltaY) / r.width * span, redraw); // scroll → slide the window in time
+    }, { passive: false });
+    let panX = null;
+    canvas.addEventListener("pointerdown", (e) => { panX = e.clientX; chartPanMoved = false; });
+    window.addEventListener("pointermove", (e) => {
+      if (panX == null) return;
+      const r = canvas.getBoundingClientRect(); if (!r.width) return;
+      const dx = e.clientX - panX; panX = e.clientX;
+      if (Math.abs(dx) > 2) chartPanMoved = true;
+      const span = chartView.b - chartView.a;
+      panChart(-dx / r.width * span, redraw);              // drag right → move window back in time
+    });
+    window.addEventListener("pointerup", () => { panX = null; });
+    canvas.addEventListener("dblclick", (e) => { e.preventDefault(); resetChartView(); redraw(); });
+  }
+  // 1d / 7d / all buttons: set the visible window to a span of real game-days, anchored to the end of the
+  // run (the latest day, where the action is) — then drag/scroll back through it. Works for both the
+  // game-over analysis and the high-score detail view, whichever is on screen.
+  function setChartWindowDays(days) {
+    const detailOpen = el.scoreDetail && !el.scoreDetail.classList.contains("hidden");
+    const dur = detailOpen ? ((_detailRec && _detailRec.dur) || 1) : ((state && state.elapsed) || 1);
+    const dayLen = (CFG.day && CFG.day.lengthSec) || 240;
+    const span = (days == null) ? 1 : clamp(days * dayLen / Math.max(1, dur), 0.02, 1);
+    chartView = span >= 0.999 ? { a: 0, b: 1 } : { a: 1 - span, b: 1 };
+    if (detailOpen) { if (_detailRec) openScoreDetail(_detailRank, _detailRec); } else drawAnalysis();
   }
   function bindLineageHover(canvas, getRec) {
     if (!canvas || isTouch) return;   // no hover on a phone; the cladogram below the chart covers it
@@ -4264,6 +4458,7 @@
   function openScoreDetail(rankHtml, rec) {
     if (!el.scoreDetail || !el.detailChart) return;
     hideCircos();                             // the hover popup would otherwise hang over the detail view
+    if (rec !== _detailRec) resetChartView(); // a newly-opened run starts zoomed out; a redraw keeps the view
     _detailRec = rec; _detailRank = rankHtml; // remembered so the log/linear toggle can redraw it
     if (el.detailCircos) {
       const surface = prepareHiDpiCanvas(el.detailCircos);
@@ -4325,6 +4520,7 @@
       else renderScoreList();                    // shared cache, or immediate local fallback without fetch
     }
     el.scores.classList.remove("hidden");
+    ensureSavedRun(); // surface this browser's resumable brew (🌱) in the list, even off-board
     const request = fetchScores(); // later opens repaint a cached board only if the shared data really changed
     if (coldSharedBoard) request.then((loaded) => {
       // Network/API failure: the local board is useful, but only reveal it once we know it is the
@@ -5329,8 +5525,14 @@
   // click any generation-history chart to flip its y-axis between linear and log
   // (on touch the live chart's tap is used to fold it away, so skip the log flip there)
   if (el.chart) el.chart.addEventListener("click", () => { if (!document.body.classList.contains("touch")) chartLog = !chartLog; });
-  if (el.analysisChart) el.analysisChart.addEventListener("click", () => { chartLog = !chartLog; drawAnalysis(); });
-  if (el.detailChart) el.detailChart.addEventListener("click", () => { chartLog = !chartLog; if (_detailRec) openScoreDetail(_detailRank, _detailRec); });
+  if (el.analysisChart) el.analysisChart.addEventListener("click", () => { if (chartPanMoved) return; chartLog = !chartLog; drawAnalysis(); });
+  if (el.detailChart) el.detailChart.addEventListener("click", () => { if (chartPanMoved) return; chartLog = !chartLog; if (_detailRec) openScoreDetail(_detailRank, _detailRec); });
+  // x-zoom: wheel/drag/double-click on any run chart drives the shared time window (both the game-over
+  // analysis and the high-score detail view). Every chart in a view redraws together.
+  const redrawDetail = () => { if (_detailRec) openScoreDetail(_detailRank, _detailRec); };
+  [el.analysisChart, el.analysisSubChart, el.analysisMortChart, el.analysisDiversityChart].forEach((cv) => bindChartZoom(cv, drawAnalysis));
+  [el.detailChart, el.detailSubChart, el.detailMortChart, el.detailDiversityChart].forEach((cv) => bindChartZoom(cv, redrawDetail));
+  document.querySelectorAll(".zoomctl button").forEach((b) => b.addEventListener("click", () => setChartWindowDays(+b.getAttribute("data-days") || null)));
   // click the lower chart to cycle food → mortality → diversity (desktop-only: tap folds it on mobile)
   if (el_subchart) el_subchart.addEventListener("click", () => { if (!document.body.classList.contains("touch")) toggleSubMode(); });
   updateSubLegend();

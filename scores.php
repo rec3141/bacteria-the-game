@@ -11,10 +11,14 @@ header('Cache-Control: no-store');
 
 $FILE             = __DIR__ . '/scores.json';
 $MAX_ROWS         = 100;
-$MAX_BODY_BYTES   = 300 * 1024;
-$MAX_RECORD_BYTES = 192 * 1024;
-$MAX_STORE_BYTES  = 2 * 1024 * 1024;
-$MAX_READ_BYTES   = 32 * 1024 * 1024; // legacy stores could reach 100 × 300 KB; response/store stays at 2 MB
+// A long run (day 17+, tier 60, hundreds of samples with rich per-lineage buckets) serializes to a
+// few hundred KB — the old 192 KB record / 300 KB body caps 413'd it away entirely. These three move
+// together: body must clear record + JSON overhead, and the store holds the whole board that every
+// player downloads on load (so it's the real ceiling — kept modest, ~gzips to a fraction over the wire).
+$MAX_BODY_BYTES   = 512 * 1024;
+$MAX_RECORD_BYTES = 400 * 1024;
+$MAX_STORE_BYTES  = 4 * 1024 * 1024;
+$MAX_READ_BYTES   = 32 * 1024 * 1024; // recovery read limit for a legacy/oversized store; response/store stays at 4 MB
 
 function read_scores($file, $now, $maxRows, $maxStoreBytes, $maxRecordBytes, $maxReadBytes) {
   if (!is_file($file)) return [];
