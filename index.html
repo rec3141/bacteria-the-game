@@ -282,10 +282,7 @@
     background: radial-gradient(ellipse at 50% 45%, rgba(3,14,18,.93) 0%, rgba(3,14,18,.8) 38%,
                                 rgba(3,14,18,.55) 70%, rgba(3,14,18,.35) 100%);
     backdrop-filter: blur(1.5px); }
-  /* Attract-mode caption: one line of narration under the ocean's midline, above the water,
-     below the menu. */
-  /* z-index 11 = above the title's dimming gradient (10), below nothing that matters — the menu is
-     centred and the caption hugs the floor, so they never collide. */
+  /* Interactive tutorial caption, over the petri dish and above its Back/Skip controls. */
   #demoCap { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%);
     z-index: 11; width: min(560px, 88%); text-align: center; pointer-events: none;
     background: rgba(4,17,21,.82); border: 1px solid rgba(87,224,192,.28); border-radius: 10px;
@@ -296,6 +293,16 @@
     text-transform: uppercase; color: var(--accent); opacity: .75; margin-bottom: 2px; }
   #demoCap span { font-size: 13px; line-height: 1.45; color: var(--ink); }
   #demoCap b { color: var(--accent); }
+  /* Semantic caption colors mirror the gene bar and world objects. These ID-qualified rules beat
+     the generic bold color above, so highlighting a biological term cannot turn it accent-green. */
+  #demoCap .c-lip { color: #efd98a; } #demoCap .c-pro { color: #ef8b3c; }
+  #demoCap .c-carb { color: #6fa8ff; } #demoCap .c-gold { color: #ffd24a; }
+  #demoCap .c-crispr { color: #c39bff; } #demoCap .c-ab { color: #f05ad0; }
+  #demoCap .c-vir { color: #8bf06a; } #demoCap .c-prot { color: #ff9ec0; }
+  #demoCap.tut.complete { bottom: 50%; transform: translate(-50%,50%); width: min(420px, 82%);
+    padding: 20px 24px; }
+  #demoCap.complete span { display: block; font-size: 17px; line-height: 1.55; }
+  #demoCap.complete span b { display: block; font-size: 24px; margin-bottom: 5px; }
   /* the one thing this step wants you to DO */
   #demoCap .tutgoal { display: block; margin-top: 6px; padding-top: 6px; font-size: 13px;
     border-top: 1px solid rgba(255,255,255,.12); color: #ffd24a; }
@@ -327,7 +334,8 @@
   #helpBody p { margin: 0; font-size: 13px; line-height: 1.55; opacity: .9; }
   #helpBody ul { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.7; opacity: .9; }
   .c-lip { color: #efd98a; } .c-pro { color: #ef8b3c; } .c-carb { color: #6fa8ff; }
-  .c-gold { color: #ffd24a; } .c-vir { color: #8bf06a; } .c-cyst { color: #9aa6a0; } .c-prot { color: #ff9ec0; }
+  .c-gold { color: #ffd24a; } .c-crispr { color: #c39bff; } .c-ab { color: #f05ad0; }
+  .c-vir { color: #8bf06a; } .c-cyst { color: #9aa6a0; } .c-prot { color: #ff9ec0; }
   /* Lineage genome popup (hover a colored band on an analysis/detail chart) */
   /* opaque, not translucent: the ring's middle is empty, and the leaderboard behind it
      showed straight through the gap and muddied the plot */
@@ -526,8 +534,7 @@
                max(14px, var(--safe-bottom)) max(14px, var(--safe-left)); }
     #scores { padding-top: max(24px, var(--safe-top)); }
     #help, #science { padding-top: max(22px, var(--safe-top)); }
-    /* the menus go position:fixed here, which would bury the attract caption inside the stage —
-       lift it out to the viewport too, above the title's backdrop */
+    /* tutorial captions remain inside the safe viewport on compact screens */
     #demoCap { position: fixed; z-index: 55; bottom: max(10px, var(--safe-bottom)); }
     #help, #science { z-index: 60; } /* stay above the screen they were opened from */
     .screen h1 { font-size: 30px; }
@@ -552,6 +559,29 @@
   body.touch .topline { margin-left: 30%; flex-wrap: wrap; row-gap: 2px; }
   body.touch .bar { width: 108px; }
   body.touch #helix { display: none; }        /* the decorative helix reads as clutter at this size */
+  /* Touch tutorial: reserve the top of the PETRI DISH for a tidy two-row lesson header. The caption
+     no longer sits at viewport-bottom over the joystick/action deck; below it, health and the two
+     escape controls share one compact row. Ordinary play keeps the full HUD and its normal layout. */
+  body.touch.tutorial-active #stage { --tutorial-caption-space: 142px; }
+  body.touch.tutorial-active #demoCap.tut:not(.complete) {
+    position: absolute; top: 6px; bottom: auto; z-index: 15;
+    width: calc(100% - 12px); padding: 5px 9px; border-radius: 8px;
+  }
+  body.touch.tutorial-active #demoCap.tut:not(.complete) i { font-size: 8.5px; margin-bottom: 1px; }
+  body.touch.tutorial-active #demoCap.tut:not(.complete) span,
+  body.touch.tutorial-active #demoCap.tut:not(.complete) .tutgoal { font-size: 11px; line-height: 1.28; }
+  body.touch.tutorial-active #demoCap.tut:not(.complete) .tutgoal { margin-top: 3px; padding-top: 3px; }
+  body.touch.tutorial-active #hud { padding: var(--tutorial-caption-space) 7px 7px; gap: 4px; }
+  body.touch.tutorial-active .topline { margin-left: 0; flex-wrap: nowrap; gap: 5px; }
+  body.touch.tutorial-active .topline .stats-inline,
+  body.touch.tutorial-active .topline #roleTag { display: none; }
+  body.touch.tutorial-active .bar { width: min(108px, 29vw); }
+  body.touch.tutorial-active #demoExit {
+    top: var(--tutorial-caption-space); right: 7px; gap: 4px;
+  }
+  body.touch.tutorial-active #demoExit button { padding: 5px 7px; font-size: 9.5px; }
+  body.touch.tutorial-active #tutBar { bottom: 6px; gap: 6px; }
+  body.touch.tutorial-active #tutBar button { padding: 5px 10px; font-size: 10px; }
   /* squeezed: the chips have to share the right column with the buttons now */
   body.touch .gene { font-size: 10.5px; padding: 4px 7px; text-align: center; white-space: nowrap;
     line-height: 1.2; border-radius: 6px; }
@@ -567,6 +597,7 @@
     body.touch #stage {
       order: 0; flex: 1 1 auto; width: auto; max-width: none; height: 100%; min-width: 0;
     }
+    body.touch.tutorial-active #stage { --tutorial-caption-space: 108px; }
     body.touch #touch {
       order: 1; flex: 0 0 var(--landscape-deck); width: var(--landscape-deck); height: 100%;
       min-width: 0; justify-content: center; padding: 2px 4px;
@@ -634,8 +665,7 @@
       </div>
     </div>
     <div id="toast"></div>
-    <!-- Attract-mode caption. Sits over the ocean but UNDER the title screen's menu, so the demo
-         narrates itself without fighting the buttons for space. -->
+    <!-- Interactive tutorial and completion captions; the menu's background sim has no narration. -->
     <div id="demoCap" class="hidden"></div>
     <!-- Interactive tutorial: Back / Skip. The DEFAULT way through is to do the thing the step asks;
          these are for anyone who wants past a step they can't or won't complete. -->
@@ -653,7 +683,7 @@
         <h1>Bacteria!</h1>
         <p class="tag">forage · evolve · divide · endure</p>
       </div>
-      <p class="lede">A drop of seawater is a world, and you are one bacterium in it — too small to swallow your food, so you dissolve it from the outside; too simple to plan, so you evolve instead. <b>Survive a single day</b>, sunrise to sunrise, while the sea warms, blooms, and empties around you.</p>
+      <p class="lede"><b>One tiny cell. One living ocean.</b> Chase food, capture new genes, evade hungry protists, and multiply into a lineage strong enough to survive from sunrise to sunrise.</p>
       <div class="btnrow">
         <button id="startBtn">Begin life</button>
         <button id="tutorialBtn" class="ghost">Tutorial</button>

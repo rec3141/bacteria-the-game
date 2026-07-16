@@ -293,7 +293,7 @@
     dayLen: document.getElementById("dayLen"),   // filled from CFG.day.lengthSec — it's a tunable knob
     circosPop: document.getElementById("circosPop"), circosCanvas: document.getElementById("circosCanvas"),
     circosCap: document.getElementById("circosCap"), detailCircos: document.getElementById("detailCircos"),
-    demoCap: document.getElementById("demoCap"),   // attract-mode caption, over the ocean
+    demoCap: document.getElementById("demoCap"),   // interactive tutorial caption, over the ocean
     scoreTabs: document.getElementById("scoreTabs"),   // desktop / mobile leaderboard switch
     themeMeta: document.querySelector('meta[name="theme-color"]'),
     analysisClado: document.getElementById("analysisClado"), detailClado: document.getElementById("detailClado"),
@@ -720,30 +720,70 @@
     else if (pick === "chemo") { c.chemoLevel--; if (!c.chemoLevel) c.chemotaxis = false; locus = "T"; color = "#ffd24a"; }
     else { c.enzLvl[pick]--; locus = ["L","P","C"][pick]; color = RESOURCES[pick].color; }
     // drop the LAST log entry for that locus, so the genome and its history still agree
-    const ups = (c.ups || []).slice();
-    for (let k = ups.length - 1; k >= 0; k--) if (locusOf(ups[k]) === locus) { ups.splice(k, 1); break; }
+    const ancestry = (c.phylo || c.ups || []).slice(), ups = (c.ups || []).slice();
+    let lost = null;
+    for (let k = ups.length - 1; k >= 0; k--) if (locusOf(ups[k]) === locus) { lost = ups[k]; ups.splice(k, 1); break; }
     c.ups = ups;
-    return { color };
+    // The genome log above describes what the cell carries NOW. The phylogeny is an event history,
+    // so retain streamlining as an explicit branch instead of making a gene loss erase its ancestry.
+    const lostAbbr = (lost && lost.abbr) || locus;
+    const event = { t: state ? state.elapsed : 0, label: "Lost " + ((lost && lost.label) || lostAbbr),
+      abbr: ("x" + lostAbbr).slice(0, 12), color, acquired: false };
+    c.phylo = ancestry.concat([event]);
+    return { color, event };
   }
   // DRIFT. Your cell taking a gene is a single event in one lineage; on its own the population just
   // tracks you, and the chart becomes one colour marching up the screen. So every time you adapt,
   // somewhere else in the sea another cell also changes — it gains a random gene, or it loses one.
   // That keeps a spread of genomes alive around you, which is what makes the ecotype chart (and
   // kill-the-winner, which needs variety in adaptation level to bite) mean anything.
-  function driftAnotherCell(source) {
-    if (!CFG.cell.driftOnUpgrade) return;
+  function lineageSignature(path) { return (path || []).map((u) => u && u.abbr).filter(Boolean).join("|"); }
+  function rememberLineage(c) {
+    if (!state || !state.lineages || !c) return;
+    const key = ecoMask(c)*64 + Math.min(63, upgradeTier(c));
+    const snapshot = { t: +state.elapsed.toFixed(1), ups: (c.ups || []).slice(0, 32),
+      tree: (c.phylo || c.ups || []).slice(0, 32) };
+    const entry = state.lineages[key];
+    if (!entry) {
+      if (Object.keys(state.lineages).length < 64) state.lineages[key] = snapshot;
+      return;
+    }
+    // Several real genomes can share the chart's compact ecotype+tier bucket. Keep those terminal
+    // paths as variants so the phylogenetic tree does not collapse a mutation just because its band
+    // happens to have the same numeric tier as one already sampled.
+    const sig = lineageSignature(snapshot.tree), variants = entry.variants || [];
+    if (sig === lineageSignature(entry.tree || entry.ups) || variants.some((v) => sig === lineageSignature(v.tree || v.ups))) return;
+    if (variants.length < 4) entry.variants = variants.concat([snapshot]);
+  }
+  function driftAnotherCell(source, defer = true) {
+    if (!CFG.cell.driftOnUpgrade) return false;
     const pool = cells.filter((c) => c.alive && !c.cyst && c !== source);
-    if (!pool.length) return;
+    if (!pool.length) {
+      // The opening gold phage often arrives before the founder divides. Bank that mutation and
+      // apply it to the first sister cell instead of silently throwing the event away.
+      if (defer && state && !state.demo) state.pendingDrift = Math.min(8, (state.pendingDrift || 0) + 1);
+      return false;
+    }
     const c = pool[(Math.random()*pool.length)|0];
-    const gain = Math.random() < CFG.cell.driftGainChance;
-    const u = gain ? grantRandomUpgrade(c) : loseRandomUpgrade(c);
-    if (u) burst(c.x, c.y, u.color, gain ? 8 : 5);   // you can SEE diversity happening out there
+    let gain = Math.random() < CFG.cell.driftGainChance;
+    let u = gain ? grantRandomUpgrade(c) : loseRandomUpgrade(c);
+    if (!u) { gain = true; u = grantRandomUpgrade(c); } // a base genome has nothing it can lose
+    rememberLineage(c);                              // don't wait for the next chart sample to see it
+    burst(c.x, c.y, u.color, gain ? 8 : 5);          // you can SEE diversity happening out there
+    return true;
+  }
+  function applyPendingDrift() {
+    if (!state || !state.pendingDrift) return;
+    const source = controlledCell();
+    if (source && driftAnotherCell(source, false)) state.pendingDrift--;
   }
   function grantRandomUpgrade(c) {
     const u = grantRandomUpgrade_(c);
     // concat, not push: daughters share the parent's array by reference until one of them adapts, and
     // a push would rewrite the other lineage's history too.
-    c.ups = (c.ups || []).concat([{ t: state ? state.elapsed : 0, label: u.msg, abbr: u.abbr, color: u.color, acquired: u.acquired }]);
+    const event = { t: state ? state.elapsed : 0, label: u.msg, abbr: u.abbr, color: u.color, acquired: u.acquired };
+    c.phylo = (c.phylo || c.ups || []).concat([event]);
+    c.ups = (c.ups || []).concat([event]);
     return u;
   }
   function grantRandomUpgrade_(c) {
@@ -777,8 +817,9 @@
       infectedGreen: false, lysisT: 0, chemotaxis: false, chemoLevel: 0, crispr: false, antibiotic: 0, toxT: 0,
       // This cell's OWN adaptation log, in the order it was acquired — inherited whole by its
       // daughters. The player's run-level log (state.upgrades) only ever knew about the cell you were
-      // steering; this is what lets every lineage on the chart show its own genome.
-      ups: [],
+      // steering; this is what lets every lineage on the chart show its own genome. phylo preserves
+      // the full event ancestry too, including losses that correctly disappear from the current genome.
+      ups: [], phylo: [],
       enzLvl: [0, 0, 1] }; // per-enzyme expression level [lipase, protease, carbohydrase]; 0 = locked, carb starts at 1
   }
   // Build an adaptation log from a genome, for cells that were never *granted* anything — immigrants
@@ -994,7 +1035,8 @@
       mortLive: [0, 0, 0, 0], mortFull: [0, 0, 0, 0], // cause-of-death tallies (grazing/viral/starvation/antibiotic) per sample interval
       tod: tod0, light: dielLight(tod0), foodTarget: seedFood, graze: 1, foodT: 0, // diel state (updateDiel refreshes each frame)
       chartT: 0, history: [], fullT: 0, fullHist: [], fullInterval: 1, upgrades: [],
-      lineages: {},   // bucket key (ecotype+tier, i.e. one colored band) → that lineage's genome
+      lineages: {},   // chart bucket → current genome, ancestry, and any distinct same-band variants
+      pendingDrift: 0, // gold caught before division still mutates the first other cell that appears
       roleSwaps: [],  // when you flipped trophic level — the biggest event a run can have
       dead: [],       // seed bank: genomes of everything that has died, for cysts to revive from
 
@@ -1009,183 +1051,144 @@
   function controlledCell() { return cells.find((c) => c.controlled && c.alive); }
   function controlledProtist() { return predators.find((p) => p.controlled); }
 
-  // ------------------------------------------------------------------- attract mode
-  // The sim already plays itself — cells forage, divide, encyst, get eaten and lyse with nobody at
-  // the keys. So the tutorial is not a second simulation: it's a DIRECTOR. Each beat STAGES its
-  // mechanic (put a grazer next to a cell; hand a cell a gene), points the camera at it, and
-  // captions it. Staging beats waiting: left to chance a phage might not lyse anything for 30s, and
-  // a tutorial that might not happen is not a tutorial.
-  // When the beats run out it doesn't stop — it drifts on as a screensaver behind the title menu.
+  // ---------------------------------------------------------------- background simulation / tutorial
+  // The title needs only the autonomous simulation as a living background. The interactive
+  // tutorial is a separate, player-driven petri dish entered explicitly from the menu.
   let demo = null;
   const alive = (e) => e && e.alive !== false && !e.dead;
   const anyCell = () => cells.find((c) => c.alive && !c.cyst) || cells[0];
-  function demoFocus(e, secs) { if (e) { demo.focus = e; demo.hold = secs || 0; } }
-  // Put a fresh entity somewhere sensible inside the dish, near the middle, clear of the rim.
-  function dishSpot(distFromCentre) {
-    const a = rand(0, TAU), d = distFromCentre != null ? distFromCentre : rand(60, dishRadius()*0.55);
-    return { x: WORLD_W/2 + Math.cos(a)*d, y: WORLD_H/2 + Math.sin(a)*d };
-  }
   const near = (e, dist) => { const a = rand(0, TAU); return { x: e.x + Math.cos(a)*dist, y: e.y + Math.sin(a)*dist }; };
   const centre = (e) => { if (e) { e.x = WORLD_W/2; e.y = WORLD_H/2; } return e; };
-  const DEMO_BEATS = [
-    { cap: "This is one <b>bacterium</b>. It cannot steer: it swims in a straight line — a <b>run</b> — then <b>tumbles</b> to a random new heading, and repeats. It is not looking for anything. It cannot.",
-      secs: 9, setup: () => centre(anyCell()) },
-    // THE FOOD. Introduce the three resources by colour, on an actual particle, before anything eats one.
-    { cap: "Its food is <b>marine snow</b> — dead plankton and waste, sinking. Each particle is a patchwork of three things: <b class='c-lip'>lipid</b>, <b class='c-pro'>protein</b> and <b class='c-carb'>carbohydrate</b>. Watch the colours.",
-      secs: 10, setup: () => centre(substrates.find((p) => p.phase === "live")) || null },
-    { cap: "A bacterium is far too small to swallow any of it. So it digests from the OUTSIDE: it releases an <b>enzyme</b>, the matching blocks dissolve, and it absorbs what comes loose. One enzyme per resource — and it starts with only <b class='c-carb'>carbohydrase</b>.",
-      secs: 12, setup: () => {                       // park a cell on the doorstep of a particle
-        const c = anyCell(), s = centre(substrates.find((p) => p.phase === "live"));
-        if (c && s) { const a = rand(0, TAU); c.x = s.x + Math.cos(a)*(s.R + 24); c.y = s.y + Math.sin(a)*(s.R + 24);
-          c.angle = Math.atan2(dy(s.y, c.y), dx(s.x, c.x)); c.tumbling = false; c.enzCd = 0.2; }
-        return c;
-      } },
-    { cap: "Fed well enough, it <b>elongates and divides</b>. Every cell becomes two, so a colony goes exponential — 1, 2, 4, 8…",
-      secs: 9, setup: () => centre(anyCell()),
-      tick: (c, t) => { if (alive(c) && t > 2.5) c.energy = CFG.cell.divideThreshold + 1; } },  // nudge it over the line, on camera
-    // THE PREDATOR. Focus the PROTIST, not the cell — it's the thing being introduced.
-    { cap: "This is a <b style='color:#ff9ec0'>protist</b>: a single-celled hunter one trophic level up. It doesn't dissolve its food — it engulfs bacteria whole. This is the link that carries all this carbon up the food web.",
-      secs: 11, setup: () => {
-        const c = anyCell(); if (!c) return null;
-        const pr = makePredator(WORLD_W/2, WORLD_H/2, CFG.predator.startEnergy, 0);
-        predators.push(pr);
-        const p = near(pr, 120); c.x = p.x; c.y = p.y;   // its dinner, beside it
-        return pr;                                       // the grazer is the subject
-      } },
-    // THE VIRUSES. Both colours, side by side, with the phage itself in the ring.
-    { cap: "<b style='color:#8bf06a'>Green</b> and <b style='color:#ff5a52'>red</b> are the same creature — a <b>phage</b> — coloured by what it can do to YOU. <b style='color:#8bf06a'>Green</b> can't infect this cell. <b style='color:#ff5a52'>Red</b> can. A phage cannot chase: it drifts until it collides.",
-      secs: 12, setup: () => {
-        const c = centre(anyCell()); if (!c) return null;
-        demo.hero = c;                                // red/green is judged against this cell
-        const tier = upgradeTier(c);
-        let shown = null;
-        for (let i = 0; i < 3; i++) {                 // reds: tuned to this cell's tier
-          const p = near(c, rand(70, 130));
-          const ph = makePhage("green", p.x, p.y, tier);
-          phages.push(ph); if (!shown) shown = ph;
-        }
-        for (let i = 0; i < 3; i++) {                 // greens: tuned far away, harmless to it
-          const p = near(c, rand(70, 130));
-          phages.push(makePhage("green", p.x, p.y, tier + CFG.phage.hostTolerance + 3));
-        }
-        return shown;                                 // ring the virus, not the cell
-      } },
-    { cap: "A <b style='color:#ff5a52'>red</b> one that lands injects its DNA, turns the cell into a factory, and bursts it open — a <b>lysis</b> that seeds the water with more phages. This is the commonest death in the ocean.",
-      secs: 10, setup: () => {
-        const c = centre(anyCell()); if (!c) return null;
-        demo.hero = c;
-        c.infectedGreen = true; c.lysisT = 5;         // on a schedule, not on a dice roll
-        return c;
-      } },
-    // THE GOLD. Ring the phage first — it's the thing you'll spend the game chasing.
-    { cap: "And this one — the <b style='color:#ffd24a'>gold phage</b> — doesn't kill. It rewrites: it carries a new gene INTO the cell. It is the only thing in this sea that changes what you can do, and it is rare.",
-      secs: 8, setup: () => {
-        const c = anyCell(); if (!c) return null;
-        demo.hero = c;
-        const ph = makePhage("gold", WORLD_W/2, WORLD_H/2);
-        ph.vx = ph.vy = 0;
-        phages.push(ph);
-        demo.gold = ph;
-        const p = near(ph, 150); c.x = p.x; c.y = p.y;
-        return ph;                                     // the gold is the subject; the cell comes to it
-      },
-      tick: (ph, t) => {                               // swim the cell in, on cue
-        const c = demo.hero;
-        if (ph && !ph.dead && alive(c) && t > 1.2) {
-          const k = 1 - Math.exp(-1.1*0.016);
-          c.x += (ph.x - c.x)*k; c.y += (ph.y - c.y)*k;
-          c.angle = Math.atan2(ph.y - c.y, ph.x - c.x);
-        }
-      } },
-    { cap: "Caught. This lineage just gained <b class='c-lip'>lipase</b> — it can dissolve the <b class='c-lip'>fatty</b> blocks it used to swim straight past. Everything it does from now on, its daughters inherit.",
-      secs: 9, setup: () => {
-        const c = centre((demo.hero && alive(demo.hero)) ? demo.hero : anyCell()); if (!c) return null;
-        if (demo.gold && !demo.gold.dead) demo.gold.dead = true;
-        c.enzLvl[0] = Math.max(1, c.enzLvl[0]);      // lipase — deliberately, so it answers the food beat
-        c.ups = (c.ups || []).concat([{ t: state.elapsed, label: "Lipase 1", abbr: "L1", color: RESOURCES[0].color, acquired: true }]);
-        burst(c.x, c.y, "#ffd24a", 22);
-        Audio.play("upgrade", 0.5);
-        return c;
-      } },
-  ];
   // ============================================================ interactive tutorial
-  // The attract loop is a film: it plays itself, on a timer, behind the menu. The TUTORIAL is not a
-  // film — you drive. Each step names one thing to do and waits for you to actually do it; the timer
-  // is gone. Back/Skip exist for anyone who wants out of a step, but the default path through is to
-  // play it. Both share the dish, the director's control of the cast, and the still camera.
+  // You drive. Each step names one thing to do and waits for you to actually do it. Back/Skip exist
+  // for anyone who wants out of a step, but the default path through is to play it.
   let tut = null;
+  const TUTORIAL_PROTIST_GRACE = 4;            // let the caption land before a grazer starts hunting
   const ctrlCell = () => cells.find((c) => c.controlled && c.alive);
   function tutDid(flag) { if (tut && !tut.done) tut.flags[flag] = true; }
   function grantCrispr(c) {                     // the tutorial promises CRISPR, so it delivers CRISPR
     c.crispr = true;
-    c.ups = (c.ups || []).concat([{ t: state ? state.elapsed : 0, label: "CRISPR", abbr: "Cr", color: CRISPR_COLOR, acquired: true }]);
+    const event = { t: state ? state.elapsed : 0, label: "CRISPR", abbr: "Cr", color: CRISPR_COLOR, acquired: true };
+    c.phylo = (c.phylo || c.ups || []).concat([event]);
+    c.ups = (c.ups || []).concat([event]);
     return { msg: "CRISPR", color: CRISPR_COLOR, abbr: "Cr", acquired: true };
   }
   function clearCast(keepFood) {                // each step stages its own scene, and only its own
     predators.length = 0; phages.length = 0; toxins.length = 0;
     if (!keepFood) substrates.length = 0;
   }
+  // Tutorial captions occupy opposite edges: top on touch, bottom on desktop. Keep each ringed
+  // subject in the open half of the dish so the thing being explained never sits under its caption.
+  function tutorialPoint(xOffset = 0, yOffset = 0) {
+    const r = dishRadius();
+    return { x: WORLD_W/2 + clamp(xOffset, -r*0.45, r*0.45),
+      y: WORLD_H/2 + (isTouch ? r*0.20 : -r*0.32) + clamp(yOffset, -r*0.12, r*0.12) };
+  }
+  function placeTutorial(e, xOffset, yOffset) {
+    if (!e) return e;
+    const p = tutorialPoint(xOffset, yOffset); e.x = p.x; e.y = p.y; return e;
+  }
+  function focusTutorial(e, xOffset, yOffset) {
+    placeTutorial(e, xOffset, yOffset); demo.focus = e; return e;
+  }
   function spawnCarbParticle() {                // chitin is 70% carbohydrate — the one you can already eat
     const s = makeSubstrate("chitin");
-    const p = dishSpot(dishRadius()*0.55);
-    s.x = p.x; s.y = p.y; s.vx = s.vy = 0;
+    placeTutorial(s);                            // keep makeSubstrate's natural drift
     substrates.push(s);
     return s;
   }
   const TUT_STEPS = [
-    { cap: "You are this <b>bacterium</b>. Swim with the <b>arrow keys</b> or <b>WASD</b> — and notice that you stop the instant you let go. At this size, water is as thick as honey.",
-      goal: "Swim to the <b>ringed</b> particle — the <b class='c-carb'>blue</b> blocks in it are carbohydrate",
+    { capDesktop: "You are this <b>bacterium</b>. Swim with the <b>arrow keys</b> or <b>WASD</b> — and notice that you stop the instant you let go. At this size, water is as thick as honey.",
+      capTouch: "You are this <b>bacterium</b>. Push the <b>joystick</b> to swim — and notice that you stop the instant you release it. At this size, water is as thick as honey.",
+      goalDesktop: "Use <b>WASD</b> or the <b>arrow keys</b> to reach the <b>ringed</b> particle — its <b class='c-carb'>blue</b> blocks are carbohydrate",
+      goalTouch: "Push the <b>joystick</b> toward the <b>ringed</b> particle — its <b class='c-carb'>blue</b> blocks are carbohydrate",
       setup: () => { clearCast(); const s = spawnCarbParticle(); tut.target = s; demo.focus = s; centre(ctrlCell()); },
       done: () => { const c = ctrlCell(), s = tut.target;
         return !!(c && s && Math.hypot(dx(c.x, s.x), dy(c.y, s.y)) < s.R + 46); } },
 
-    { cap: "You are far too small to swallow it. So you digest it from the OUTSIDE: <b>Space</b> releases your <b class='c-carb'>carbohydrase</b>, the <b class='c-carb'>blue</b> blocks dissolve, and you absorb what comes loose.",
-      goal: "Face the particle and press <b>Space</b> — eat something",
+    { capDesktop: "You are far too small to swallow it. So you digest it from the OUTSIDE: <b>Space</b> releases your <b class='c-carb'>carbohydrase</b>, the <b class='c-carb'>blue</b> blocks dissolve, and you absorb what comes loose.",
+      capTouch: "You are far too small to swallow it. So you digest it from the OUTSIDE: the large <b>enzyme button</b> releases your <b class='c-carb'>carbohydrase</b>, the <b class='c-carb'>blue</b> blocks dissolve, and you absorb what comes loose.",
+      goalDesktop: "Approach the particle and press <b>Space</b> — eat something",
+      goalTouch: "Approach with the <b>joystick</b>, then tap the large <b>enzyme button</b> — eat something",
       setup: () => { if (!tut.target || tut.target.organic <= 0) { clearCast(); tut.target = spawnCarbParticle(); }
         demo.focus = tut.target; tut.score0 = state.score; },
       done: () => state.score > (tut.score0 || 0) + 2 },
 
-    { cap: "This is a <b style='color:#ff9ec0'>protist</b> — a single-celled hunter, and bacteria are what it eats. It doesn't dissolve you from outside the way you eat a particle: it engulfs you whole. You cannot outswim it forever.<br><em style='opacity:.8'>There is something a bacterium can do about a grazer. You don't have it yet.</em>",
-      goal: "Let it catch you. <b>Get eaten.</b>",
+    { capDesktop: "This is a <b class='c-prot'>protist</b> — a single-celled hunter, and bacteria are what it eats. It doesn't dissolve you from outside the way you eat a particle: it engulfs you whole.",
+      capTouch: "This is a <b class='c-prot'>protist</b> — a single-celled hunter, and bacteria are what it eats. It doesn't dissolve you from outside the way you eat a particle: it engulfs you whole.",
+      goalDesktop: "Use <b>WASD</b> or the <b>arrow keys</b> to avoid getting eaten for <b>4 seconds</b>",
+      goalTouch: "Use the <b>joystick</b> to avoid getting eaten for <b>4 seconds</b>",
       setup: () => { clearCast(true); const c = centre(ctrlCell());
-        const pr = makePredator(WORLD_W/2 + 170, WORLD_H/2, CFG.predator.startEnergy, 0);
-        predators.push(pr); demo.focus = pr; if (c) c.invuln = 0; },
-      done: () => !!tut.flags.eaten },
+        const pr = makePredator(0, 0, CFG.predator.startEnergy, 0);
+        pr.tutorialGrace = TUTORIAL_PROTIST_GRACE; focusTutorial(pr);
+        predators.push(pr); tut.target = pr; tut.surviveT = 0; if (c) c.invuln = 0; },
+      maintain: (c, dt) => { const pr = tut.target; if (!pr || pr.dead) return;
+        pr.energy = Math.max(pr.energy, CFG.predator.startEnergy);
+        if (tut.flags.eaten) { tut.flags.eaten = false; tut.surviveT = 0;
+          pr.tutorialGrace = TUTORIAL_PROTIST_GRACE; focusTutorial(pr); if (c) { centre(c); c.invuln = 0; } return; }
+        if (c && pr.tutorialGrace <= 0 && (pr.vx !== 0 || pr.vy !== 0)) tut.surviveT += dt; },
+      done: () => tut.surviveT >= 4 },
 
-    { cap: "<b style='color:#ff5a52'>Red</b> phages can infect <em>you</em>; <b style='color:#8bf06a'>green</b> ones can't. A phage cannot chase — it drifts, and waits to collide.",
-      goal: "Swim into a <b style='color:#ff5a52'>red</b> phage. <b>Get infected.</b>",
-      setup: () => { clearCast(true); const c = centre(ctrlCell()); if (!c) return;
-        demo.hero = c; c.invuln = 0; c.infectedGreen = false;
-        const tier = upgradeTier(c);
-        for (let i = 0; i < 7; i++) { const p = near(c, rand(120, 210)); const ph = makePhage("green", p.x, p.y, tier); ph.vx = ph.vy = 0; phages.push(ph); if (i === 0) demo.focus = ph; } },
-      done: () => { const c = ctrlCell(); return !!(tut.flags.infected || (c && c.infectedGreen)); } },
-
-    { cap: "Not every phage kills. The <b style='color:#ffd24a'>gold</b> one carries a gene INTO you instead — it is the only thing in this sea that changes what you can <em>do</em>.",
-      goal: "Catch the <b style='color:#ffd24a'>gold phage</b> — it carries <b>CRISPR</b>",
+    { capDesktop: "Not every phage kills. The <b class='c-gold'>gold</b> one provides <b>ADAPTATIONS</b> that you can pass on to your descendants.",
+      capTouch: "Not every phage kills. The <b class='c-gold'>gold</b> one provides <b>ADAPTATIONS</b> that you can pass on to your descendants.",
+      goalDesktop: "Use <b>WASD</b> or the <b>arrow keys</b> to catch the <b class='c-gold'>gold phage</b> — it carries <b class='c-crispr'>CRISPR</b>",
+      goalTouch: "Push the <b>joystick</b> toward the <b class='c-gold'>gold phage</b> — it carries <b class='c-crispr'>CRISPR</b>",
       setup: () => { clearCast(true); const c = centre(ctrlCell()); if (!c) return;
         c.infectedGreen = false; c.crispr = false;      // a clean slate, so the gene is the news
-        const p = near(c, 190); const ph = makePhage("gold", p.x, p.y); ph.vx = ph.vy = 0;
-        phages.push(ph); demo.focus = ph; },
+        const ph = makePhage("gold", 0, 0); focusTutorial(ph); ph.vx = ph.vy = 0;
+        phages.push(ph); },
       done: () => { const c = ctrlCell(); return !!(tut.flags.adapted || (c && c.crispr)); } },
 
-    { cap: "<b>CRISPR</b> is a real immune system: it files away the DNA of viruses that attacked you and shreds them on sight. A phage that cannot infect you stops being a threat and becomes <b>lunch</b>.",
-      goal: "Swim into a <b style='color:#8bf06a'>green</b> phage. <b>Eat it.</b>",
+    { capDesktop: "<b class='c-crispr'>CRISPR</b> is a bacterial immune system that shreds viral DNA. <b class='c-vir'>Green phages</b> cannot infect you and become lunch.",
+      capTouch: "<b class='c-crispr'>CRISPR</b> is a bacterial immune system that shreds viral DNA. <b class='c-vir'>Green phages</b> cannot infect you and become lunch.",
+      goalDesktop: "Use <b>WASD</b> or the <b>arrow keys</b> to swim into a <b class='c-vir'>green phage</b> and eat it",
+      goalTouch: "Push the <b>joystick</b> to swim into a <b class='c-vir'>green phage</b> and eat it",
       setup: () => { clearCast(true); const c = centre(ctrlCell()); if (!c) return;
         demo.hero = c; if (!c.crispr) grantCrispr(c);   // Skip'd past the last step? You still get the gene.
+        c.antibiotic = 0; if (state.activeEnzyme === AB) state.activeEnzyme = 2;
         const tier = upgradeTier(c);
         for (let i = 0; i < 8; i++) { const p = near(c, rand(110, 200));
           const ph = makePhage("green", p.x, p.y, tier + CFG.phage.hostTolerance + 4);  // immune to you = edible
-          ph.vx = ph.vy = 0; phages.push(ph); if (i === 0) demo.focus = ph; } },
+          if (i === 0) focusTutorial(ph); ph.vx = ph.vy = 0; phages.push(ph); } },
       done: () => !!tut.flags.atePhage },
+
+    { capDesktop: "One cell can carry multiple adaptive genes, but only one is expressed at a time. This cell has an <b class='c-ab'>antibiotic biosynthesis gene</b>.",
+      capTouch: "One cell can carry multiple adaptive genes, but only one is expressed at a time. This cell has an <b class='c-ab'>antibiotic biosynthesis gene</b>.",
+      goalDesktop: "Press <b>Tab</b> to load the <b class='c-ab'>antibiotic</b>",
+      goalTouch: "Tap the magenta <b class='c-ab'>antibiotic</b> gene button to load it",
+      setup: () => { clearCast(); const c = placeTutorial(ctrlCell()); if (!c) return;
+        demo.hero = c; c.antibiotic = Math.max(1, c.antibiotic || 0); state.activeEnzyme = 2; demo.focus = c; },
+      maintain: (c) => { if (c) c.antibiotic = Math.max(1, c.antibiotic || 0); },
+      done: () => state.activeEnzyme === AB },
+
+    { capDesktop: "Many microbes make <b class='c-ab'>antibiotics</b> as chemical weapons. Yours poisons nearby protists and genetically distant bacteria, while close kin carrying the same resistance are spared.",
+      capTouch: "Many microbes make <b class='c-ab'>antibiotics</b> as chemical weapons. Yours poisons nearby protists and genetically distant bacteria, while close kin carrying the same resistance are spared.",
+      goalDesktop: "Press <b>Space</b> to release the antibiotic and kill the <b class='c-prot'>protist</b>",
+      goalTouch: "Tap the large <b class='c-ab'>enzyme button</b> to release the antibiotic and kill the <b class='c-prot'>protist</b>",
+      setup: () => { clearCast(); const c = ctrlCell(); if (!c) return;
+        demo.hero = c; c.antibiotic = Math.max(1, c.antibiotic || 0); c.angle = 0; c.tumbling = false;
+        c.energy = Math.max(c.energy, CFG.cell.antibioticCost + 10); c.invuln = Math.max(c.invuln, 3);
+        state.activeEnzyme = AB;
+        const maxR = CFG.toxin.maxRadius * (1 + (c.antibiotic-1)*CFG.toxin.radiusPer);
+        placeTutorial(c, -maxR*0.7);
+        const pr = makePredator(0, 0, Math.max(1, CFG.toxin.dose*0.9), 0);
+        pr.tutorialGrace = TUTORIAL_PROTIST_GRACE; focusTutorial(pr, maxR*0.7);
+        predators.push(pr); tut.target = pr; },
+      maintain: (c) => { if (c) { c.antibiotic = Math.max(1, c.antibiotic || 0);
+        c.energy = Math.max(c.energy, CFG.cell.antibioticCost + 10); c.invuln = Math.max(c.invuln, 0.5); }
+        const pr = tut.target;
+        if (pr && !pr.dead && pr.toxT <= 0) pr.energy = Math.max(pr.energy, Math.max(1, CFG.toxin.dose*0.9)); },
+      done: () => !!(tut.target && tut.target.dead && tut.target.toxT > 0) },
   ];
   function startTutorial() {
     stopDemo();
     newGame(true);                              // demo state: dish world, no score, no leaderboard
     const first = cells[0];
     first.controlled = true;                    // ...but YOU drive this one
-    demo = { i: -1, t: 0, secs: Infinity, focus: null, idle: false, idleT: 0,
+    demo = { t: 0, focus: null, idle: false, idleT: 0, manualT: 0,
              dish: true, rim: 0, hero: first, gold: null, watch: true, interactive: true };
-    tut = { i: -1, flags: {}, done: false, doneT: 0, target: null, score0: 0 };
+    tut = { i: -1, flags: {}, done: false, doneT: 0, complete: false, completeT: 0, target: null, score0: 0 };
+    document.body.classList.add("tutorial-active");
     if (el.title) el.title.classList.add("hidden");
     if (el.demoExit) el.demoExit.classList.remove("hidden");
     if (el.tutBar) el.tutBar.classList.remove("hidden");
@@ -1193,12 +1196,15 @@
   }
   function stopTutorial() {
     tut = null;
+    document.body.classList.remove("tutorial-active");
+    if (el.stage) el.stage.style.removeProperty("--tutorial-caption-space");
     if (el.tutBar) el.tutBar.classList.add("hidden");
+    if (el.demoCap) el.demoCap.classList.remove("complete");
   }
   function gotoTutStep(i) {
     if (!tut) return;
     tut.i = clamp(i, 0, TUT_STEPS.length - 1);
-    tut.flags = {}; tut.done = false; tut.doneT = 0;
+    tut.flags = {}; tut.done = false; tut.doneT = 0; tut.complete = false; tut.completeT = 0;
     const c = ctrlCell();
     if (c) { c.energy = Math.max(c.energy, CFG.cell.startEnergy); c.infectedGreen = false; }
     TUT_STEPS[tut.i].setup();
@@ -1206,20 +1212,45 @@
   }
   function renderTutStep(done) {
     const st = TUT_STEPS[tut.i];
+    const cap = isTouch ? st.capTouch : st.capDesktop;
+    const goal = isTouch ? st.goalTouch : st.goalDesktop;
     if (el.demoCap) {
+      el.demoCap.classList.remove("complete");
       el.demoCap.innerHTML =
-        `<i>step ${tut.i + 1} / ${TUT_STEPS.length}</i><span>${st.cap}</span>` +
-        (done ? `<b class="tutgoal ok">✓ done</b>` : `<b class="tutgoal">▸ ${st.goal}</b>`);
+        `<i>step ${tut.i + 1} / ${TUT_STEPS.length}</i><span>${cap}</span>` +
+        (done ? `<b class="tutgoal ok">✓ done</b>` : `<b class="tutgoal">▸ ${goal}</b>`);
       el.demoCap.classList.remove("hidden");
       el.demoCap.classList.add("tut");        // sits above the Back/Skip bar
+      sizeTouchTutorialHeader();
     }
-    if (el.tutPrev) el.tutPrev.disabled = tut.i === 0;
+    if (el.tutPrev) { el.tutPrev.textContent = "◀ Back"; el.tutPrev.disabled = tut.i === 0; }
     if (el.tutNext) el.tutNext.textContent = tut.i === TUT_STEPS.length - 1 ? "Finish ▶" : "Skip ▶";
   }
   function tutNext() {
     if (!tut) return;
-    if (tut.i >= TUT_STEPS.length - 1) { finishTutorial(); return; }
+    if (tut.complete) { start(); return; }
+    if (tut.i >= TUT_STEPS.length - 1) { showTutorialComplete(); return; }
     gotoTutStep(tut.i + 1);
+  }
+  function showTutorialComplete() {
+    if (!tut) return;
+    tut.complete = true; tut.completeT = 5; tut.done = false;
+    if (el.demoCap) {
+      el.demoCap.innerHTML = "<i>tutorial complete</i><span><b>Congratulations!</b>You're ready for the real world.</span>";
+      el.demoCap.classList.remove("hidden"); el.demoCap.classList.add("tut", "complete");
+      sizeTouchTutorialHeader();
+    }
+    if (el.tutPrev) { el.tutPrev.disabled = false; el.tutPrev.textContent = "Just watch"; }
+    if (el.tutNext) el.tutNext.textContent = "Enter the real world ▶";
+  }
+  function sizeTouchTutorialHeader() {
+    if (!el.stage) return;
+    if (!isTouch || !tut || tut.complete || !el.demoCap) {
+      el.stage.style.removeProperty("--tutorial-caption-space"); return;
+    }
+    // The wording wraps differently on a narrow portrait phone and a short landscape phone. Measure
+    // the rendered card so health/exit controls always begin below it instead of trusting one guess.
+    el.stage.style.setProperty("--tutorial-caption-space", Math.ceil(el.demoCap.offsetHeight + 12) + "px");
   }
   // The reward for finishing is the ocean itself: the glass dissolves, the dish opens out, and the
   // sea runs on by itself. Control is handed back to the cells — from here you're watching, and the
@@ -1230,38 +1261,47 @@
     cells.forEach((c) => (c.controlled = false));
     if (demo) {
       demo.interactive = false; demo.idle = true; demo.idleT = 0;
-      demo.i = DEMO_BEATS.length; demo.secs = Infinity;
       openDemoWorld();
+      demo.rim = 0; demo.focus = demoInteresting(); demo.idleT = rand(9, 15);
     }
   }
-  function tutPrev() { if (tut) gotoTutStep(tut.i - 1); }
+  function tutPrev() { if (tut && tut.complete) finishTutorial(); else if (tut) gotoTutStep(tut.i - 1); }
   function updateTutorial(dt) {
     if (!tut || !demo) return;
-    // Your cell being eaten is the LESSON in step 3, not a failure — so the sea hands you another one
-    // instead of flipping you to a protist. (A tutorial that ends by taking the game away is a joke.)
+    if (tut.complete) {
+      tut.completeT -= dt;
+      if (tut.completeT <= 0) finishTutorial();
+      return;
+    }
+    // Being eaten during the step-3 survival challenge is a retry, not a role swap, so the sea
+    // hands you another cell and the step restarts its movement grace period.
     if (!cells.some((c) => c.alive)) {
       const c = makeCell(WORLD_W/2, WORLD_H/2, CFG.cell.startEnergy, rand(0, TAU), 1);
       c.controlled = true; c.invuln = 1.5; cells.push(c);
       demo.hero = c;
     } else if (!ctrlCell()) { const c = cells.find((x) => x.alive); if (c) { c.controlled = true; demo.hero = c; } }
+    const st = TUT_STEPS[tut.i];
+    if (st.maintain) st.maintain(ctrlCell(), dt);   // maintain genes and timed tutorial objectives
     if (tut.done) {                              // held on "✓ done" for a beat, then move on
       tut.doneT -= dt;
       if (tut.doneT <= 0) tutNext();
       return;
     }
-    if (TUT_STEPS[tut.i].done()) {
+    if (st.done()) {
       tut.done = true; tut.doneT = 1.6;
       Audio.play("upgrade", 0.5);
       renderTutStep(true);
     }
   }
 
-  // The attract film: plays itself, on a timer, behind the title menu.
+  // Start directly in the autonomous ocean: no scripted beats and no captions behind the menu.
   function startDemo() {
     newGame(true);
-    demo = { i: -1, t: 0, secs: 0, focus: null, hold: 0, idle: false, idleT: 0,
+    demo = { t: 0, focus: null, idle: true, idleT: 0, manualT: 0,
              dish: true, rim: 0, hero: null, gold: null };
-    nextDemoBeat();
+    openDemoWorld();
+    demo.rim = 0; demo.focus = demoInteresting(); demo.idleT = rand(9, 15);
+    if (el.demoCap) el.demoCap.classList.add("hidden");
   }
   function stopDemo() {
     stopTutorial();
@@ -1269,18 +1309,15 @@
     if (el.demoCap) el.demoCap.classList.add("hidden");
     if (el.demoExit) el.demoExit.classList.add("hidden");
   }
-  // The attract loop plays behind the title menu, which covers most of it — fine as a backdrop, no
-  // good as a lesson. WATCHING the tutorial pulls the menu away so you can actually see the ocean,
-  // and replays it from beat 1.
+  // The interactive tutorial is entered explicitly; the menu background remains an uncaptioned sim.
   function watchTutorial() { startTutorial(); }
-  function endTutorial() {                    // back to the menu; the attract loop resumes behind it
+  function endTutorial() {                    // back to the menu; the background sim resumes
     stopTutorial();
     if (el.demoExit) el.demoExit.classList.add("hidden");
     startDemo();                             // the title needs its living ocean back
     if (el.title) el.title.classList.remove("hidden");
   }
-  // Once you'd started a run there was NO WAY BACK to the title — so no way to reach the tutorial,
-  // or the attract loop, without reloading the page. Every screen you can be stuck on now has a door.
+  // Every screen has a route back to the title, its tutorial button, and its living background.
   function toTitle() {
     paused = false;
     if (el.demoExit) el.demoExit.classList.add("hidden");
@@ -1291,24 +1328,7 @@
     startDemo();                              // the sea goes back to playing itself behind the menu
     if (el.title) el.title.classList.remove("hidden");
   }
-  function nextDemoBeat() {
-    if (!demo) return;
-    demo.i++; demo.t = 0;
-    if (demo.i >= DEMO_BEATS.length) {              // the lesson is over — the dish becomes the ocean
-      demo.idle = true; demo.idleT = 0; demo.secs = Infinity;
-      openDemoWorld();
-      if (el.demoCap) el.demoCap.classList.add("hidden");
-      return;
-    }
-    const b = DEMO_BEATS[demo.i];
-    demo.secs = b.secs;
-    demo.focus = b.setup() || anyCell();
-    if (el.demoCap) {
-      el.demoCap.innerHTML = `<i>${demo.i + 1}/${DEMO_BEATS.length}</i><span>${b.cap}</span>`;
-      el.demoCap.classList.remove("hidden", "tut");
-    }
-  }
-  // Screensaver: no captions, just drift to whatever is worth watching — something dying loudly,
+  // No-caption background: drift to whatever is worth watching — something dying loudly,
   // a grazer mid-hunt, the gold phage, or failing all that the thick of the colony.
   // Pick the next thing to watch. The old version rolled dice over the whole ocean, so the camera
   // hurled itself across the world every few seconds — twitchy, and you lost the thread of whatever
@@ -1344,46 +1364,27 @@
       confineToDish();
       return;
     }
-    const b = !demo.idle && DEMO_BEATS[demo.i];
-    if (b && b.tick) b.tick(demo.focus, demo.t);
-    if (!alive(demo.focus)) demo.focus = demo.idle ? demoInteresting() : anyCell();   // it died mid-shot
-    if (demo.idle) {
-      // YOU can take the camera: hold a direction and it pans. Let go and, after a moment, it goes
-      // back to drifting on its own — the sim is never taken away from you, and never held hostage.
-      const a = demo.watch ? axis() : { x: 0, y: 0 };
-      if (a.x || a.y) {
-        const sp = CFG.demo.panSpeed*dt;
-        cam.x = wrapX(cam.x + a.x*sp); cam.y = wrapY(cam.y + a.y*sp);
-        demo.manualT = CFG.demo.panHold; demo.focus = null;
-        return;
-      }
-      if (demo.manualT > 0) {
-        demo.manualT -= dt;
-        if (demo.manualT <= 0) { demo.focus = demoInteresting(); demo.idleT = rand(9, 15); }
-        return;
-      }
-      demo.idleT -= dt;
-      if (demo.idleT <= 0 || !alive(demo.focus)) { demo.idleT = rand(9, 15); demo.focus = demoInteresting(); }
-    } else if (demo.t >= demo.secs) nextDemoBeat();
+    if (!alive(demo.focus)) demo.focus = demoInteresting();
+    // YOU can take the camera after graduation. Let go and it returns to drifting through the sim.
+    const a = demo.watch ? axis() : { x: 0, y: 0 };
+    if (a.x || a.y) {
+      const sp = CFG.demo.panSpeed*dt;
+      cam.x = wrapX(cam.x + a.x*sp); cam.y = wrapY(cam.y + a.y*sp);
+      demo.manualT = CFG.demo.panHold; demo.focus = null;
+      return;
+    }
+    if (demo.manualT > 0) {
+      demo.manualT -= dt;
+      if (demo.manualT <= 0) { demo.focus = demoInteresting(); demo.idleT = rand(9, 15); }
+      return;
+    }
+    demo.idleT -= dt;
+    if (demo.idleT <= 0 || !alive(demo.focus)) { demo.idleT = rand(9, 15); demo.focus = demoInteresting(); }
     if (demo.rim > 0) demo.rim = Math.max(0, demo.rim - dt/CFG.demo.rimFade);   // the glass dissolves
     if (demo.dish) {
       // Inside the dish the camera does not move AT ALL. The whole world is on screen, so there is
       // nothing to chase — and a still camera is what lets the eye follow the ring instead of fighting it.
       cam.x = WORLD_W/2; cam.y = WORLD_H/2;
-      // Instead the SUBJECT comes to the stage: whatever the beat is about is drawn gently to the
-      // middle of the glass and held there. A soft spring, not a clamp — the protist still hunts and
-      // the cell still swims, they just do it where you're looking.
-      const f = demo.focus;
-      if (f && !demo.idle && alive(f)) {
-        // A subject swims at 240px/s; a gentle tether just loses. Reel it in hard once it leaves the
-        // middle fifth, so it can still swim, hunt and drift — but always in front of you.
-        const lim = dishRadius()*0.2;
-        const ex = f.x - WORLD_W/2, ey = f.y - WORLD_H/2, d = Math.hypot(ex, ey);
-        if (d > lim) {
-          const pull = (d - lim)*(1 - Math.exp(-3.4*dt));
-          f.x -= ex/d*pull; f.y -= ey/d*pull;
-        }
-      }
       confineToDish();
       return;
     }
@@ -1491,7 +1492,8 @@
     if (!state || c.cyst === undefined) return;
     state.dead = state.dead || [];
     state.dead.push({ enzLvl: c.enzLvl.slice(), chemotaxis: !!c.chemotaxis, chemoLevel: c.chemoLevel || 0,
-                      crispr: !!c.crispr, antibiotic: c.antibiotic || 0, ups: (c.ups || []).slice(0, 32) });
+                      crispr: !!c.crispr, antibiotic: c.antibiotic || 0, ups: (c.ups || []).slice(0, 32),
+                      phylo: (c.phylo || c.ups || []).slice(0, 32) });
     if (state.dead.length > 400) state.dead.shift();   // a rolling bank, not an ever-growing one
   }
   function reviveGenome(c) {                            // returns false if the bank is empty
@@ -1500,6 +1502,7 @@
     const g = bank[(Math.random()*bank.length)|0];
     c.enzLvl = g.enzLvl.slice(); c.chemotaxis = g.chemotaxis; c.chemoLevel = g.chemoLevel;
     c.crispr = g.crispr; c.antibiotic = g.antibiotic; c.ups = (g.ups || []).slice();
+    c.phylo = (g.phylo || g.ups || []).slice();
     return true;
   }
   function immigrateBacteria(n) { // a diversity of bacteria drift in from offscreen (varied genomes)
@@ -1516,6 +1519,7 @@
         if (Math.random() < 0.22) c.crispr = true;
         if (Math.random() < 0.30) c.antibiotic = 1;
         c.ups = genomeUps(c);   // it arrived already carrying these — read the log off the genome
+        c.phylo = c.ups.slice();
       }
       c.invuln = 2.5;
       cells.push(c);
@@ -1588,7 +1592,9 @@
     if (state.role === "protist") { protistTurbo(); return; }   // Space = turbo when you're the grazer
     const c = controlledCell(); if (!c) return;
     if (!ownedDeployables(c).includes(state.activeEnzyme)) state.activeEnzyme = ownedDeployables(c)[0] ?? 2;
-    if (state.activeEnzyme === AB) { if (releaseAntibiotic(c)) Audio.play("enzyme", 0.55); }
+    if (state.activeEnzyme === AB) {
+      if (releaseAntibiotic(c)) Audio.play("enzyme", 0.55);
+    }
     else if (releaseEnzyme(c, state.activeEnzyme)) Audio.play("enzyme", 0.7);
   }
   // TOUCH ONLY. On a phone the interesting decision is WHERE TO SWIM, not when to press a button —
@@ -1718,6 +1724,7 @@
     d1.antibiotic = d2.antibiotic = c.antibiotic;
     d1.enzLvl = c.enzLvl.slice(); d2.enzLvl = c.enzLvl.slice();
     d1.ups = d2.ups = c.ups || [];   // the adaptation log is heritable too (shared until one of them adapts)
+    d1.phylo = d2.phylo = c.phylo || c.ups || []; // event ancestry survives gain and gene loss alike
     if (c.infectedGreen) { d2.infectedGreen = true; d2.lysisT = c.lysisT; burst(c.x, c.y, "#7CFC5A", 8); } // virus segregates into one daughter; d1 (your lineage) stays clean
     cells.splice(cells.indexOf(c), 1, d1, d2);
     if (c.controlled) state.gen++; // count a generation only when the cell YOU are steering divides
@@ -1906,8 +1913,9 @@
     for (const c of cells) if (c.alive && c.energy >= CFG.cell.divideThreshold) divide(c);
     const hadControlled = cells.some((c) => c.controlled && c.alive);
     cells = cells.filter((c) => c.alive);
+    applyPendingDrift(); // the founder may just have produced the first eligible sister cell
     // trophic role-swap: bacteria extinct → you become a protist (not game over). The demo has no
-    // one to promote, so it just restocks the sea and keeps running — an attract loop can't end.
+      // one to promote, so it just restocks the sea and keeps running — a background sim can't end.
     if (state.role === "bacterium" && !cells.length) {
       if (tut) { /* updateTutorial hands you a fresh cell — being eaten is a lesson, not an ending */ }
       else if (state.demo) immigrateBacteria(CFG.cycle.reseedBacteria);
@@ -1970,7 +1978,7 @@
     particles = particles.filter((q) => q.life > 0);
     // camera follows whichever entity you're controlling (cell or protist)
     const pc = controlledEntity(); if (pc) { cam.x = pc.x; cam.y = pc.y; }
-    updateDemo(dt);   // no player to follow in attract mode — the director drives the camera instead
+    updateDemo(dt);   // no player in the menu background — the camera drifts through the sim
     rebuildSpatialIndexes(); // final positions feed rendering and any input between animation frames
     // sample per-ecotype abundances for the time-series chart
     const greenCount = phages.reduce((a, p) => a + (p.type === "green"), 0);
@@ -2138,7 +2146,7 @@
     // autonomous chemical defense: a cell that evolved the antibiotic zaps protists that close in.
     // Kept deliberately sparing — it's a last-ditch defense, not a constant kill field, so protists
     // aren't wiped out around every colony (long cooldown + fires only when a grazer is right on top).
-    if (c.antibiotic > 0 && c.energy > CFG.cell.antibioticCost*3.5) {
+    if (c.antibiotic > 0 && c.energy > CFG.cell.antibioticCost*3.5 && !(tut && c.controlled)) {
       c.toxCd = (c.toxCd || 0) - dt;
       if (c.toxCd <= 0) {
         const maxR = CFG.toxin.maxRadius * (1 + (c.antibiotic-1)*CFG.toxin.radiusPer), rr = (maxR*0.6)**2;
@@ -2274,8 +2282,12 @@
       if (pr.reproCd > 0) pr.reproCd -= dt;
       if (pr.toxT > 0) pr.toxT -= dt;
       if (pr.satiated > 0) pr.satiated -= dt;
-      const hunting = pr.satiated <= 0;
-      if (pr.controlled) {                              // YOU are steering this protist (trophic role-swap)
+      const tutorialWaiting = pr.tutorialGrace > 0;
+      if (tutorialWaiting) pr.tutorialGrace = Math.max(0, pr.tutorialGrace - dt);
+      const hunting = !tutorialWaiting && pr.satiated <= 0;
+      if (tutorialWaiting) {                            // tutorial captions get a calm reading window
+        pr.vx = pr.vy = 0;
+      } else if (pr.controlled) {                       // YOU are steering this protist (trophic role-swap)
         const a = axis();
         if (a.x !== 0 || a.y !== 0) {
           pr.heading = Math.atan2(a.y, a.x);
@@ -2432,6 +2444,7 @@
           // The tutorial promises CRISPR by name, and then has to teach eating a phage with it — so
           // there it grants CRISPR outright rather than rolling the dice on the lesson.
           const { msg, color, abbr, acquired } = (tut && !c.crispr) ? grantCrispr(c) : grantRandomUpgrade(c);
+          rememberLineage(c);                         // the captured adaptation is a branch immediately
           if (c.controlled) tutDid("adapted");
           ph.dead = true;
           burst(c.x, c.y, "#ffd24a", 16);
@@ -2922,12 +2935,9 @@
       const m = ecoMask(c); eco[m]++;          // cysts included in their generation bucket (colored, not a separate gray band)
       const key = m*64 + Math.min(63, upgradeTier(c)); // mask (0-7) high bits, tier low bits
       buckets[key] = (buckets[key] || 0) + 1;
-      // Remember what each colored band on the chart actually IS, the first time we see it: the band
-      // is a lineage (an ecotype at an adaptation level), and this is the genome behind that color.
-      // Recorded once per lineage, not per sample — a per-sample copy would balloon the saved run.
-      if (state && state.lineages && !state.lineages[key] && Object.keys(state.lineages).length < 64) {
-        state.lineages[key] = { t: +state.elapsed.toFixed(1), ups: (c.ups || []).slice(0, 32) };
-      }
+      // Remember the genomes behind every colored band. Same-band variants are deduplicated by their
+      // ancestry, so sampling can discover real diversity without copying it into every history row.
+      rememberLineage(c);
     }
     return { eco, buckets };
   }
@@ -3141,7 +3151,15 @@
     for (const [rawKey, lineage] of Object.entries(value).slice(0, SCORE_CLIENT_LIMITS.lineages)) {
       const key = Number(rawKey);
       if (!Number.isInteger(key) || key < 0 || key > 511 || !scoreClientObject(lineage)) continue;
-      out[key] = { t: scoreClientNumber(lineage.t, 0, 86400), ups: normalizeClientUpgrades(lineage.ups, 32) };
+      const entry = { t: scoreClientNumber(lineage.t, 0, 86400), ups: normalizeClientUpgrades(lineage.ups, 32) };
+      if (Array.isArray(lineage.tree)) entry.tree = normalizeClientUpgrades(lineage.tree, 32);
+      if (Array.isArray(lineage.variants)) entry.variants = lineage.variants.slice(0, 4)
+        .filter(scoreClientObject).map((variant) => {
+          const clean = { t: scoreClientNumber(variant.t, 0, 86400), ups: normalizeClientUpgrades(variant.ups, 32) };
+          if (Array.isArray(variant.tree)) clean.tree = normalizeClientUpgrades(variant.tree, 32);
+          return clean;
+        });
+      out[key] = entry;
     }
     return out;
   }
@@ -3246,7 +3264,7 @@
     arr = arr.filter((r) => deviceOf(r) === scoreDevice);
     renderDeviceTabs(counts);
     // paused mid-game: drop the live run into the list so you can see exactly where it ranks
-    const liveLine = (state && state.running && !state.demo && state.device === scoreDevice) ? currentRunLine() : null; // the attract loop is not a run
+    const liveLine = (state && state.running && !state.demo && state.device === scoreDevice) ? currentRunLine() : null; // the background sim is not a run
     if (liveLine) arr.push(liveLine);
     if (!arr.length) {
       el.scoresList.innerHTML = `<p class="empty">No ${scoreDevice === "touch" ? "mobile" : "desktop"} runs yet. Play a game and your lineage's evolutionary history will appear here.</p>`;
@@ -3358,10 +3376,9 @@
   const runMid = (rec) => ({ top: "gen " + (rec && rec.gen != null ? rec.gen : "—"),
                              bot: Math.round((rec && rec.score) || 0).toLocaleString() + " cal" });
   // ---------------------------------------------------------------- cladogram
-  // A run's phylogeny. Every lineage carries its adaptations in the order it got them, so two
-  // lineages that share a prefix share an ancestor — the set of paths IS a tree, and building it is
-  // just a trie over those logs. No extra bookkeeping, no guessing: the branch points are the moments
-  // a lineage adapted away from its parent.
+  // A run's phylogeny. Every lineage carries its mutation events in order, so two lineages that share
+  // a prefix share an ancestor — the set of paths IS a tree, built as a trie over those logs. A
+  // separate current-genome list keeps gene losses honest in both the tree and the genome display.
   // Caveat worth knowing: immigrant lineages drift in with a ready-made genome and no true history
   // (genomeUps synthesises a canonical order), so they hang off the root by what they CARRY rather
   // than by descent. In a game where genes also move sideways, that is arguably the honest picture.
@@ -3371,13 +3388,16 @@
     if (!keys.length) return null;
     const root = { abbr: null, color: null, depth: 0, children: [], leaves: [] };
     for (const k of keys) {
-      let node = root;
-      for (const u of (lin[k].ups || [])) {
-        let ch = node.children.find((c) => c.abbr === u.abbr);
-        if (!ch) { ch = { abbr: u.abbr, color: u.color, depth: node.depth + 1, children: [], leaves: [] }; node.children.push(ch); }
-        node = ch;
+      const paths = [lin[k]].concat(Array.isArray(lin[k].variants) ? lin[k].variants : []);
+      for (const path of paths) {
+        let node = root;
+        for (const u of (path.tree || path.ups || [])) {
+          let ch = node.children.find((c) => c.abbr === u.abbr);
+          if (!ch) { ch = { abbr: u.abbr, color: u.color, depth: node.depth + 1, children: [], leaves: [] }; node.children.push(ch); }
+          node = ch;
+        }
+        node.leaves.push(+k);                     // every distinct genome/path gets a terminal row
       }
-      node.leaves.push(+k);                       // this lineage ends here
     }
     return root;
   }
@@ -3640,7 +3660,7 @@
   // for a saved run, so pause just opens it on the live one. "← Back to list" from there still takes
   // you to the board, so nothing is lost.
   function showScores(opts) {
-    const active = !!(state && state.running && !state.demo); // paused mid-game — the attract loop isn't a game to end
+    const active = !!(state && state.running && !state.demo); // paused mid-game — the background sim isn't a game to end
     const live = !!(opts && opts.liveDetail) && active;
     if (el.scoresTitle) el.scoresTitle.textContent = paused ? "Paused" : "High Scores";
     if (el.scoresBack) el.scoresBack.textContent = paused ? "Resume" : "Back";
@@ -3889,6 +3909,7 @@
       // when the canvas was a fixed 800px being CSS-scaled down) composites with the responsive
       // canvas and the world is magnified twice over.
       if (isTouch) ZOOM = touchZoom() * viewScale();
+      sizeTouchTutorialHeader(); // rotation can add/remove lines; keep the tutorial header stacked
     }
   }
   let last = 0;
@@ -4693,6 +4714,7 @@
       if (el.chartwrap) el.chartwrap.classList.remove("collapsed");
     }
     syncShortLandscapeLayout();
+    if (tut && !tut.complete) renderTutStep(tut.done); // convertible devices get the controls they now have
     if (el.scores && !el.scores.classList.contains("hidden")) renderScoreList();
     if (typeof requestAnimationFrame === "function") requestAnimationFrame(resizeCanvas);
   }
@@ -4736,8 +4758,7 @@
   // temperature & salinity are held neutral for now (reserved for future levels:
   // estuary, sea ice, hydrothermal vent, ...)
   env.tempC = 20; env.salinity = 35; env.update();
-  // The title screen used to be an empty ocean. Run the attract mode behind it: the sim teaches
-  // itself, and the menu sits over a sea that's actually alive.
+  // Keep an autonomous, uncaptioned ocean alive behind the title menu.
   startDemo();
   // Clicking the water (rather than a menu button) also means "let me play".
   if (el.title) el.title.addEventListener("click", (e) => { if (e.target === el.title && demo) start(); });

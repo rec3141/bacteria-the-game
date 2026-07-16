@@ -118,10 +118,27 @@ function score_lineages($value) {
     if (count($out) >= 64 || !preg_match('/^(?:0|[1-9][0-9]*)$/', (string)$key) || !is_object($lineage)) continue;
     $bucket = (int)$key;
     if ($bucket < 0 || $bucket > 511) continue;
-    $out[$bucket] = [
+    $entry = [
       't' => score_number(score_value($lineage, 't', 0), 0, 86400, 0),
       'ups' => score_upgrades(score_value($lineage, 'ups'), 32),
     ];
+    $tree = score_value($lineage, 'tree');
+    if (is_array($tree)) $entry['tree'] = score_upgrades($tree, 32);
+    $variants = score_value($lineage, 'variants');
+    if (is_array($variants)) {
+      $entry['variants'] = [];
+      foreach ($variants as $variant) {
+        if (count($entry['variants']) >= 4 || !is_object($variant)) continue;
+        $clean = [
+          't' => score_number(score_value($variant, 't', 0), 0, 86400, 0),
+          'ups' => score_upgrades(score_value($variant, 'ups'), 32),
+        ];
+        $variantTree = score_value($variant, 'tree');
+        if (is_array($variantTree)) $clean['tree'] = score_upgrades($variantTree, 32);
+        $entry['variants'][] = $clean;
+      }
+    }
+    $out[$bucket] = $entry;
   }
   ksort($out, SORT_NUMERIC);
   return (object)$out;
