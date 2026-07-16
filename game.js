@@ -4255,17 +4255,20 @@
       const k = repOf.get(n);
       return k == null ? "rgba(255,255,255,.3)" : levelColor(k >> 9, k & 511);
     };
-    // DIAGONAL branches now descend from the founder at the top. Gene labels stay horizontal so
-    // left-leaning branches never turn their text upside down.
-    g.lineWidth = 2; g.font = "9.5px 'Trebuchet MS', sans-serif"; g.textAlign = "center";
+    // RECTANGULAR (elbow) branches: a horizontal at the parent's depth out to the child's column, then a
+    // straight vertical drop to the child. STRAIGHT diagonals to bottom-aligned tips tangle badly — the
+    // moment a lineage stops adapting early, its tip sits far from its internal node's midpoint and the
+    // diagonal slashes across the subtrees between them (see #27). Elbows never cross when leaves are laid
+    // out in DFS order, so the tree stays planar. tests/clado-planarity-contracts.mjs guards this.
+    g.lineWidth = 2; g.font = "9.5px 'Trebuchet MS', sans-serif";
     (function draw(n) {
       const x0 = xOf.get(n), y0 = yAt(n.depth);
       for (const c of n.children) {
         const x1 = xOf.get(c), y1 = yAt(c.depth);
         g.strokeStyle = lineColor(c);                   // the LINEAGE's colour — same as its band
-        g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
+        g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y0); g.lineTo(x1, y1); g.stroke();
         g.fillStyle = c.color || "#9fc3ba";             // the GENE's colour, for the label only
-        g.fillText(c.abbr, (x0 + x1)/2, (y0 + y1)/2 - 5); // adaptation that split this branch off
+        g.textAlign = "left"; g.fillText(c.abbr, x1 + 3, (y0 + y1)/2); // adaptation that split this branch off
         draw(c);
       }
     })(root);
@@ -4281,7 +4284,7 @@
       const xn = xOf.get(tip.node), yn = yAt(tip.node.depth), x = tip.x;
       const mask = tip.key >> 9, tier = tip.key & 511, col = levelColor(mask, tier);
       g.strokeStyle = col; g.lineWidth = 1.5;
-      g.beginPath(); g.moveTo(xn, yn); g.lineTo(x, tipY); g.stroke();
+      g.beginPath(); g.moveTo(xn, yn); g.lineTo(x, yn); g.lineTo(x, tipY); g.stroke(); // elbow: over at the node's depth, then straight down its own column
       g.fillStyle = col; g.fillRect(x - 5, tipY - 5, 10, 10); // same color as its band on the chart above
       g.fillStyle = "rgba(215,245,238,.85)";
       const n = peak[tip.key] || 0;

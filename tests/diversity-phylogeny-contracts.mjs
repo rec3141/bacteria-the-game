@@ -57,8 +57,8 @@ assert.match(clado, /const yAt = \(depth\) => padT \+ \(maxDepth \? depth\/maxDe
   "adaptation depth must increase down the vertical axis");
 assert.match(clado, /const x0 = xOf\.get\(n\), y0 = yAt\(n\.depth\)[\s\S]*const x1 = xOf\.get\(c\), y1 = yAt\(c\.depth\)/,
   "ancestral branches must descend from parent depth to child depth");
-assert.match(clado, /g\.moveTo\(xn, yn\); g\.lineTo\(x, tipY\)/,
-  "each terminal lineage must connect down to the shared tip row");
+assert.match(clado, /g\.moveTo\(xn, yn\); g\.lineTo\(x, yn\); g\.lineTo\(x, tipY\)/,
+  "each terminal lineage must elbow down to the shared tip row (planar, no crossing diagonals)");
 assert.doesNotMatch(clado, /const xAt = \(d\)/,
   "the old right-facing depth axis must not return");
 
