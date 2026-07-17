@@ -3744,23 +3744,32 @@
     // Both food and mortality are instantaneous sample values. Mortality counters already reset
     // after every sample, so accumulating them again here would turn this into an ever-rising total.
     const vals = hist.map((s) => subVals(s, mode).slice());
-    let maxY = mode ? 1 : 10;
-    for (const v of vals) { let tot = 0; for (let k = 0; k < K; k++) tot += v[k] || 0; if (tot > maxY) maxY = tot; }
+    // Follows the shared chartLog toggle with the SAME geometric-sum stacking as the community chart:
+    // in log mode each band contributes bandVal(x)=log10(x+1) of its OWN value and those stack, so a
+    // tiny series stays visible beside a huge one; in linear mode it's the plain stacked total.
+    let maxY = chartLog ? 1 : (mode ? 1 : 10), peakTot = 0;
+    for (const v of vals) {
+      let stacked = 0, raw = 0;
+      for (let k = 0; k < K; k++) { stacked += bandVal(v[k] || 0); raw += v[k] || 0; }
+      if (stacked > maxY) maxY = stacked;
+      if (raw > peakTot) peakTot = raw;
+    }
     const n = denom || Math.max(hist.length, 2), pad = H < 70 ? 8 : 14;
     const xAt = (i) => i/(n-1)*W, yAt = (v) => H - (v/maxY)*(H-pad) - 2;
     g.strokeStyle = "rgba(255,255,255,0.06)"; g.lineWidth = 1;
     for (let k = 1; k <= 3; k++) { const y = H - k/4*(H-pad) - 2; g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }
     g.fillStyle = "rgba(215,245,238,0.5)"; g.font = "10px 'Trebuchet MS', sans-serif"; g.textAlign = "left";
-    g.fillText(String(Math.round(maxY)) + (mode === 1 ? " deaths" : mode === 3 ? " cal" : ""), 3, 10); g.fillText("0", 3, H - 3);
+    const unit = mode === 1 ? " deaths" : mode === 3 ? " cal" : ""; // log mode shows the real peak total, like the community chart
+    g.fillText((chartLog ? Math.round(peakTot) : Math.round(maxY)) + unit, 3, 10); g.fillText("0", 3, H - 3);
     if (vals.length > 1) {
       const last = vals.length - 1, cum = vals.map(() => 0);
       for (let k = 0; k < K; k++) {
         g.fillStyle = colors[k];
         g.beginPath(); g.moveTo(xAt(0), yAt(cum[0]));
         for (let i = 1; i <= last; i++) g.lineTo(xAt(i), yAt(cum[i]));
-        for (let i = last; i >= 0; i--) g.lineTo(xAt(i), yAt(cum[i] + (vals[i][k] || 0)));
+        for (let i = last; i >= 0; i--) g.lineTo(xAt(i), yAt(cum[i] + bandVal(vals[i][k] || 0)));
         g.closePath(); g.fill();
-        for (let i = 0; i <= last; i++) cum[i] += (vals[i][k] || 0);
+        for (let i = 0; i <= last; i++) cum[i] += bandVal(vals[i][k] || 0);
       }
     }
   }
@@ -3776,7 +3785,10 @@
     for (const v of vals) maxRichness = Math.max(maxRichness, v.richness);
     const maxShannon = Math.max(Math.log(Math.max(2, maxRichness)), ...vals.map((v) => v.shannon), 0.01);
     const pad = H < 70 ? 8 : 14, xAt = (i) => i/(n-1)*W;
-    const yRichness = (v) => H - (v/maxRichness)*(H-pad) - 2;
+    // Richness is a count, so it follows the shared chartLog toggle (log10(x+1) axis) like the cell charts.
+    // Shannon H′ is already an entropy in nats — inherently a log measure — so it stays on its linear axis.
+    const lgR = Math.log10(maxRichness + 1) || 1;
+    const yRichness = chartLog ? (v) => H - (Math.log10(v + 1)/lgR)*(H-pad) - 2 : (v) => H - (v/maxRichness)*(H-pad) - 2;
     const yShannon = (v) => H - (v/maxShannon)*(H-pad) - 2;
     g.strokeStyle = "rgba(255,255,255,0.06)"; g.lineWidth = 1;
     for (let k = 1; k <= 3; k++) { const y = H - k/4*(H-pad) - 2; g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }

@@ -78,4 +78,14 @@ assert.match(game, /mort: state\.mortLive, cin: state\.calLive/,
 assert.match(game, /if \(mode === 3\) return \(s && s\.cin\) \? s\.cin : \[0,0,0,0,0\];/,
   "the sub-chart reads the 5-source calorie vector in mode 3");
 
+// The shared log/linear toggle (chartLog) drives EVERY companion chart, not just community-vs-time:
+// the stacked sub-charts use the same geometric-sum bandVal stacking, and richness follows too.
+const subRenderer = game.slice(game.indexOf("function renderSubChart"), game.indexOf("function renderDiversityChart"));
+assert.match(subRenderer, /cum\[i\] \+ bandVal\(vals\[i\]\[k\] \|\| 0\)/,
+  "stacked sub-charts (food/mortality/calories) stack bandVal so they follow chartLog like the community chart");
+assert.match(subRenderer, /maxY = chartLog \?/, "the sub-chart axis switches with the shared log toggle");
+const divRenderer = game.slice(game.indexOf("function renderDiversityChart"), game.indexOf("function drawHelix"));
+assert.match(divRenderer, /const yRichness = chartLog \?/,
+  "richness follows the shared log toggle (Shannon H′ stays linear — it is already an entropy)");
+
 console.log("Diversity and phylogeny contracts OK: S/H′ correct, ancestry top-to-bottom, calorie tracker wired.");
