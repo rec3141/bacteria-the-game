@@ -390,7 +390,7 @@
     const scale = [];
     for (let o = 0; o < 3; o++) for (const s of PENT) scale.push(110 * Math.pow(2, o + s/12)); // 3 octaves from A2
     const BEAT = 0.42;
-    let ctx, master, delay, on = false, idx = 0, prev = 0, nextT = 0, timer = null, drone = [];
+    let ctx, master, delay, on = false, idx = 0, prev = 0, nextT = 0, timer = null, drone = [], smoothPop = 0;
 
     function voice(freq, t, dur, vol) {
       const o = ctx.createOscillator(); o.type = "triangle"; o.frequency.value = freq;
@@ -404,12 +404,18 @@
     }
     function schedule() {
       if (!on || !ctx) return;
+      // Tempo tracks how crowded the sea is: a bloom drives the pulse frenetic, a dwindling one lets it
+      // breathe. Smoothed (one ease per ~90ms tick) so the beat glides rather than lurching on a swing.
+      const count = (cells && cells.length) || 0;
+      smoothPop += (count - smoothPop) * 0.12;
+      const mul = Math.max(1, Math.min(2.6, 1 + Math.log10(Math.max(1, smoothPop/30)) * 0.62)); // ~1× at ≤30 cells → ~2.6× in a huge bloom
+      const bt = BEAT / mul;
       while (nextT < ctx.currentTime + 0.35) {
         const b = BASE[DNA[idx % DNA.length]] || 0;
         const note = scale[(b*4 + prev) % scale.length];
         voice(note, nextT, 0.9, 0.055);
-        if (b === 2) voice(note*2, nextT + BEAT*0.5, 0.6, 0.028); // a sparkle on G
-        prev = b; idx++; nextT += BEAT;
+        if (b === 2) voice(note*2, nextT + bt*0.5, 0.6, 0.028); // a sparkle on G
+        prev = b; idx++; nextT += bt;
       }
       timer = setTimeout(schedule, 90);
     }
