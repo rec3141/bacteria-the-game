@@ -94,6 +94,8 @@ function score_history_sample($value) {
   if ($sub !== null) $out['sub'] = $sub;
   $mort = score_vector(score_value($value, 'mort'), 4, 1000000);
   if ($mort !== null) $out['mort'] = $mort;
+  $cin = score_vector(score_value($value, 'cin'), 5, 100000000); // calories consumed by source
+  if ($cin !== null) $out['cin'] = $cin;
   $levels = score_vector(score_value($value, 'lvl'), 8, 511);
   if ($levels !== null) $out['lvl'] = $levels;
   return $out;

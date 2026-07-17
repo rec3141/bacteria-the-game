@@ -41,8 +41,8 @@ assert.match(game, /function drawAnalysis\(\)[\s\S]*annotateDiversity\([^;]+stat
   "the end screen must render run diversity");
 assert.match(game, /function openScoreDetail\([^)]*\)[\s\S]*annotateDiversity\([^;]+rec\.hist/,
   "high-score detail must render saved-run diversity");
-assert.match(game, /function toggleSubMode\(\) \{ subMode = \(subMode \+ 1\) % 3; updateSubLegend\(\); \}/,
-  "the compact gameplay chart must cycle through all three companion views");
+assert.match(game, /function toggleSubMode\(\) \{ subMode = \(subMode \+ 1\) % 4; updateSubLegend\(\); \}/,
+  "the compact gameplay chart must cycle through all four companion views (food, mortality, diversity, calories)");
 assert.match(game, /function renderSubChart\([^)]*\) \{\s*if \(mode === 2\) \{ renderDiversityChart\(g, W, H, hist, denom\); return; \}/,
   "the third compact gameplay view must reuse the diversity renderer");
 assert.match(game, /richness S[\s\S]*Shannon H′[\s\S]*title = "lineage diversity"/,
@@ -62,4 +62,20 @@ assert.match(clado, /g\.moveTo\(xn, yn\); g\.lineTo\(x, yn\); g\.lineTo\(x, tipY
 assert.doesNotMatch(clado, /const xAt = \(d\)/,
   "the old right-facing depth axis must not return");
 
-console.log("Diversity and phylogeny contracts OK: S/H′ are correct and ancestry runs top-to-bottom.");
+// Calories-consumed-by-source tracker (mode 3): accumulated at the eating sites, sampled into history
+// alongside mort, and shown as its own companion chart on the end screen and saved-run detail.
+assert.match(html, /id="analysisCalChart"/, "the end screen must show a calories-consumed chart");
+assert.match(html, /id="detailCalChart"/, "the saved-run detail must show the same calories chart");
+assert.match(html,
+  /id="analysisMortChart"[\s\S]*?Calories consumed[\s\S]*?id="analysisCalChart"[\s\S]*?id="analysisDiversityChart"/,
+  "calories sits between mortality and diversity on the end screen");
+assert.match(game, /state\.calLive\[src\] \+= cal; state\.calFull\[src\] \+= cal;/,
+  "eating a mote credits calories to its source bucket (lipid/protein/carb/protist-biomass)");
+assert.match(game, /state\.calLive\[CAL_PHAGE\] \+= CFG\.cell\.crisprEnergy; state\.calFull\[CAL_PHAGE\]/,
+  "CRISPR-harvesting a phage credits the phage calorie bucket — the source to watch for a runaway");
+assert.match(game, /mort: state\.mortLive, cin: state\.calLive/,
+  "each live sample records calorie intake by source");
+assert.match(game, /if \(mode === 3\) return \(s && s\.cin\) \? s\.cin : \[0,0,0,0,0\];/,
+  "the sub-chart reads the 5-source calorie vector in mode 3");
+
+console.log("Diversity and phylogeny contracts OK: S/H′ correct, ancestry top-to-bottom, calorie tracker wired.");

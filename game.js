@@ -333,12 +333,14 @@
     detailBack: document.getElementById("detailBack"),
     analysisSubChart: document.getElementById("analysisSubChart"), detailSubChart: document.getElementById("detailSubChart"),
     analysisMortChart: document.getElementById("analysisMortChart"), detailMortChart: document.getElementById("detailMortChart"),
+    analysisCalChart: document.getElementById("analysisCalChart"), detailCalChart: document.getElementById("detailCalChart"),
     analysisDiversityChart: document.getElementById("analysisDiversityChart"), detailDiversityChart: document.getElementById("detailDiversityChart"),
     analysisSubLabel: document.getElementById("analysisSubLabel"), detailSubLabel: document.getElementById("detailSubLabel"),
   };
   const actx = el.analysisChart ? el.analysisChart.getContext("2d") : null;
   const asctx = el.analysisSubChart ? el.analysisSubChart.getContext("2d") : null;
   const amctx = el.analysisMortChart ? el.analysisMortChart.getContext("2d") : null;
+  const acctx = el.analysisCalChart ? el.analysisCalChart.getContext("2d") : null;
   const adctx = el.analysisDiversityChart ? el.analysisDiversityChart.getContext("2d") : null;
   el.enz.forEach((e, i) => { if (e) e.style.setProperty("--gc", RESOURCES[i].color); }); // per-gene color (used when owned)
   if (el.abilChemo) el.abilChemo.style.setProperty("--gc", "#ffd24a"); // chemotaxis = gold
@@ -730,7 +732,7 @@
   let ZOOM = 1; // world magnification — bumped on touch devices so cells aren't tiny on a small screen
   let isTouch = false; // coarse-pointer device → mobile control + HUD layout (minimap top-left, etc.)
   let chartLog = false; // generation-history charts: log vs. linear y-axis (toggled by clicking a chart)
-  let subMode = 0;      // lower chart: 0 = food, 1 = mortality, 2 = lineage diversity (cycled by clicking it)
+  let subMode = 0;      // lower chart: 0 = food, 1 = mortality, 2 = lineage diversity, 3 = calories by source (cycled by clicking it)
 
   function cellHalfLen(c) {
     return clamp(CFG.cell.baseHalf + Math.max(0, c.energy - CFG.cell.lenBaseEnergy)*CFG.cell.elongK,
@@ -1155,6 +1157,7 @@
       predImmigrateT: CFG.predator.immigrateEvery, preyT: 0, turboBonus: 0,
       predRespawn: CFG.predator.immigrateEvery, predExtinct: false, // respawn interval halves each time protists go fully extinct
       mortLive: [0, 0, 0, 0], mortFull: [0, 0, 0, 0], // cause-of-death tallies (grazing/viral/starvation/antibiotic) per sample interval
+      calLive: [0, 0, 0, 0, 0], calFull: [0, 0, 0, 0, 0], // calorie intake by source (lipid/protein/carb/protist-biomass/phage-CRISPR) per sample interval
       tod: tod0, light: dielLight(tod0), foodTarget: seedFood, graze: 1, foodT: 0, // diel state (updateDiel refreshes each frame)
       chartT: 0, history: [], fullT: 0, fullHist: [], fullInterval: 1, upgrades: [],
       lineages: {},   // chart bucket → current genome, ancestry, and any distinct same-band variants
@@ -2292,6 +2295,10 @@
       const mortSurface = prepareHiDpiCanvas(el.analysisMortChart, null, null, amctx);
       annotateSub(mortSurface.context, mortSurface.width, mortSurface.height, state.fullHist, state.upgrades, state.elapsed, state.roleSwaps, 1);
     }
+    if (acctx) {
+      const calSurface = prepareHiDpiCanvas(el.analysisCalChart, null, null, acctx);
+      annotateSub(calSurface.context, calSurface.width, calSurface.height, state.fullHist, state.upgrades, state.elapsed, state.roleSwaps, 3);
+    }
     if (adctx) {
       const diversitySurface = prepareHiDpiCanvas(el.analysisDiversityChart, null, null, adctx);
       annotateDiversity(diversitySurface.context, diversitySurface.width, diversitySurface.height,
@@ -2463,8 +2470,9 @@
     if (state.chartT <= 0) {
       state.chartT = CHART.interval;
       const s = communitySample();
-      state.history.push({ eco: s.eco, buckets: s.buckets, sub: subTotals.slice(), p: predators.length, v: greenCount, mort: state.mortLive });
+      state.history.push({ eco: s.eco, buckets: s.buckets, sub: subTotals.slice(), p: predators.length, v: greenCount, mort: state.mortLive, cin: state.calLive });
       state.mortLive = [0, 0, 0, 0]; // reset the per-interval death tally for the next sample
+      state.calLive = [0, 0, 0, 0, 0]; // reset the per-interval calorie-intake tally too
       if (state.history.length > CHART.samples) state.history.shift();
       updateLegend(s.eco, predators.length, greenCount);
     }
@@ -2473,8 +2481,9 @@
     if (state.fullT <= 0) {
       state.fullT = state.fullInterval;
       const fs = communitySample();
-      state.fullHist.push({ eco: fs.eco, buckets: fs.buckets, sub: subTotals.slice(), p: predators.length, v: greenCount, mort: state.mortFull });
+      state.fullHist.push({ eco: fs.eco, buckets: fs.buckets, sub: subTotals.slice(), p: predators.length, v: greenCount, mort: state.mortFull, cin: state.calFull });
       state.mortFull = [0, 0, 0, 0];
+      state.calFull = [0, 0, 0, 0, 0];
       if (state.fullHist.length > 600) { state.fullHist = state.fullHist.filter((_, i) => i % 2 === 0); state.fullInterval *= 2; }
     }
     flagPhase += dt*12;
@@ -2570,7 +2579,10 @@
       if (nnn.dead) continue;
       if (cellDistTo(c, nnn.x, nnn.y) < reach) {
         nnn.dead = true; c.energy += CFG.substrate.moteEnergy; c.fed = CFG.cell.fedLinger;
-        state.score += nnn.res != null ? RESOURCES[nnn.res].cal : BIOMASS_CAL; // calories by composition (fat 9, protein/carb 4)
+        const cal = nnn.res != null ? RESOURCES[nnn.res].cal : BIOMASS_CAL; // calories by composition (fat 9, protein/carb 4)
+        state.score += cal;
+        const src = nnn.res != null ? nnn.res : CAL_PROTIST;   // res 0/1/2 = lipid/protein/carb; biomass motes are protist-derived
+        state.calLive[src] += cal; state.calFull[src] += cal;  // intake-by-source tracker
         if (c.controlled) Audio.play("eat", 0.4);
       }
     }
@@ -2958,6 +2970,7 @@
           if ((c.viralLoad || 0) >= CFG.phage.maxLoad) continue; // receptors saturated — no more virions fit; try another cell
           if (!hostMatch(ph.host, upgradeTier(c), cellHostTol(c))) { // kill-the-winner (widened for twitching pili)
             if (c.crispr) { c.energy = Math.min(c.energy + CFG.cell.crisprEnergy, CFG.cell.maxEnergy); ph.dead = true;
+              state.calLive[CAL_PHAGE] += CFG.cell.crisprEnergy; state.calFull[CAL_PHAGE] += CFG.cell.crisprEnergy; // free energy harvested FROM a phage — the source to watch
               if (c.controlled) tutDid("atePhage"); burst(ph.x, ph.y, CRISPR_COLOR, 8); break; } // CRISPR harvests the immune virus for energy
             continue;                                // immune to this one — try another cell
           }
@@ -3539,8 +3552,18 @@
   // cause-of-mortality series (index order matches MORT_IDX: grazing / viral / starvation / antibiotic)
   const MORT_COLORS = [PROTIST_COLOR, VIRUS_COLOR, CYST_COLOR, TOXIN_COLOR];
   const MORT_LABELS = ["grazing", "viral", "starvation", "antibiotic"];
-  function subVals(s, mode = subMode) { return mode === 1 ? (s && s.mort ? s.mort : [0,0,0,0]) : (s && s.sub ? s.sub : [0,0,0]); }
-  function subColors(mode = subMode) { return mode === 1 ? MORT_COLORS : RESOURCES.map((r) => r.color); }
+  // Calorie/energy intake by source, so you can see WHERE a boom is being fed from. Indices 0-2 are the
+  // food resources (lipid/protein/carb); protist biomass and phage-harvest are the two "living" sources
+  // worth watching for a runaway feedback. CAL_PROTIST/CAL_PHAGE index into state.calLive/calFull.
+  const CAL_PROTIST = 3, CAL_PHAGE = 4;
+  const CAL_COLORS = [RESOURCES[0].color, RESOURCES[1].color, RESOURCES[2].color, PROTIST_COLOR, VIRUS_COLOR];
+  const CAL_LABELS = ["lipid", "protein", "carb", "protists", "phage"];
+  function subVals(s, mode = subMode) {
+    if (mode === 1) return (s && s.mort) ? s.mort : [0,0,0,0];
+    if (mode === 3) return (s && s.cin) ? s.cin : [0,0,0,0,0];   // calories consumed by source
+    return (s && s.sub) ? s.sub : [0,0,0];
+  }
+  function subColors(mode = subMode) { return mode === 1 ? MORT_COLORS : mode === 3 ? CAL_COLORS : RESOURCES.map((r) => r.color); }
   function updateSubLegend() {
     if (!el_subchartlegend) return;
     let items, title;
@@ -3550,6 +3573,9 @@
     } else if (subMode === 1) {
       items = MORT_LABELS.map((l, k) => `<span><i style="background:${MORT_COLORS[k]}"></i>${l}</span>`).join("");
       title = "cause of mortality";
+    } else if (subMode === 3) {
+      items = CAL_LABELS.map((l, k) => `<span><i style="background:${CAL_COLORS[k]}"></i>${l}</span>`).join("");
+      title = "calories consumed";
     } else {
       items = `<span><i style="background:${RICHNESS_COLOR}"></i>richness S</span>` +
               `<span><i style="background:${SHANNON_COLOR}"></i>Shannon H′</span>`;
@@ -3557,7 +3583,7 @@
     }
     el_subchartlegend.innerHTML = items + `<span id="subchartTitle">${title} vs. time · click to cycle</span>`;
   }
-  function toggleSubMode() { subMode = (subMode + 1) % 3; updateSubLegend(); }
+  function toggleSubMode() { subMode = (subMode + 1) % 4; updateSubLegend(); }
   function traitMask(c) { return (c.enzLvl[0] > 0 ? 1 : 0) | (c.enzLvl[1] > 0 ? 2 : 0) | (c.chemotaxis ? 4 : 0); }
   function updateLegend(eco, preds, green) {
     if (!el.legend) return;
@@ -3725,7 +3751,7 @@
     g.strokeStyle = "rgba(255,255,255,0.06)"; g.lineWidth = 1;
     for (let k = 1; k <= 3; k++) { const y = H - k/4*(H-pad) - 2; g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }
     g.fillStyle = "rgba(215,245,238,0.5)"; g.font = "10px 'Trebuchet MS', sans-serif"; g.textAlign = "left";
-    g.fillText(String(Math.round(maxY)) + (mode ? " deaths" : ""), 3, 10); g.fillText("0", 3, H - 3);
+    g.fillText(String(Math.round(maxY)) + (mode === 1 ? " deaths" : mode === 3 ? " cal" : ""), 3, 10); g.fillText("0", 3, H - 3);
     if (vals.length > 1) {
       const last = vals.length - 1, cum = vals.map(() => 0);
       for (let k = 0; k < K; k++) {
@@ -3866,6 +3892,7 @@
     const buckets = scoreClientBuckets(value.buckets); if (buckets) out.buckets = buckets;
     const sub = scoreClientVector(value.sub, 3, 1000000); if (sub) out.sub = sub;
     const mort = scoreClientVector(value.mort, 4, 1000000); if (mort) out.mort = mort;
+    const cin = scoreClientVector(value.cin, 5, 100000000); if (cin) out.cin = cin; // calories consumed by source (lipid/protein/carb/protist/phage)
     const lvl = scoreClientVector(value.lvl, 8, 511); if (lvl) out.lvl = lvl;
     return out;
   }
@@ -4510,6 +4537,10 @@
     if (el.detailMortChart) {
       const mortSurface = prepareHiDpiCanvas(el.detailMortChart);
       annotateSub(mortSurface.context, mortSurface.width, mortSurface.height, rec.hist || [], rec.upgrades, rec.dur, rec.roleSwaps, 1);
+    }
+    if (el.detailCalChart) {
+      const calSurface = prepareHiDpiCanvas(el.detailCalChart);
+      annotateSub(calSurface.context, calSurface.width, calSurface.height, rec.hist || [], rec.upgrades, rec.dur, rec.roleSwaps, 3);
     }
     if (el.detailDiversityChart) {
       const diversitySurface = prepareHiDpiCanvas(el.detailDiversityChart);
