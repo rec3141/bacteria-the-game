@@ -47,8 +47,8 @@ assert.match(scoreRowBindings, /addEventListener\("click"[^\n]*openScoreDetail/,
   "high-score rows must still open the detailed run view");
 assert.doesNotMatch(scoreRowBindings, /mouseenter|mousemove|mouseleave|showCircos|positionCircos|hideCircos/,
   "the main high-score table must not show a Circos map on hover");
-assert.match(game, /if \(el\.detailCircos\) \{[\s\S]*?renderCircos\([^\n]*rec\.upgrades/,
-  "the detailed run view must retain its Circos genome map");
+assert.doesNotMatch(game, /el\.detailCircos/,
+  "the detail view no longer renders the composite-genome Circos (per-lineage genomes come from hovering bands)");
 assert.doesNotMatch(game + help, /[Σ∑]/,
   "the shipped UI and its source must not contain summation characters");
 assert.doesNotMatch(game, /geo-mean lineage|geoMeanLineage/,

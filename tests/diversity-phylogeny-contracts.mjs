@@ -41,8 +41,8 @@ assert.match(game, /function drawAnalysis\(\)[\s\S]*annotateDiversity\([^;]+stat
   "the end screen must render run diversity");
 assert.match(game, /function openScoreDetail\([^)]*\)[\s\S]*annotateDiversity\([^;]+rec\.hist/,
   "high-score detail must render saved-run diversity");
-assert.match(game, /function toggleSubMode\(\) \{ subMode = \(subMode \+ 1\) % 4; updateSubLegend\(\); \}/,
-  "the compact gameplay chart must cycle through all four companion views (food, mortality, diversity, calories)");
+assert.match(game, /function toggleSubMode\(\) \{ subMode = \(subMode \+ 1\) % 5; updateSubLegend\(\); \}/,
+  "the compact gameplay chart must cycle through all five companion views (food, mortality, diversity, calories, lifespan)");
 assert.match(game, /function renderSubChart\([^)]*\) \{\s*if \(mode === 2\) \{ renderDiversityChart\(g, W, H, hist, denom\); return; \}/,
   "the third compact gameplay view must reuse the diversity renderer");
 assert.match(game, /richness S[\s\S]*Shannon H′[\s\S]*title = "lineage diversity"/,
@@ -87,5 +87,20 @@ assert.match(subRenderer, /maxY = chartLog \?/, "the sub-chart axis switches wit
 const divRenderer = game.slice(game.indexOf("function renderDiversityChart"), game.indexOf("function drawHelix"));
 assert.match(divRenderer, /const yRichness = chartLog \?/,
   "richness follows the shared log toggle (Shannon H′ stays linear — it is already an entropy)");
+
+// Cell-lifespan turnover spectrogram (sub-chart mode 4): birth time on cells, age-at-death binned into
+// log2 buckets, sampled as `lsp`, drawn as a heatmap on the end screen and saved-run detail.
+assert.match(html, /id="analysisLifeChart"/, "the end screen must show the lifespan spectrogram");
+assert.match(html, /id="detailLifeChart"/, "the saved-run detail must show the same spectrogram");
+assert.match(html,
+  /id="analysisDiversityChart"[\s\S]*?Cell lifespan[\s\S]*?id="analysisLifeChart"/,
+  "the lifespan spectrogram sits after diversity on the end screen");
+assert.match(game, /born: state \? state\.elapsed : 0/, "cells record a birth time for age-at-death");
+assert.match(game, /const b = lifeBin\(state\.elapsed - c\.born\); state\.lifeLive\[b\]\+\+; state\.lifeFull\[b\]\+\+;/,
+  "each death is binned into the lifespan histogram by its age");
+assert.match(game, /mort: state\.mortLive, cin: state\.calLive, lsp: state\.lifeLive/,
+  "each live sample records the lifespan histogram");
+assert.match(game, /if \(mode === 4\) \{ renderLifespanChart\(g, W, H, hist, denom\); return; \}/,
+  "sub-chart mode 4 draws the lifespan spectrogram");
 
 console.log("Diversity and phylogeny contracts OK: S/H′ correct, ancestry top-to-bottom, calorie tracker wired.");

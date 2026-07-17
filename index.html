@@ -99,8 +99,8 @@
   #subchartlegend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
   #subchartlegend span { text-transform: capitalize; }
   #subchartTitle { margin-left: auto; opacity: .55; font-style: italic; text-transform: none; }
-  #analysisSubChart, #analysisMortChart, #analysisCalChart, #analysisDiversityChart { display: block; width: 100%; height: 66px; border-radius: 6px; }
-  #detailSubChart, #detailMortChart, #detailCalChart, #detailDiversityChart { display: block; width: 100%; height: 90px; border-radius: 6px; }
+  #analysisSubChart, #analysisMortChart, #analysisCalChart, #analysisDiversityChart, #analysisLifeChart { display: block; width: 100%; height: 66px; border-radius: 6px; }
+  #detailSubChart, #detailMortChart, #detailCalChart, #detailDiversityChart, #detailLifeChart { display: block; width: 100%; height: 90px; border-radius: 6px; }
   .alabel.sublabel { margin-top: 8px; opacity: .5; text-transform: none; letter-spacing: 0; }
   .zoomhint { font-size: 10px; opacity: .55; font-weight: normal; text-transform: none; letter-spacing: 0; font-style: italic; margin-left: 4px; }
   .zoomctl { display: flex; align-items: center; gap: 6px; margin: 1px 0 5px; }
@@ -362,9 +362,6 @@
     padding: 8px 8px 6px; box-shadow: 0 10px 34px rgba(0,0,0,.6); }
   #circosPop.hidden { display: none !important; }
   #circosPop canvas { display: block; width: 230px; height: 230px; background: transparent; }
-  #circosCap { max-width: 230px; text-align: center; font-size: 10.5px; line-height: 1.35;
-    color: var(--muted); margin-top: 3px; }
-  #detailCircos { display: block; width: 280px; height: 280px; margin: 2px auto 0; background: transparent; }
   /* height:auto — the down-facing tree is sized to its adaptation depth in game.js (drawClado), so
      it must scale by its own aspect rather than being pinned to a box that squashes branches. */
   #analysisClado, #detailClado { display: block; width: 100%; height: auto; border-radius: 6px; }
@@ -559,7 +556,7 @@
     #help, #science { z-index: 60; } /* stay above the screen they were opened from */
     .screen h1 { font-size: 30px; }
     #title .lede { font-size: 13px; line-height: 1.45; }
-    #analysisChart { height: 128px; } #analysisSubChart, #analysisMortChart, #analysisCalChart, #analysisDiversityChart { height: 50px; }
+    #analysisChart { height: 128px; } #analysisSubChart, #analysisMortChart, #analysisCalChart, #analysisDiversityChart, #analysisLifeChart { height: 50px; }
     #analysisWrap { padding: 6px 8px; }
     #helpBody, #sciBody, #scoresList { max-height: 62vh; max-height: 62dvh; }
   }
@@ -872,6 +869,8 @@
         <canvas id="analysisCalChart" width="900" height="96"></canvas>
         <div class="alabel sublabel">Lineage diversity (<span style="color:#57e0c0">richness S</span> · <span style="color:#c39bff">Shannon H′</span>)</div>
         <canvas id="analysisDiversityChart" width="900" height="96"></canvas>
+        <div class="alabel sublabel">Cell lifespan · turnover (age at death — <span style="color:#3fbf7a">short</span> at bottom, <span style="color:#f6f2a0">long</span> at top; brighter = more deaths)</div>
+        <canvas id="analysisLifeChart" width="900" height="96"></canvas>
         <div class="alabel sublabel">Phylogeny — how each lineage descends from the founder</div>
         <canvas id="analysisClado" width="900" height="190"></canvas>
         <div id="analysisStats"></div>
@@ -903,10 +902,10 @@
         <canvas id="detailCalChart" width="900" height="110"></canvas>
         <div class="alabel sublabel">Lineage diversity (<span style="color:#57e0c0">richness S</span> · <span style="color:#c39bff">Shannon H′</span>)</div>
         <canvas id="detailDiversityChart" width="900" height="110"></canvas>
+        <div class="alabel sublabel">Cell lifespan · turnover (age at death — <span style="color:#3fbf7a">short</span> at bottom, <span style="color:#f6f2a0">long</span> at top; brighter = more deaths)</div>
+        <canvas id="detailLifeChart" width="900" height="110"></canvas>
         <div class="alabel sublabel">Phylogeny — how each lineage descends from the founder</div>
         <canvas id="detailClado" width="900" height="200"></canvas>
-        <div class="alabel sublabel">Genome — adaptations clockwise in the order they arrived</div>
-        <canvas id="detailCircos" width="280" height="280"></canvas>
         <div id="detailStats"></div>
         <button id="detailBack" class="ghost">← Back to list</button>
       </div>
@@ -960,7 +959,6 @@
      #stage so it can follow the cursor across the whole viewport without being clipped. -->
 <div id="circosPop" class="hidden">
   <canvas id="circosCanvas" width="230" height="230"></canvas>
-  <div id="circosCap"></div>
 </div>
 <!-- Tuning panel: rows are generated from CFG in game.js, so only the frame is here. -->
 <div id="admin" class="hidden">

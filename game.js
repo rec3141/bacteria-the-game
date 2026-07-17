@@ -61,7 +61,6 @@
       cystReviveEnergy: 40,       // energy a cyst is given when resuscitated as the player character
       crisprEnergy: 9,            // energy gained when a CRISPR cell destroys a virus it's immune to
       cystDiffuse: 55,            // cysts drift passively (brownian) with the water
-      exprBoost: 0.16,            // enzyme-radius gain per expression level (stacking gold-phage upgrade)
       chemoRange0: 300, chemoRangePer: 140, // chemotaxis sensing range grows with chemoLevel
       chemoBias: 0.9,                       // run-length extension per level when heading up-gradient (biased random walk)
       fedLinger: 2.2, maxCells: 10000, // measured stress ceiling; see benchmarks/spatial-index.mjs
@@ -310,7 +309,6 @@
     helpBtn2: document.getElementById("helpBtn2"), helpBtn3: document.getElementById("helpBtn3"),
     dayLen: document.getElementById("dayLen"),   // filled from CFG.day.lengthSec — it's a tunable knob
     circosPop: document.getElementById("circosPop"), circosCanvas: document.getElementById("circosCanvas"),
-    circosCap: document.getElementById("circosCap"), detailCircos: document.getElementById("detailCircos"),
     demoCap: document.getElementById("demoCap"),   // interactive tutorial caption, over the ocean
     scoreTabs: document.getElementById("scoreTabs"),   // desktop / mobile leaderboard switch
     themeMeta: document.querySelector('meta[name="theme-color"]'),
@@ -334,6 +332,7 @@
     analysisSubChart: document.getElementById("analysisSubChart"), detailSubChart: document.getElementById("detailSubChart"),
     analysisMortChart: document.getElementById("analysisMortChart"), detailMortChart: document.getElementById("detailMortChart"),
     analysisCalChart: document.getElementById("analysisCalChart"), detailCalChart: document.getElementById("detailCalChart"),
+    analysisLifeChart: document.getElementById("analysisLifeChart"), detailLifeChart: document.getElementById("detailLifeChart"),
     analysisDiversityChart: document.getElementById("analysisDiversityChart"), detailDiversityChart: document.getElementById("detailDiversityChart"),
     analysisSubLabel: document.getElementById("analysisSubLabel"), detailSubLabel: document.getElementById("detailSubLabel"),
   };
@@ -341,6 +340,7 @@
   const asctx = el.analysisSubChart ? el.analysisSubChart.getContext("2d") : null;
   const amctx = el.analysisMortChart ? el.analysisMortChart.getContext("2d") : null;
   const acctx = el.analysisCalChart ? el.analysisCalChart.getContext("2d") : null;
+  const alctx = el.analysisLifeChart ? el.analysisLifeChart.getContext("2d") : null;
   const adctx = el.analysisDiversityChart ? el.analysisDiversityChart.getContext("2d") : null;
   el.enz.forEach((e, i) => { if (e) e.style.setProperty("--gc", RESOURCES[i].color); }); // per-gene color (used when owned)
   if (el.abilChemo) el.abilChemo.style.setProperty("--gc", "#ffd24a"); // chemotaxis = gold
@@ -732,7 +732,7 @@
   let ZOOM = 1; // world magnification — bumped on touch devices so cells aren't tiny on a small screen
   let isTouch = false; // coarse-pointer device → mobile control + HUD layout (minimap top-left, etc.)
   let chartLog = false; // generation-history charts: log vs. linear y-axis (toggled by clicking a chart)
-  let subMode = 0;      // lower chart: 0 = food, 1 = mortality, 2 = lineage diversity, 3 = calories by source (cycled by clicking it)
+  let subMode = 0;      // lower chart: 0 = food, 1 = mortality, 2 = lineage diversity, 3 = calories, 4 = lifespan spectrogram (cycled by clicking it)
 
   function cellHalfLen(c) {
     return clamp(CFG.cell.baseHalf + Math.max(0, c.energy - CFG.cell.lenBaseEnergy)*CFG.cell.elongK,
@@ -801,8 +801,8 @@
   function rememberLineage(c) {
     if (!state || !state.lineages || !c) return;
     const key = traitMask(c)*512 + Math.min(511, upgradeTier(c));
-    const snapshot = { t: +state.elapsed.toFixed(1), ups: (c.ups || []).slice(0, 32),
-      tree: (c.phylo || c.ups || []).slice(0, 32) };
+    const snapshot = { t: +state.elapsed.toFixed(1), ups: (c.ups || []).slice(0, 512),
+      tree: (c.phylo || c.ups || []).slice(0, 512) };
     const entry = state.lineages[key];
     if (!entry) {
       if (Object.keys(state.lineages).length < LINEAGE_CAP) state.lineages[key] = snapshot;
@@ -881,6 +881,7 @@
   }
   function makeCell(x, y, energy, angle, gen) {
     return { x: wrapX(x), y: wrapY(y), vx: 0, vy: 0, angle, energy, gen: gen || 1,
+      born: state ? state.elapsed : 0, // run-clock birth time, for the lifespan/turnover spectrogram
       controlled: false, alive: true, invuln: CFG.cell.invulnTime, cyst: false,
       tumbling: false, runTimer: rand(CFG.cell.runMin, CFG.cell.runMax), tumbleT: 0, tumbleTarget: angle,
       fed: 0, enzCd: rand(CFG.cell.enzymeCooldown[0], CFG.cell.enzymeCooldown[1]),
@@ -1158,6 +1159,7 @@
       predRespawn: CFG.predator.immigrateEvery, predExtinct: false, // respawn interval halves each time protists go fully extinct
       mortLive: [0, 0, 0, 0], mortFull: [0, 0, 0, 0], // cause-of-death tallies (grazing/viral/starvation/antibiotic) per sample interval
       calLive: [0, 0, 0, 0, 0], calFull: [0, 0, 0, 0, 0], // calorie intake by source (lipid/protein/carb/protist-biomass/phage-CRISPR) per sample interval
+      lifeLive: new Array(LIFE_BINS).fill(0), lifeFull: new Array(LIFE_BINS).fill(0), // age-at-death histogram (log2 lifespan bins) per sample interval
       tod: tod0, light: dielLight(tod0), foodTarget: seedFood, graze: 1, foodT: 0, // diel state (updateDiel refreshes each frame)
       chartT: 0, history: [], fullT: 0, fullHist: [], fullInterval: 1, upgrades: [],
       lineages: {},   // chart bucket → current genome, ancestry, and any distinct same-band variants
@@ -1884,8 +1886,8 @@
     state.dead = state.dead || [];
     state.dead.push({ enzLvl: c.enzLvl.slice(), chemotaxis: !!c.chemotaxis, chemoLevel: c.chemoLevel || 0,
                       crispr: !!c.crispr, antibiotic: c.antibiotic || 0, twitching: !!c.twitching, eps: c.eps || 0,
-                      ups: (c.ups || []).slice(0, 32),
-                      phylo: (c.phylo || c.ups || []).slice(0, 32) });
+                      ups: (c.ups || []).slice(0, 512),
+                      phylo: (c.phylo || c.ups || []).slice(0, 512) });
     if (state.dead.length > 400) state.dead.shift();   // a rolling bank, not an ever-growing one
   }
   function reviveGenome(c) {                            // returns false if the bank is empty
@@ -1967,7 +1969,7 @@
     if (c.energy < CFG.cell.enzymeCost) return false;
     c.energy -= CFG.cell.enzymeCost;
     const p = cellPolesLocal(c);
-    const maxR = CFG.enzyme.maxRadius * (1 + (c.enzLvl[res]-1)*CFG.cell.exprBoost); // this enzyme's expression → radius
+    const maxR = CFG.enzyme.maxRadius * Math.sqrt(Math.max(1, c.enzLvl[res])); // expression scales AREA (radius ∝ √level) — a diffusion proxy, so each level frees a linearly-larger patch
     // The cell YOU steer is priority: its enzyme always frees food (it bypasses the mote cap) so the
     // contract "release an enzyme → something happens" is never broken by background cells hogging motes.
     enzymes.push({ x: wrapX(c.x + p[0]), y: wrapY(c.y + p[1]), r: 4, life: CFG.enzyme.life, age: 0, res, maxR, player: !!c.controlled });
@@ -2035,7 +2037,7 @@
       if (s.organic <= 0 || s.phase !== "live") continue;
       const res = owned.find((i) => s.orgByType[i] > 0);          // something in there we can actually digest
       if (res == null) continue;
-      const bite = CFG.enzyme.maxRadius * (1 + (c.enzLvl[res] - 1)*CFG.cell.exprBoost); // this enzyme's reach
+      const bite = CFG.enzyme.maxRadius * Math.sqrt(Math.max(1, c.enzLvl[res])); // this enzyme's reach (area ∝ level, radius ∝ √level)
       const d = Math.sqrt(toroDist2(ex, ey, s.x, s.y)) - s.R;     // pole → the particle's SURFACE
       if (d > bite*0.95 || d >= bd) continue;
       bd = d; best = s; bres = res;
@@ -2204,7 +2206,10 @@
   // all cell deaths funnel through here so infected hosts always lyse into phages
   function onCellDeath(c, cause) {
     c.alive = false;
-    if (state) { const k = MORT_IDX[cause]; if (k != null) { state.mortLive[k]++; state.mortFull[k]++; } }
+    if (state) {
+      const k = MORT_IDX[cause]; if (k != null) { state.mortLive[k]++; state.mortFull[k]++; }
+      if (c.born != null) { const b = lifeBin(state.elapsed - c.born); state.lifeLive[b]++; state.lifeFull[b]++; } // age-at-death → turnover spectrogram
+    }
     rememberGenome(c);   // the sea keeps a seed bank of everything that has ever lived in it
     if (c.infectedGreen) releaseGreenPhages(c);
     burst(c.x, c.y, cause === "predator" ? "#ff7a6b" : cause === "lysis" ? "#7CFC5A" : "#9fb0aa", 18);
@@ -2298,6 +2303,10 @@
     if (acctx) {
       const calSurface = prepareHiDpiCanvas(el.analysisCalChart, null, null, acctx);
       annotateSub(calSurface.context, calSurface.width, calSurface.height, state.fullHist, state.upgrades, state.elapsed, state.roleSwaps, 3);
+    }
+    if (alctx) {
+      const lifeSurface = prepareHiDpiCanvas(el.analysisLifeChart, null, null, alctx);
+      annotateSub(lifeSurface.context, lifeSurface.width, lifeSurface.height, state.fullHist, state.upgrades, state.elapsed, state.roleSwaps, 4);
     }
     if (adctx) {
       const diversitySurface = prepareHiDpiCanvas(el.analysisDiversityChart, null, null, adctx);
@@ -2470,9 +2479,10 @@
     if (state.chartT <= 0) {
       state.chartT = CHART.interval;
       const s = communitySample();
-      state.history.push({ eco: s.eco, buckets: s.buckets, sub: subTotals.slice(), p: predators.length, v: greenCount, mort: state.mortLive, cin: state.calLive });
+      state.history.push({ eco: s.eco, buckets: s.buckets, sub: subTotals.slice(), p: predators.length, v: greenCount, mort: state.mortLive, cin: state.calLive, lsp: state.lifeLive });
       state.mortLive = [0, 0, 0, 0]; // reset the per-interval death tally for the next sample
       state.calLive = [0, 0, 0, 0, 0]; // reset the per-interval calorie-intake tally too
+      state.lifeLive = new Array(LIFE_BINS).fill(0); // reset the per-interval lifespan histogram too
       if (state.history.length > CHART.samples) state.history.shift();
       updateLegend(s.eco, predators.length, greenCount);
     }
@@ -2481,9 +2491,10 @@
     if (state.fullT <= 0) {
       state.fullT = state.fullInterval;
       const fs = communitySample();
-      state.fullHist.push({ eco: fs.eco, buckets: fs.buckets, sub: subTotals.slice(), p: predators.length, v: greenCount, mort: state.mortFull, cin: state.calFull });
+      state.fullHist.push({ eco: fs.eco, buckets: fs.buckets, sub: subTotals.slice(), p: predators.length, v: greenCount, mort: state.mortFull, cin: state.calFull, lsp: state.lifeFull });
       state.mortFull = [0, 0, 0, 0];
       state.calFull = [0, 0, 0, 0, 0];
+      state.lifeFull = new Array(LIFE_BINS).fill(0);
       if (state.fullHist.length > 600) { state.fullHist = state.fullHist.filter((_, i) => i % 2 === 0); state.fullInterval *= 2; }
     }
     flagPhase += dt*12;
@@ -3558,6 +3569,12 @@
   const CAL_PROTIST = 3, CAL_PHAGE = 4;
   const CAL_COLORS = [RESOURCES[0].color, RESOURCES[1].color, RESOURCES[2].color, PROTIST_COLOR, VIRUS_COLOR];
   const CAL_LABELS = ["lipid", "protein", "carb", "protists", "phage"];
+  // Cell-lifespan spectrogram: bin each cell's age-at-death into log2 buckets (0.5s at bin 0, doubling
+  // up to ~1024s). A heatmap of these over time shows turnover — a bright low band means cells are
+  // dying young and fast; mass creeping up the axis means they're living longer.
+  const LIFE_BINS = 12, LIFE_MIN = 0.5;
+  const lifeBin = (age) => Math.max(0, Math.min(LIFE_BINS - 1, Math.floor(Math.log2(Math.max(age, LIFE_MIN) / LIFE_MIN))));
+  const lifeBinLabel = (b) => { const s = LIFE_MIN * Math.pow(2, b); return s >= 1 ? Math.round(s) + "s" : s + "s"; };
   function subVals(s, mode = subMode) {
     if (mode === 1) return (s && s.mort) ? s.mort : [0,0,0,0];
     if (mode === 3) return (s && s.cin) ? s.cin : [0,0,0,0,0];   // calories consumed by source
@@ -3576,6 +3593,9 @@
     } else if (subMode === 3) {
       items = CAL_LABELS.map((l, k) => `<span><i style="background:${CAL_COLORS[k]}"></i>${l}</span>`).join("");
       title = "calories consumed";
+    } else if (subMode === 4) {
+      items = `<span><i style="background:${heatColor(0.25)}"></i>few</span><span><i style="background:${heatColor(0.7)}"></i>some</span><span><i style="background:${heatColor(1)}"></i>many</span>`;
+      title = "cell lifespan · deaths by age";
     } else {
       items = `<span><i style="background:${RICHNESS_COLOR}"></i>richness S</span>` +
               `<span><i style="background:${SHANNON_COLOR}"></i>Shannon H′</span>`;
@@ -3583,7 +3603,7 @@
     }
     el_subchartlegend.innerHTML = items + `<span id="subchartTitle">${title} vs. time · click to cycle</span>`;
   }
-  function toggleSubMode() { subMode = (subMode + 1) % 4; updateSubLegend(); }
+  function toggleSubMode() { subMode = (subMode + 1) % 5; updateSubLegend(); }
   function traitMask(c) { return (c.enzLvl[0] > 0 ? 1 : 0) | (c.enzLvl[1] > 0 ? 2 : 0) | (c.chemotaxis ? 4 : 0); }
   function updateLegend(eco, preds, green) {
     if (!el.legend) return;
@@ -3738,6 +3758,7 @@
   // after you acquire its enzyme — that consumption is what fuels the colony boom you see on the community chart.
   function renderSubChart(g, W, H, hist, denom, mode = subMode) {
     if (mode === 2) { renderDiversityChart(g, W, H, hist, denom); return; }
+    if (mode === 4) { renderLifespanChart(g, W, H, hist, denom); return; }
     g.clearRect(0, 0, W, H);
     g.fillStyle = CHART.surface; g.fillRect(0, 0, W, H);
     const colors = subColors(mode), K = colors.length;
@@ -3803,6 +3824,40 @@
       for (let i = 0; i < vals.length; i++) { const x = xAt(i), y = yShannon(vals[i].shannon); i ? g.lineTo(x, y) : g.moveTo(x, y); }
       g.stroke();
     }
+  }
+  // sequential dark→teal→green→yellow ramp for the lifespan heatmap; t in [0,1], low t sits near the
+  // chart background so sparse bins fade out and dense bins glow.
+  const HEAT_STOPS = [[0,11,43,51],[0.35,31,122,107],[0.6,63,191,122],[0.8,185,224,90],[1,246,242,160]];
+  function heatColor(t) {
+    t = Math.max(0, Math.min(1, t));
+    let a = HEAT_STOPS[0], b = HEAT_STOPS[HEAT_STOPS.length - 1];
+    for (let i = 1; i < HEAT_STOPS.length; i++) { if (t <= HEAT_STOPS[i][0]) { a = HEAT_STOPS[i-1]; b = HEAT_STOPS[i]; break; } }
+    const f = (b[0] - a[0]) ? (t - a[0])/(b[0] - a[0]) : 0;
+    return `rgb(${Math.round(a[1]+(b[1]-a[1])*f)},${Math.round(a[2]+(b[2]-a[2])*f)},${Math.round(a[3]+(b[3]-a[3])*f)})`;
+  }
+  // Fourth companion chart: a lifespan SPECTROGRAM. Each column is a sample interval; each row is a log2
+  // age-at-death bucket (short-lived at the bottom, long-lived at the top); brightness is how many cells
+  // died at that age in that interval (log-scaled). A hot low band = high turnover, cells dying young.
+  function renderLifespanChart(g, W, H, hist, denom) {
+    g.clearRect(0, 0, W, H);
+    g.fillStyle = CHART.surface; g.fillRect(0, 0, W, H);
+    const rows = LIFE_BINS, grids = hist.map((s) => (s && s.lsp) ? s.lsp : null);
+    let maxC = 1;
+    for (const row of grids) if (row) for (const c of row) if (c > maxC) maxC = c;
+    const n = denom || Math.max(hist.length, 2), pad = H < 70 ? 8 : 14;
+    const rowH = (H - pad - 2)/rows, lgMax = Math.log(maxC + 1) || 1;
+    for (let i = 0; i < grids.length; i++) {
+      const row = grids[i]; if (!row) continue;
+      const x0 = i/(n-1)*W, w = Math.max(1, W/(n-1) + 0.6);
+      for (let j = 0; j < rows; j++) {
+        const c = row[j] || 0; if (c <= 0) continue;
+        g.fillStyle = heatColor(Math.log(c + 1)/lgMax);
+        g.fillRect(x0, 2 + (rows - 1 - j)*rowH, w, rowH + 0.6); // bin 0 (youngest) at the bottom
+      }
+    }
+    g.fillStyle = "rgba(215,245,238,0.6)"; g.font = "10px 'Trebuchet MS', sans-serif"; g.textAlign = "left";
+    g.fillText(lifeBinLabel(rows - 1), 3, 10);  // longest-lived at the top
+    g.fillText(lifeBinLabel(0), 3, H - 3);       // youngest at the bottom
   }
   function drawHelix(pc) {
     if (!hlxCtx || !el.genome) return;
@@ -3905,6 +3960,7 @@
     const sub = scoreClientVector(value.sub, 3, 1000000); if (sub) out.sub = sub;
     const mort = scoreClientVector(value.mort, 4, 1000000); if (mort) out.mort = mort;
     const cin = scoreClientVector(value.cin, 5, 100000000); if (cin) out.cin = cin; // calories consumed by source (lipid/protein/carb/protist/phage)
+    const lsp = scoreClientVector(value.lsp, 12, 1000000); if (lsp) out.lsp = lsp; // age-at-death histogram (log2 lifespan bins) for the turnover spectrogram
     const lvl = scoreClientVector(value.lvl, 8, 511); if (lvl) out.lvl = lvl;
     return out;
   }
@@ -3914,12 +3970,12 @@
     for (const [rawKey, lineage] of Object.entries(value).slice(0, SCORE_CLIENT_LIMITS.lineages)) {
       const key = Number(rawKey);
       if (!Number.isInteger(key) || key < 0 || key > 4095 || !scoreClientObject(lineage)) continue;
-      const entry = { t: scoreClientNumber(lineage.t, 0, 86400), ups: normalizeClientUpgrades(lineage.ups, 32) };
-      if (Array.isArray(lineage.tree)) entry.tree = normalizeClientUpgrades(lineage.tree, 32);
+      const entry = { t: scoreClientNumber(lineage.t, 0, 86400), ups: normalizeClientUpgrades(lineage.ups, 512) };
+      if (Array.isArray(lineage.tree)) entry.tree = normalizeClientUpgrades(lineage.tree, 512);
       if (Array.isArray(lineage.variants)) entry.variants = lineage.variants.slice(0, 4)
         .filter(scoreClientObject).map((variant) => {
-          const clean = { t: scoreClientNumber(variant.t, 0, 86400), ups: normalizeClientUpgrades(variant.ups, 32) };
-          if (Array.isArray(variant.tree)) clean.tree = normalizeClientUpgrades(variant.tree, 32);
+          const clean = { t: scoreClientNumber(variant.t, 0, 86400), ups: normalizeClientUpgrades(variant.ups, 512) };
+          if (Array.isArray(variant.tree)) clean.tree = normalizeClientUpgrades(variant.tree, 512);
           return clean;
         });
       out[key] = entry;
@@ -4229,8 +4285,6 @@
     g.fillStyle = "rgba(215,245,238,.6)"; g.font = "10.5px 'Trebuchet MS', sans-serif";
     g.fillText((mid && mid.bot) || "", cx, cy + 9);
   }
-  const runMid = (rec) => ({ top: "gen " + (rec && rec.gen != null ? rec.gen : "—"),
-                             bot: Math.round((rec && rec.score) || 0).toLocaleString() + " cal" });
   // ---------------------------------------------------------------- cladogram
   // A run's phylogeny. Every lineage carries its mutation events in order, so two lineages that share
   // a prefix share an ancestor — the set of paths IS a tree, built as a trie over those logs. A
@@ -4377,8 +4431,6 @@
       renderCircos(surface.context, surface.width, surface.height, [],
                    { top: band.count + (band.count === 1 ? " cell" : " cells"), bot: "tier " + band.tier });
       el.circosPop.style.borderColor = color;
-      if (el.circosCap) el.circosCap.innerHTML =
-        `<b style="color:${color}">■</b> <em>this run predates per-lineage genomes — no genome recorded for this band</em>`;
       el.circosPop.classList.remove("hidden");
       return;
     }
@@ -4387,9 +4439,6 @@
     renderCircos(surface.context, surface.width, surface.height, ups,
                  { top: band.count + (band.count === 1 ? " cell" : " cells"), bot: "tier " + band.tier });
     el.circosPop.style.borderColor = color;
-    if (el.circosCap) el.circosCap.innerHTML =
-      `<b style="color:${color}">■</b> this lineage · <em>C1</em> founding gene` +
-      (ups.length ? ` + ${ups.length} adaptation${ups.length === 1 ? "" : "s"}, as they arrived` : ` only — never adapted`);
     el.circosPop.classList.remove("hidden");
   }
   // Which stacked band is under the cursor? Re-derives exactly what renderCommunityChart drew, so the
@@ -4536,10 +4585,6 @@
     hideCircos();                             // the hover popup would otherwise hang over the detail view
     if (rec !== _detailRec) resetChartView(); // a newly-opened run starts zoomed out; a redraw keeps the view
     _detailRec = rec; _detailRank = rankHtml; // remembered so the log/linear toggle can redraw it
-    if (el.detailCircos) {
-      const surface = prepareHiDpiCanvas(el.detailCircos);
-      renderCircos(surface.context, surface.width, surface.height, rec.upgrades, runMid(rec));
-    }
     const communitySurface = prepareHiDpiCanvas(el.detailChart);
     annotateRun(communitySurface.context, communitySurface.width, communitySurface.height, rec.hist || [], rec.upgrades, rec.dur, rec.roleSwaps);
     if (el.detailSubChart) {
@@ -4553,6 +4598,10 @@
     if (el.detailCalChart) {
       const calSurface = prepareHiDpiCanvas(el.detailCalChart);
       annotateSub(calSurface.context, calSurface.width, calSurface.height, rec.hist || [], rec.upgrades, rec.dur, rec.roleSwaps, 3);
+    }
+    if (el.detailLifeChart) {
+      const lifeSurface = prepareHiDpiCanvas(el.detailLifeChart);
+      annotateSub(lifeSurface.context, lifeSurface.width, lifeSurface.height, rec.hist || [], rec.upgrades, rec.dur, rec.roleSwaps, 4);
     }
     if (el.detailDiversityChart) {
       const diversitySurface = prepareHiDpiCanvas(el.detailDiversityChart);
@@ -4963,7 +5012,6 @@
     "cell.cystReviveEnergy": "Energy handed to a cyst when you take control of it.",
     "cell.crisprEnergy": "Energy gained when a CRISPR cell destroys a virus it's immune to.",
     "cell.cystDiffuse": "How fast cysts drift passively with the water (brownian).",
-    "cell.exprBoost": "Enzyme-radius gain per expression level (the stacking gold-phage upgrade).",
     "cell.chemoRange0": "Chemotaxis sensing range at the first level (px).",
     "cell.chemoRangePer": "Extra sensing range gained per further chemotaxis level.",
     "cell.chemoBias": "How much heading up-gradient stretches a run, per chemotaxis level — the bias in the biased random walk.",

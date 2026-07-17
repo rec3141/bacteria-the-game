@@ -96,6 +96,8 @@ function score_history_sample($value) {
   if ($mort !== null) $out['mort'] = $mort;
   $cin = score_vector(score_value($value, 'cin'), 5, 100000000); // calories consumed by source
   if ($cin !== null) $out['cin'] = $cin;
+  $lsp = score_vector(score_value($value, 'lsp'), 12, 1000000); // age-at-death histogram for the turnover spectrogram
+  if ($lsp !== null) $out['lsp'] = $lsp;
   $levels = score_vector(score_value($value, 'lvl'), 8, 511);
   if ($levels !== null) $out['lvl'] = $levels;
   return $out;
@@ -121,10 +123,10 @@ function score_lineages($value) {
     if ($bucket < 0 || $bucket > 4095) continue;
     $entry = [
       't' => score_number(score_value($lineage, 't', 0), 0, 86400, 0),
-      'ups' => score_upgrades(score_value($lineage, 'ups'), 32),
+      'ups' => score_upgrades(score_value($lineage, 'ups'), 512),
     ];
     $tree = score_value($lineage, 'tree');
-    if (is_array($tree)) $entry['tree'] = score_upgrades($tree, 32);
+    if (is_array($tree)) $entry['tree'] = score_upgrades($tree, 512);
     $variants = score_value($lineage, 'variants');
     if (is_array($variants)) {
       $entry['variants'] = [];
@@ -132,10 +134,10 @@ function score_lineages($value) {
         if (count($entry['variants']) >= 4 || !is_object($variant)) continue;
         $clean = [
           't' => score_number(score_value($variant, 't', 0), 0, 86400, 0),
-          'ups' => score_upgrades(score_value($variant, 'ups'), 32),
+          'ups' => score_upgrades(score_value($variant, 'ups'), 512),
         ];
         $variantTree = score_value($variant, 'tree');
-        if (is_array($variantTree)) $clean['tree'] = score_upgrades($variantTree, 32);
+        if (is_array($variantTree)) $clean['tree'] = score_upgrades($variantTree, 512);
         $entry['variants'][] = $clean;
       }
     }
