@@ -182,6 +182,8 @@
       burst: [4, 8],        // green progeny released when an infected cell dies (bumped up — protist grazing + genome upkeep now keep viruses in check)
       latent: [9, 15],      // seconds from green infection to lysis
       greenSeed: [5, 9], greenFloor: 27, seedBatch: 3, // reservoir: every greenSeed s, top the sampled lineage up (a few at a time) to ≥greenFloor phages tuned to ITS tier
+      seedPerCell: 400, seedRoundsMax: 30, // ...run ~one top-up round per seedPerCell cells (capped), so a big bloom seeds MANY tiers per event, not one
+      seedRatio: 0.05, greenFloorMax: 400, // ...and a tier's phage floor rises by seedRatio per cell near it (up to greenFloorMax), so viral pressure tracks host abundance
       hostTolerance: 2,     // kill-the-winner: a phage infects only cells within this many upgrade-tiers of its host
       adsorbBase: 0.3,      // probability a matched green phage adsorbs on ONE encounter (a cloud of N gives ~N independent chances)
       superinfDecay: 0.7,   // each virion already aboard multiplies further adsorption odds by this (superinfection resistance)
@@ -3039,18 +3041,31 @@
     if (!dishOn()) state.greenSeedT -= dt;
     if (state.greenSeedT <= 0) {
       state.greenSeedT = rand(CFG.phage.greenSeed[0], CFG.phage.greenSeed[1]);
-      // pick an (abundance-weighted) lineage and make sure SOME phage can infect it. Gating per-tier, not on
-      // total phage count, is what keeps kill-the-winner working: a newly-evolved tier attracts fresh viruses
-      // instead of booming unchecked just because there's already a big cloud tuned to older tiers.
-      const rc = cells.length ? cells[(Math.random()*cells.length)|0] : null;
-      if (rc && !rc.cyst && phages.length < CFG.phage.maxCount) {
-        const tier = upgradeTier(rc);
-        let matching = 0; for (const p of phages) if (p.type === "green" && hostMatch(p.host, tier)) matching++;
-        const need = Math.min(CFG.phage.seedBatch, CFG.phage.greenFloor - matching);
-        for (let k = 0; k < need && phages.length < CFG.phage.maxCount; k++) {
-          const q = offscreenPoint(40); // offscreen, but spread over the sea — a ring around the camera would shell the player in viruses
-          const host = Math.max(0, tier + ((Math.random()*3)|0) - 1);
-          phages.push(makePhage("green", q.x, q.y, host));
+      // Seeding SCALES WITH THE HOST POPULATION — the old flat trickle (one tier, ≤3 phages / ~7s) was
+      // population-independent, so a 9000-cell bloom equilibrated at ~2 viruses and epidemics never lit.
+      // Now: (1) run many top-up rounds per event, ~one per seedPerCell cells, so a bloom seeds many tiers
+      // rather than one; and (2) each tier's floor rises with ITS OWN abundance, so a dominant tier draws
+      // proportionally more virus. Still gated per-tier (kill-the-winner) — a new tier still attracts fresh
+      // phages instead of an old cloud booming unchecked. Histograms are built ONCE per event (O(cells)).
+      if (cells.length && phages.length < CFG.phage.maxCount) {
+        const tol = CFG.phage.hostTolerance;
+        const tierCells = {}, tierPhage = {}; // living cells per tier, and green phages per host-tier
+        for (const c of cells) if (!c.cyst) { const t = upgradeTier(c); tierCells[t] = (tierCells[t] || 0) + 1; }
+        for (const p of phages) if (p.type === "green") tierPhage[p.host] = (tierPhage[p.host] || 0) + 1;
+        const windowSum = (hist, tier) => { let n = 0; for (let d = -tol; d <= tol; d++) n += hist[tier + d] || 0; return n; };
+        const rounds = clamp(1 + Math.floor(cells.length / CFG.phage.seedPerCell), 1, CFG.phage.seedRoundsMax);
+        for (let r = 0; r < rounds && phages.length < CFG.phage.maxCount; r++) {
+          const rc = cells[(Math.random()*cells.length)|0]; // abundance-weighted: crowded tiers get sampled more
+          if (rc.cyst) continue;
+          const tier = upgradeTier(rc);
+          const floor = clamp(CFG.phage.greenFloor + windowSum(tierCells, tier)*CFG.phage.seedRatio, CFG.phage.greenFloor, CFG.phage.greenFloorMax);
+          const need = Math.min(CFG.phage.seedBatch, floor - windowSum(tierPhage, tier));
+          for (let k = 0; k < need && phages.length < CFG.phage.maxCount; k++) {
+            const q = offscreenPoint(40); // offscreen, but spread over the sea — a ring around the camera would shell the player in viruses
+            const host = Math.max(0, tier + ((Math.random()*3)|0) - 1);
+            phages.push(makePhage("green", q.x, q.y, host));
+            tierPhage[host] = (tierPhage[host] || 0) + 1; // keep the coverage count current across rounds in this event
+          }
         }
       }
     }
@@ -5140,6 +5155,10 @@
     "phage.latent": "Seconds from infection to lysis — the latent period.",
     "phage.greenSeed": "Seconds between reservoir top-ups, which keep phages tuned to a sampled lineage.",
     "phage.greenFloor": "Minimum phages kept matched to the sampled lineage's tier at each top-up.",
+    "phage.seedPerCell": "Seeding scales with the host population: one extra top-up round per this many cells (so a big bloom seeds many tiers per event, not one). Lower = more aggressive seeding.",
+    "phage.seedRoundsMax": "Cap on top-up rounds per seeding event, so a giant bloom can't stall the frame.",
+    "phage.seedRatio": "A tier's phage floor rises by this many phages per living cell near that tier — so viral pressure tracks host abundance instead of a flat trickle. 0 = the old fixed floor.",
+    "phage.greenFloorMax": "Ceiling on a single tier's abundance-scaled phage floor, so one dominant tier can't hog the whole phage cap.",
     "phage.hostTolerance": "Kill-the-winner window: how many adaptation tiers from its host a phage can still infect. Lower = upgrading shakes off your pursuers faster.",
     "phage.adsorbBase": "Probability a matched green phage adsorbs on ONE encounter (0-1). Each virus you contact is an independent chance, so a cloud of N gives ~1-(1-p)^N. Lower = brushing past a lone virus usually misses, but a dense cloud still almost always lands.",
     "phage.superinfDecay": "Superinfection resistance (0-1): each virion already inside a cell multiplies the chance of the next one adsorbing by this. <1 makes heavy loads self-limiting; 1 disables it.",
@@ -5197,6 +5216,7 @@
     "diel.q10RefC": { min: -50, max: 60 },
     "phage.adsorbBase": { min: 0, max: 1 },
     "phage.superinfDecay": { min: 0, max: 1 },
+    "phage.seedRatio": { min: 0, max: 1 },
     "cell.driftOnUpgrade": { min: 0, max: 1, integer: true },
     "cell.driftGainChance": { min: 0, max: 1 },
     "cell.twitchSpeedScale": { min: 0, max: 1 },
@@ -5220,6 +5240,7 @@
     "cycle.preyFloor", "predator.count", "predator.minCount", "predator.immigrateCap",
     "predator.immigrateMax", "predator.killMotes", "phage.greenCount", "phage.seedBatch",
     "phage.greenFloor", "phage.goldCount", "phage.goldCountTouch", "phage.hostTolerance",
+    "phage.seedPerCell", "phage.seedRoundsMax", "phage.greenFloorMax",
     "phage.burst.0", "phage.burst.1", "phage.maxLoad", "phage.burstPerLoad", "toxin.crossDist", "eps.maxCount",
   ]);
   const TUNE_POSITIVE_PATHS = new Set([
@@ -5256,6 +5277,7 @@
     ["predator.immigrateCap", "predator.safetyMax", "protist immigration cap cannot exceed its safety cap"],
     ["phage.greenCount", "phage.maxCount", "green-phage count cannot exceed the phage cap"],
     ["phage.greenFloor", "phage.maxCount", "green-phage floor cannot exceed the phage cap"],
+    ["phage.greenFloorMax", "phage.maxCount", "the abundance-scaled phage floor cap cannot exceed the phage cap"],
     ["phage.goldCount", "phage.maxCount", "gold-phage count cannot exceed the phage cap"],
     ["phage.goldCountTouch", "phage.maxCount", "touch gold-phage count cannot exceed the phage cap"],
   ];
