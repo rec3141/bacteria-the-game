@@ -171,6 +171,7 @@
       minCount: 2, immigrateEvery: 8,                    // starting immigration/respawn interval (halves on each protist extinction)
       immigratePerPrey: 0.04, immigrateCap: 150, immigrateMax: 14, // grazers immigrate toward a target that rises with bacterial abundance; more per step so they can catch a boom
       respawnFloor: 0.5,                                 // the respawn interval halves on each protist extinction, down to this floor
+      resistStep: 0.12, resistMax: 0.85,                 // antibiotic resistance protists gain per extinction, and its ceiling (fraction of toxin damage blunted)
       cystMealFactor: 0.45, cystEatChance: 0.35,         // cysts aren't hunted; a bumped one is usually resisted, rarely eaten (for little energy)
       killMotes: 8,                                      // biomass released as food when an antibiotic KILLS a protist (natural death releases nothing)
       virusEnergy: 5,                                    // protists also graze free-floating viruses — a small meal, and a top-down brake on phage blooms
@@ -1163,6 +1164,7 @@
       greenSeedT: rand(CFG.phage.greenSeed[0], CFG.phage.greenSeed[1]),
       predImmigrateT: CFG.predator.immigrateEvery, preyT: 0, turboBonus: 0,
       predRespawn: CFG.predator.immigrateEvery, predExtinct: false, // respawn interval halves each time protists go fully extinct
+      predResist: 0, // protist antibiotic resistance (0-1 damage reduction); ratchets up on each extinction — a co-evolutionary arms race
       mortLive: [0, 0, 0, 0], mortFull: [0, 0, 0, 0], // cause-of-death tallies (grazing/viral/starvation/antibiotic) per sample interval
       calLive: [0, 0, 0, 0, 0], calFull: [0, 0, 0, 0, 0], // calorie intake by source (lipid/protein/carb/protist-biomass/phage-CRISPR) per sample interval
       lifeLive: new Array(LIFE_BINS).fill(0), lifeFull: new Array(LIFE_BINS).fill(0), // age-at-death histogram (log2 lifespan bins) per sample interval
@@ -2063,7 +2065,7 @@
     // instant dose to every protist caught in the release — the reliable "hit" (the cloud is lingering bonus)
     const dose = CFG.toxin.dose, rr = maxR*maxR;
     for (const pr of predatorSpace.query(tx, ty, maxR + SPATIAL_FRAME_PAD, predatorCandidates))
-      if (!pr.dead && toroDist2(tx, ty, pr.x, pr.y) <= rr) { pr.energy -= dose; pr.toxT = 0.5; }
+      if (!pr.dead && toroDist2(tx, ty, pr.x, pr.y) <= rr) { pr.energy -= dose * (1 - (state.predResist || 0)); pr.toxT = 0.5; } // resistance blunts the antibiotic hit
     // cross-reactive: also hit bacteria genetically distant from the releaser (kin are spared)
     for (const oc of cellSpace.query(tx, ty, maxR + SPATIAL_FRAME_PAD, cellCandidates)) {
       if (oc === c || !oc.alive || oc.cyst || oc.invuln > 0) continue;
@@ -2741,7 +2743,7 @@
       z.r = z.maxR*grow*(0.6 + 0.4*clamp(z.life/P.life, 0, 1));
       const r2 = z.r*z.r;
       for (const pr of predatorSpace.query(z.x, z.y, z.r, predatorCandidates))
-        if (!pr.dead && toroDist2(z.x, z.y, pr.x, pr.y) <= r2) { pr.energy -= z.potency*dt; pr.toxT = 0.5; } // mark recently poisoned → death here counts as a KILL
+        if (!pr.dead && toroDist2(z.x, z.y, pr.x, pr.y) <= r2) { pr.energy -= z.potency*dt * (1 - (state.predResist || 0)); pr.toxT = 0.5; } // resistance blunts the lingering drain; mark poisoned → death here counts as a KILL
       // cross-reactive: the cloud also drains genetically distant bacteria (kin/self are spared)
       if (z.genome) for (const oc of cellSpace.query(z.x, z.y, z.r, cellCandidates)) {
         if (oc.cyst || oc.invuln > 0 || !oc.alive) continue;
@@ -2907,7 +2909,13 @@
     // each time protists go fully extinct, halve their respawn interval (persists through the run),
     // so a world that keeps wiping its grazers reseeds them faster and faster
     if (predators.length === 0) {
-      if (!state.predExtinct) { state.predExtinct = true; state.predRespawn = Math.max(CFG.predator.respawnFloor, state.predRespawn/2); }
+      if (!state.predExtinct) {
+        state.predExtinct = true;
+        state.predRespawn = Math.max(CFG.predator.respawnFloor, state.predRespawn/2);
+        // ...and each wipe selects for antibiotic resistance: the survivors that reseed take less toxin
+        // damage, so a colony that keeps gassing its grazers eventually breeds ones it can't gas away.
+        state.predResist = Math.min(CFG.predator.resistMax, (state.predResist || 0) + CFG.predator.resistStep);
+      }
     } else state.predExtinct = false;
     // immigration: grazers drift in toward a target that RISES with bacterial abundance
     // (density-dependent top-down pressure), and never below the crash floor.
@@ -5068,6 +5076,8 @@
     "predator.immigrateCap": "Ceiling on the protist population that immigration will chase.",
     "predator.immigrateMax": "Most protists that can arrive in a single immigration step (how fast they catch a boom).",
     "predator.respawnFloor": "Shortest protist respawn interval (s) — it halves on each extinction, down to this.",
+    "predator.resistStep": "Antibiotic resistance protists evolve each time they go fully extinct (0-1 fraction of toxin damage blunted). The arms race that lets grazers survive a colony that gasses them.",
+    "predator.resistMax": "Ceiling on evolved protist antibiotic resistance (0-1) — they never become fully immune.",
     "predator.virusEnergy": "Energy a protist gains from grazing a free virion — a small meal, and a brake on phage blooms.",
     "day.lengthSec": "Real seconds in one in-game day. The run ends when the day does.",
     "day.startHour": "Hour of the in-game day the run opens on (6 = dawn).",
@@ -5192,6 +5202,8 @@
     "cell.twitchSpeedScale": { min: 0, max: 1 },
     "touch.autoEnzyme": { min: 0, max: 1, integer: true },
     "predator.cystEatChance": { min: 0, max: 1 },
+    "predator.resistStep": { min: 0, max: 1 },
+    "predator.resistMax": { min: 0, max: 1 },
     "predator.cystMealFactor": { min: 0, max: 1 },
     "substrate.grainStrength": { min: 0, max: 2 },
     "substrate.grainFloor": { min: 0, max: 1 },

@@ -196,4 +196,12 @@ assert.match(game, /for \(const cell of cells\) if \(cell\.alive\) \{ if \(cell\
 assert.match(game, /if \(best\.cyst\) \{ best\.cyst = false; best\.energy = Math\.max\(best\.energy, CFG\.cell\.cystReviveEnergy\); \}/,
   "a cyst selected after player death must immediately resuscitate rather than remain unplayable");
 
+// Protist antibiotic resistance evolves on each extinction, and blunts the toxin damage they take.
+assert.match(game, /state\.predResist = Math\.min\(CFG\.predator\.resistMax, \(state\.predResist \|\| 0\) \+ CFG\.predator\.resistStep\)/,
+  "each protist extinction ratchets antibiotic resistance up toward its ceiling");
+assert.match(game, /pr\.energy -= dose \* \(1 - \(state\.predResist \|\| 0\)\)/,
+  "the instant antibiotic dose to protists is scaled down by evolved resistance");
+assert.match(game, /pr\.energy -= z\.potency\*dt \* \(1 - \(state\.predResist \|\| 0\)\)/,
+  "the lingering antibiotic drain on protists is scaled down by evolved resistance");
+
 console.log(`Static contracts OK: ${sounds.size} sounds and ${controls.length} control${controls.length === 1 ? "" : "s"} checked.`);
