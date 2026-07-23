@@ -51,7 +51,7 @@ assert.match(loader, /validCheckpoint\(current\)[\s\S]*readCheckpointSlot\(CHECK
   "a corrupt current checkpoint falls back to the previous generation");
 
 const restore = game.slice(game.indexOf("function restoreCheckpoint"), game.indexOf("async function resumeSavedGame"));
-assert.match(restore, /spec: PARTICLES\[saved\.kind\], cache: null, depthBuf: null, dirty: true/,
+assert.match(restore, /spec: partSet\[saved\.kind\] \|\| PARTICLES\[saved\.kind\], cache: null, depthBuf: null, dirty: true/,
   "restoration rebuilds particle render caches from the static catalog");
 assert.match(restore, /updateDiel\(\); rebuildSpatialIndexes\(\); last = 0/,
   "restoration rebuilds derived environment and spatial indexes without a giant first frame");

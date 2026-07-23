@@ -31,6 +31,82 @@
   const WORLD_DEF_W = 2600, WORLD_DEF_H = 2000;
   let WORLD_W = WORLD_DEF_W, WORLD_H = WORLD_DEF_H;
   function setWorld(w, h) { WORLD_W = Math.max(560, Math.round(w)); WORLD_H = Math.max(460, Math.round(h)); }
+  // World Y-mode (#30 vertical gradients): "wrap" = the classic torus (Y wraps like X); "column" = a
+  // stratified water column with a real surface (y=0) and benthos (y=WORLD_H) — Y clamps instead of
+  // wrapping. Everything downstream (movement, camera, collision, spatial queries) derives from wrapY/
+  // dy/the grid's yWrap, so flipping this one flag reshapes the whole sea. Default stays the torus.
+  let worldYWrap = true;
+  function setWorldYMode(wrap) { worldYWrap = wrap !== false; }
+  // #28 scenarios: a validated scenario overrides the environment, re-skins the resources, and re-weights
+  // the adaptation pool for the whole session. Scenarios live in their own repo and are fetched at boot.
+  const SCENARIO_BASE = "https://raw.githubusercontent.com/rec3141/bacteria-the-game-scenarios/main";
+  let activeScenario = null;
+  // #30 phase 2: in column mode the sea is STRATIFIED. columnState (null = uniform sea) holds the depth
+  // profile: how deep light penetrates (photicFrac, as a fraction of the column) and the surface/deep
+  // temperatures around a thermocline. Light attenuates exponentially with depth; temperature steps down
+  // across the thermocline. These fields drive the vertical background gradient (and, later, buoyancy).
+  let columnState = null;
+  const depthFrac = (y) => (y < 0 ? 0 : y > WORLD_H ? 1 : y / WORLD_H);
+  function columnLightAt(y) {
+    const surface = state && state.light != null ? state.light : 0.6;
+    return columnState ? surface * Math.exp(-depthFrac(y) / Math.max(0.05, columnState.photicFrac)) : surface;
+  }
+  function columnTempAt(y) {
+    if (!columnState) return env.tempC;
+    const w = 1 - clamp(depthFrac(y) / Math.max(0.05, columnState.thermoclineFrac * 2), 0, 1); // 1 at surface → 0 below the thermocline
+    return columnState.deepTempC + (columnState.surfaceTempC - columnState.deepTempC) * w;
+  }
+  // Dissolved chemical-energy concentration [0..strength] at depth y — a Gaussian plume peaking at the
+  // field's depth. This is what chemolithotrophs feed on (a vent's H2S flux, a redox cline's NH3/NO2).
+  function chemAt(y) {
+    const ch = columnState && columnState.chem;
+    if (!ch) return 0;
+    const d = depthFrac(y) - ch.peakFrac;
+    return ch.strength * Math.exp(-(d * d) / (2 * ch.spread * ch.spread));
+  }
+  // Turn a validated scenario `column` block into a runtime profile. Layer depths are abstract units,
+  // normalized to the column; the photic fraction is where light first falls to ~1/e.
+  function deriveColumn(col) {
+    const layers = (col && col.layers) || [];
+    let photicFrac = 0.3, thermoclineFrac = 0.35, surfaceTempC = env.tempC, deepTempC = env.tempC;
+    if (layers.length >= 2) {
+      const maxD = layers[layers.length - 1].depth || 1;
+      if (layers[0].tempC != null) surfaceTempC = layers[0].tempC;
+      if (layers[layers.length - 1].tempC != null) deepTempC = layers[layers.length - 1].tempC;
+      for (const L of layers) if (L.light != null && L.light <= 0.37) { photicFrac = clamp((L.depth || 0) / maxD, 0.05, 1); break; }
+      if (col.thermocline && col.thermocline.depth != null) thermoclineFrac = clamp(col.thermocline.depth / maxD, 0.05, 0.95);
+    }
+    // optional chemical-energy field (for chemolithotroph scenarios)
+    let chem = null;
+    const cf = col && col.chemical;
+    if (cf && (cf.strength || 0) > 0) {
+      chem = { peakFrac: clamp(cf.peakDepth != null ? cf.peakDepth : 0.9, 0, 1),
+        spread: clamp(cf.spread != null ? cf.spread : 0.18, 0.03, 1),
+        strength: clamp(cf.strength, 0, 1), color: cf.color || "#d9c24a" };
+    }
+    return { photicFrac, thermoclineFrac, surfaceTempC, deepTempC, chem };
+  }
+  // #30 phase 3: vertical drift (px/s, +down) for a cell in column mode. Sink is gentle so swimming wins;
+  // EPS floats; the dead and dormant sink fastest. Zero in the toroidal sea. Also clamps at the seams so
+  // nothing piles a velocity into the surface or floor.
+  function columnDriftVy(c) {
+    if (!columnState) return 0;
+    const C = CFG.column;
+    let vy = c.cyst ? C.deadSink : C.sink - (c.eps || 0) * C.buoyEps;
+    if (c.y <= 1 && vy < 0) vy = 0;                 // already at the surface, don't push up out of the sea
+    if (c.y >= WORLD_H - 1 && vy > 0) vy = 0;       // resting on the benthos
+    return vy;
+  }
+  // Soft boundary: a viscous slowdown as you near the surface or floor, so the column ends in a cushion
+  // rather than a hard cut-off. 1 in open water; eases to edgeMinSpeed at the very edge. Torus = always 1.
+  function columnEdgeDamp(y) {
+    if (!columnState) return 1;
+    const buffer = VIEW_H * CFG.column.bufferFrac;
+    const d = Math.min(y, WORLD_H - y);
+    if (d >= buffer) return 1;
+    const t = clamp(d / Math.max(1, buffer), 0, 1);
+    return CFG.column.edgeMinSpeed + (1 - CFG.column.edgeMinSpeed) * t;
+  }
 
   const CFG = {
     cell: {
@@ -132,6 +208,18 @@
     // waits on a free mote slot instead of destroying food — the THROTTLE on how fast blocks dissolve. LOWER = blocks
     // persist longer (dissolution paced by absorption); HIGHER = blocks vanish on sight. 600 keeps that pacing. Tunable
     // live via the ` panel if the sea ever feels too greedy or too slow.
+    // #30 column mode ONLY (ignored in the toroidal sea): gentle vertical drift. Cells and detritus sink
+    // toward the benthos so the sunlit surface is where active life concentrates; EPS/biofilm floats
+    // (buoyEps per level offsets the sink); dead cells and cysts sink fastest. Kept small so a swimming
+    // cell easily rises against it — it shapes the ecology without taking the controls away.
+    column: { sink: 9, buoyEps: 7, deadSink: 22, particleSink: 6,
+      // soft boundary: within bufferFrac of the viewport height from the surface/floor, movement is
+      // damped the closer you get, easing to edgeMinSpeed at the very edge — a cushioned wall, not a cliff.
+      bufferFrac: 0.25, edgeMinSpeed: 0.12,
+      // CHEMOLITHOTROPHY: energy/s a chemolithotroph cell gains at the FULL chemical-field concentration.
+      // Chemosynthesizers fix carbon from a dissolved reduced chemical (H2S at a vent, NH3/NO2 in a redox
+      // cline) rather than digesting particles — so they feed from the field at their depth, not from food.
+      chemRate: 20 },
     // trophic role-swap: when your whole population dies you flip to the other trophic level
     // instead of a game-over — bacteria extinct → you become a protist (grazer); protists extinct → back to a bacterium.
     cycle: { reseedBacteria: 16, reseedProtists: 4, protistThrust: 240, protistEatScore: 30,
@@ -162,8 +250,8 @@
       q10: 2.0, q10RefC: 20,                      // metabolism ×q10 per +10 °C above the reference temp
     },
     predator: {
-      count: 4, radius: 22, wanderSpeed: 50, chaseSpeed: 85, senseRange: 170, satiatedTime: 4.5,
-      startEnergy: 100, mealEnergy: 58, metabolism: 4, // eats cells for energy, drains over time (raised 25% to curb the boom from doubled food)
+      count: 4, radius: 22, wanderSpeed: 25, chaseSpeed: 42.5, senseRange: 170, satiatedTime: 1,
+      startEnergy: 100, mealEnergy: 58, metabolism: 10, // eats cells for energy, drains over time (raised 25% to curb the boom from doubled food)
       maturity: 8,                                       // no senescence — a grazer dies of STARVATION
                                                          // (or antibiotics), never of old age
       reproEnergy: 320, reproCooldown: 11,               // reproduction, gated only by feeding — faster so grazers can chase a bacterial boom
@@ -172,7 +260,7 @@
       immigratePerPrey: 0.04, immigrateCap: 150, immigrateMax: 14, // grazers immigrate toward a target that rises with bacterial abundance; more per step so they can catch a boom
       respawnFloor: 0.5,                                 // the respawn interval halves on each protist extinction, down to this floor
       resistStep: 0.12, resistMax: 0.85,                 // antibiotic resistance protists gain per extinction, and its ceiling (fraction of toxin damage blunted)
-      cystMealFactor: 0.45, cystEatChance: 0.35,         // cysts aren't hunted; a bumped one is usually resisted, rarely eaten (for little energy)
+      cystMealFactor: 0.45, cystEatChance: 0.45,         // cysts aren't hunted; a bumped one is usually resisted, rarely eaten (for little energy)
       killMotes: 8,                                      // biomass released as food when an antibiotic KILLS a protist (natural death releases nothing)
       virusEnergy: 5,                                    // protists also graze free-floating viruses — a small meal, and a top-down brake on phage blooms
     },
@@ -196,7 +284,7 @@
       // (1 on the board), but on a phone — where a run is short and a player gives you ninety seconds
       // — scarcity just means most players never see an adaptation at all. So the phone gets 3, closer
       // in, and levels up several times faster. This is the biggest single lever on mobile.
-      goldCount: 1, goldCountTouch: 3,
+      goldCount: 4, goldCountTouch: 3,
       goldMinDist: 650, goldMinDistTouch: 300, // how far away a fresh gold is buried
 
       goldGrabTouch: 3,     // ON TOUCH ONLY: multiplies the gold phage's grab radius. Catching it with
@@ -231,6 +319,22 @@
   // which resource each kind is dominant in, and the reverse map (resource → kinds) — for keeping food of every type on the board
   const RES_KINDS = [[], [], []];
   for (const k of PARTICLE_KEYS) { const mix = PARTICLES[k].mix; let d = 0; for (let i = 1; i < 3; i++) if (mix[i] > mix[d]) d = i; RES_KINDS[d].push(k); }
+  // #28: a scenario can REPLACE the substrate set with its own particle types (e.g. oil droplets/tarballs
+  // instead of marine snow/diatoms). These mutable actives point at the defaults until a scenario swaps them.
+  let partSet = PARTICLES, partKeys = PARTICLE_KEYS, partResKinds = RES_KINDS, partWeights = null;
+  function useScenarioParticles(sc) {
+    if (sc && sc.particles && Object.keys(sc.particles).length) {
+      partSet = {}; partWeights = {};
+      for (const id of Object.keys(sc.particles)) {
+        const p = sc.particles[id];
+        partSet[id] = { label: p.label, mix: p.mix, rMin: p.rMin, rMax: p.rMax, shape: p.shape, squash: p.squash };
+        partWeights[id] = p.weight != null ? p.weight : 1;
+      }
+      partKeys = Object.keys(partSet);
+      partResKinds = [[], [], []];
+      for (const k of partKeys) { const mix = partSet[k].mix; let d = 0; for (let i = 1; i < 3; i++) if (mix[i] > mix[d]) d = i; partResKinds[d].push(k); }
+    } else { partSet = PARTICLES; partKeys = PARTICLE_KEYS; partResKinds = RES_KINDS; partWeights = null; }
+  }
 
   // ------------------------------------------------------------------- canvas
   const canvas = document.getElementById("game");
@@ -293,6 +397,11 @@
     overTitle: document.getElementById("overTitle"), overMsg: document.getElementById("overMsg"),
     startBtn: document.getElementById("startBtn"), restartBtn: document.getElementById("restartBtn"),
     continueBtn: document.getElementById("continueBtn"),
+    scenariosBtn: document.getElementById("scenariosBtn"), scenarioPicker: document.getElementById("scenarioPicker"),
+    scenarioList: document.getElementById("scenarioList"), scenarioBack: document.getElementById("scenarioBack"),
+    defaultLede: document.getElementById("defaultLede"), scenarioCard: document.getElementById("scenarioCard"),
+    scenarioTitle: document.getElementById("scenarioTitle"), scenarioBasis: document.getElementById("scenarioBasis"),
+    scenarioLesson: document.getElementById("scenarioLesson"), scenarioCite: document.getElementById("scenarioCite"),
     savedContinueBtn: document.getElementById("savedContinueBtn"),
     savedContinueTitle: document.getElementById("savedContinueTitle"),
     savedContinueMeta: document.getElementById("savedContinueMeta"), saveStatus: document.getElementById("saveStatus"),
@@ -409,7 +518,8 @@
       if (!on || !ctx) return;
       // Tempo tracks how crowded the sea is: a bloom drives the pulse frenetic, a dwindling one lets it
       // breathe. Smoothed (one ease per ~90ms tick) so the beat glides rather than lurching on a swing.
-      const count = (cells && cells.length) || 0;
+      // Only ACTIVE bacteria drive it — dormant cysts are quiet, and predators aren't bacteria at all.
+      let count = 0; if (cells) for (const c of cells) if (c.alive && !c.cyst) count++;
       smoothPop += (count - smoothPop) * 0.12;
       const mul = Math.max(1, Math.min(2.6, 1 + Math.log10(Math.max(1, smoothPop/30)) * 0.62)); // ~1× at ≤30 cells → ~2.6× in a huge bloom
       const bt = BEAT / mul;
@@ -545,6 +655,13 @@
   // composition succession over the day: fresh diatoms (lipid) bloom in the light → grazing makes
   // fecal pellets (protein) → it all ages into marine snow / chitin (carb detritus) by night.
   function dielKind() {
+    if (partWeights) { // scenario substrate set: pick by authored weight (no default diel succession to key off)
+      let tot = 0; for (const k of partKeys) tot += partWeights[k];
+      if (tot <= 0) return partKeys[0];
+      let r = Math.random()*tot;
+      for (const k of partKeys) { r -= partWeights[k]; if (r <= 0) return k; }
+      return partKeys[0];
+    }
     const light = state ? (state.light || 0) : 0.5, tod = state ? (state.tod || 0) : 0;
     const afternoon = Math.max(0, Math.sin((tod - 0.12)*TAU)); // grazing response lags the bloom
     const night = 1 - light;
@@ -642,10 +759,12 @@
                                           CFG.cell.maxSpeed/Math.sqrt(visc)) * swimScale();
   function rand(a, b) { return a + Math.random()*(b-a); }
   function wrapX(v) { return ((v % WORLD_W) + WORLD_W) % WORLD_W; }
-  function wrapY(v) { return ((v % WORLD_H) + WORLD_H) % WORLD_H; }
+  // In column mode Y clamps to [0, WORLD_H] (surface..floor) instead of wrapping, and the vertical
+  // separation is the plain difference — no nearest-image across a seam that no longer exists.
+  function wrapY(v) { return worldYWrap ? ((v % WORLD_H) + WORLD_H) % WORLD_H : (v < 0 ? 0 : v > WORLD_H ? WORLD_H : v); }
   function dWrap(a, b, size) { let d = a - b; if (d > size/2) d -= size; else if (d < -size/2) d += size; return d; }
   function dx(a, b) { return dWrap(a, b, WORLD_W); }
-  function dy(a, b) { return dWrap(a, b, WORLD_H); }
+  function dy(a, b) { return worldYWrap ? dWrap(a, b, WORLD_H) : (a - b); }
   function toroDist2(ax, ay, bx, by) { const x = dx(ax, bx), y = dy(ay, by); return x*x + y*y; }
 
   // SPATIAL_INDEX_START — pure torus-aware grid, also executed by tests and the benchmark.
@@ -653,6 +772,7 @@
     constructor(worldWidth, worldHeight, targetCellSize = 64) {
       this.targetCellSize = targetCellSize;
       this.queryToken = 0;
+      this.yWrap = true;   // #30: false = column mode — neighbour queries never wrap across the surface/floor seam
       this.resize(worldWidth, worldHeight);
     }
     resize(worldWidth, worldHeight) {
@@ -686,12 +806,13 @@
       const minRow = Math.floor((y - r) / this.bucketHeight), maxRow = Math.floor((y + r) / this.bucketHeight);
       const scanMinCol = maxCol - minCol + 1 >= this.cols ? 0 : minCol;
       const scanMaxCol = maxCol - minCol + 1 >= this.cols ? this.cols - 1 : maxCol;
-      const scanMinRow = maxRow - minRow + 1 >= this.rows ? 0 : minRow;
-      const scanMaxRow = maxRow - minRow + 1 >= this.rows ? this.rows - 1 : maxRow;
+      // Rows either wrap (torus) or clamp to [0, rows-1] (column mode: no seam across surface/floor).
+      const scanMinRow = this.yWrap ? (maxRow - minRow + 1 >= this.rows ? 0 : minRow) : Math.max(0, minRow);
+      const scanMaxRow = this.yWrap ? (maxRow - minRow + 1 >= this.rows ? this.rows - 1 : maxRow) : Math.min(this.rows - 1, maxRow);
       this.queryToken = (this.queryToken + 1) >>> 0;
       if (!this.queryToken) { this.queryMarks.fill(0); this.queryToken = 1; }
       for (let rawRow = scanMinRow; rawRow <= scanMaxRow; rawRow++) {
-        const row = ((rawRow % this.rows) + this.rows) % this.rows;
+        const row = this.yWrap ? ((rawRow % this.rows) + this.rows) % this.rows : rawRow;
         for (let rawCol = scanMinCol; rawCol <= scanMaxCol; rawCol++) {
           const col = ((rawCol % this.cols) + this.cols) % this.cols;
           const index = row * this.cols + col;
@@ -713,7 +834,7 @@
   const epsSpace = new TorusSpatialGrid(WORLD_W, WORLD_H, SPATIAL_CELL_SIZE);
   const cellCandidates = [], predatorCandidates = [], phageCandidates = [], nutrientCandidates = [], epsCandidates = [];
   function rebuildSpatialIndexes() {
-    for (const grid of [cellSpace, predatorSpace, phageSpace, nutrientSpace, epsSpace]) grid.resize(WORLD_W, WORLD_H);
+    for (const grid of [cellSpace, predatorSpace, phageSpace, nutrientSpace, epsSpace]) { grid.resize(WORLD_W, WORLD_H); grid.yWrap = worldYWrap; }
     cellSpace.rebuild(cells, (c) => c.alive);
     predatorSpace.rebuild(predators, (p) => !p.dead);
     phageSpace.rebuild(phages, (p) => !p.dead);
@@ -721,7 +842,7 @@
     epsSpace.rebuild(epsBlocks, (z) => z.life > 0);
   }
   function rebuildCellSpace() {
-    cellSpace.resize(WORLD_W, WORLD_H);
+    cellSpace.resize(WORLD_W, WORLD_H); cellSpace.yWrap = worldYWrap;
     cellSpace.rebuild(cells, (c) => c.alive);
   }
   function rebuildEpsSpace() {
@@ -855,12 +976,22 @@
     c.ups = (c.ups || []).concat([event]);
     return u;
   }
+  // A scenario can re-weight (or zero out) each adaptation in the gold-phage pool. Token→schema-primitive.
+  const SCENARIO_ACTION_KEY = { chemo: "chemotaxis", enz0: "enzyme0", enz1: "enzyme1", enz2: "enzyme2", antibiotic: "antibiotic", crispr: "crispr", twitching: "twitching", eps: "eps" };
+  function scenarioActionWeight(token) {
+    if (!activeScenario || !activeScenario.actions) return 1;
+    const a = activeScenario.actions[SCENARIO_ACTION_KEY[token]];
+    return a ? a.weight : 1;
+  }
   function grantRandomUpgrade_(c) {
     const pool = ["chemo", "enz0", "enz1", "enz2", "antibiotic"];
     if (!c.crispr) pool.push("crispr");            // one-time: phage-immune-harvesting defense system
     if (!c.twitching) pool.push("twitching");      // one-time: type-IV-pilus crawling over particles
     pool.push("eps");                              // repeatable: each level extends matrix lifetime
-    const pick = pool[(Math.random()*pool.length)|0];
+    // weighted by the active scenario (uniform when none). A zero weight removes that adaptation.
+    let total = 0; for (const t of pool) total += scenarioActionWeight(t);
+    let pick = pool[(Math.random()*pool.length)|0];
+    if (total > 0) { let r = Math.random()*total; for (const t of pool) { r -= scenarioActionWeight(t); if (r <= 0) { pick = t; break; } } }
     if (pick === "twitching") {
       c.twitching = true;
       return { msg: "Twitching motility", color: TWITCH_COLOR, abbr: "Tw", acquired: true };
@@ -895,7 +1026,7 @@
       tumbling: false, runTimer: rand(CFG.cell.runMin, CFG.cell.runMax), tumbleT: 0, tumbleTarget: angle,
       fed: 0, enzCd: rand(CFG.cell.enzymeCooldown[0], CFG.cell.enzymeCooldown[1]),
       infectedGreen: false, viralLoad: 0, lysisT: 0, chemotaxis: false, chemoLevel: 0, crispr: false, antibiotic: 0,
-      twitching: false, eps: 0, epsCd: rand(CFG.eps.cooldown[0], CFG.eps.cooldown[1]), toxT: 0,
+      twitching: false, eps: 0, chemolithotroph: false, epsCd: rand(CFG.eps.cooldown[0], CFG.eps.cooldown[1]), toxT: 0,
       // This cell's OWN adaptation log, in the order it was acquired — inherited whole by its
       // daughters. The player's run-level log (state.upgrades) only ever knew about the cell you were
       // steering; this is what lets every lineage on the chart show its own genome. phylo preserves
@@ -975,13 +1106,13 @@
     const have = [0, 0, 0];
     for (const p of substrates) if (p !== exclude && p.dom != null) have[p.dom]++;
     let need = -1, low = CFG.substrate.minPerRes;
-    for (let r = 0; r < 3; r++) if (RES_KINDS[r].length && have[r] < low) { low = have[r]; need = r; }
-    if (need >= 0) return RES_KINDS[need][(Math.random()*RES_KINDS[need].length)|0];
+    for (let r = 0; r < 3; r++) if (partResKinds[r].length && have[r] < low) { low = have[r]; need = r; }
+    if (need >= 0) return partResKinds[need][(Math.random()*partResKinds[need].length)|0];
     return dielKind(); // otherwise the composition follows the daily production→grazing→detritus succession
   }
   function makeSubstrate(kind) {
     const k = kind || pickBalancedKind();
-    const spec = PARTICLES[k];
+    const spec = partSet[k] || PARTICLES[k];
     // In the dish, scale them down: at full size two particles fill the glass and there's nowhere
     // left to show a cell swimming, a grazer hunting, or a virus drifting.
     const R = powerLawSize() * (demoWorld ? CFG.demo.foodScale : 1);
@@ -1134,7 +1265,12 @@
     // stages is on screen from the moment it exists and the camera can sit perfectly still. A real
     // run gets the whole ocean back.
     if (isDemo) setWorld(VIEW_W, VIEW_H); else setWorld(WORLD_DEF_W, WORLD_DEF_H);
+    setWorldYMode(!columnState);               // #30: torus by default; a column scenario clamps Y into a water column
     const first = makeCell(WORLD_W/2, WORLD_H/2, CFG.cell.startEnergy, -Math.PI/2, 1);
+    // #28: in a scenario the founder carries the first authored archetype's genome (e.g. the alkB oil
+    // degrader), so the run opens as the organism the lesson describes rather than a bare cell.
+    if (!isDemo) { const arche = scenarioArchetypes(); if (arche && arche.length) { applyGenomeBundle(first, arche[0].genome); first.ups = genomeUps(first); first.phylo = first.ups.slice();
+      if (columnState && columnState.chem && first.chemolithotroph) first.y = wrapY(columnState.chem.peakFrac * WORLD_H); } } // a chemosynthesizer starts IN its plume
     for (let i = 0; i < Math.round(CFG.cell.startUpgrades); i++) grantRandomUpgrade(first); // testing aid
     // In the demo NOTHING is controlled: the attract mode is the simulation running itself, and a
     // cell left "controlled" with no one at the keys would just sit there tumbling in place.
@@ -1212,7 +1348,7 @@
         cells: cells.filter((c) => c.alive).length, role: state.role,
         tuned: cfgTuned(), savedAt,
       },
-      world: { width: WORLD_W, height: WORLD_H }, cam: { x: cam.x, y: cam.y }, flagPhase,
+      world: { width: WORLD_W, height: WORLD_H, yWrap: worldYWrap }, cam: { x: cam.x, y: cam.y }, flagPhase,
       cfg: JSON.parse(JSON.stringify(CFG)), state,
       entities: {
         cells, substrates: substrates.map(checkpointSubstrate), enzymes, toxins, eps: epsBlocks,
@@ -1412,6 +1548,7 @@
     commitCfg(restoredCfg);
     if (adminRows.length) syncAdmin();
     setWorld(record.world.width, record.world.height);
+    setWorldYMode(record.world.yWrap !== false); // older checkpoints (no yWrap) restore as the classic torus
     state = record.state; cells = E.cells;
     // EPS was a boolean in schema-1 checkpoints before expression became countable. Number(true)
     // migrates an old producer to level 1 without invalidating a player's saved day.
@@ -1419,7 +1556,7 @@
     if (Array.isArray(state.dead)) for (const g of state.dead)
       g.eps = Math.max(0, Math.round(Number(g.eps) || 0));
     substrates = E.substrates.map((saved) => ({
-      ...saved, spec: PARTICLES[saved.kind], cache: null, depthBuf: null, dirty: true,
+      ...saved, spec: partSet[saved.kind] || PARTICLES[saved.kind], cache: null, depthBuf: null, dirty: true,
     }));
     enzymes = E.enzymes; toxins = E.toxins; epsBlocks = Array.isArray(E.eps) ? E.eps : []; nutrients = E.nutrients;
     predators = E.predators; phages = E.phages; particles = E.particles;
@@ -1911,6 +2048,24 @@
     c.phylo = (g.phylo || g.ups || []).slice();
     return true;
   }
+  // #28: a scenario supplies its own bacterial archetypes (immigrant/founder genome bundles). Pick one
+  // weighted by immigrateWeight, and stamp its genome onto a cell (carbohydrase floored at the founding
+  // level so no cell can eat nothing).
+  function scenarioArchetypes() { return (activeScenario && activeScenario.organisms && activeScenario.organisms.cells) || null; }
+  function pickScenarioArchetype() {
+    const arr = scenarioArchetypes(); if (!arr || !arr.length) return null;
+    let tot = 0; for (const a of arr) tot += a.immigrateWeight;
+    if (tot <= 0) return arr[0];
+    let r = Math.random()*tot;
+    for (const a of arr) { r -= a.immigrateWeight; if (r <= 0) return a; }
+    return arr[0];
+  }
+  function applyGenomeBundle(c, g) {
+    c.enzLvl[0] = g.enzLvl[0]; c.enzLvl[1] = g.enzLvl[1]; c.enzLvl[2] = Math.max(1, g.enzLvl[2]);
+    c.chemoLevel = g.chemoLevel | 0; c.chemotaxis = c.chemoLevel > 0;
+    c.antibiotic = g.antibiotic | 0; c.eps = g.eps | 0; c.crispr = !!g.crispr; c.twitching = !!g.twitching;
+    c.chemolithotroph = !!g.chemolithotroph;   // #30: chemosynthesizer — feeds on the dissolved chemical field
+  }
   function immigrateBacteria(n) { // a diversity of bacteria drift in from offscreen (varied genomes)
     for (let i = 0; i < n && cells.length < CFG.cell.maxCells; i++) {
       const a = rand(0, 6.28), d = Math.hypot(VIEW_W, VIEW_H)/2 + rand(60, 380);
@@ -1918,14 +2073,21 @@
       // Prefer to REVIVE something this run already evolved (a cyst waking up). Only if nothing has
       // died yet — the opening minutes — do we invent a genome from scratch.
       if (!reviveGenome(c)) {
-        if (Math.random() < 0.55) c.enzLvl[0] = 1 + (Math.random() < 0.3 ? 1 : 0);
-        if (Math.random() < 0.55) c.enzLvl[1] = 1 + (Math.random() < 0.3 ? 1 : 0);
-        c.enzLvl[2] = 1 + (Math.random() < 0.35 ? 1 : 0);
-        if (Math.random() < 0.40) { c.chemotaxis = true; c.chemoLevel = 1 + (Math.random() < 0.3 ? 1 : 0); }
-        if (Math.random() < 0.22) c.crispr = true;
-        if (Math.random() < 0.30) c.antibiotic = 1;
-        if (Math.random() < 0.18) c.twitching = true;
-        if (Math.random() < 0.18) c.eps = 1;
+        const arche = pickScenarioArchetype();      // in a scenario, immigrants are its authored archetypes
+        if (arche) {
+          applyGenomeBundle(c, arche.genome);
+          // a chemosynthesizer drifts in AT its plume depth (± its spread), not at a random depth
+          if (columnState && columnState.chem && c.chemolithotroph) c.y = wrapY((columnState.chem.peakFrac + rand(-1, 1)*columnState.chem.spread) * WORLD_H);
+        } else {
+          if (Math.random() < 0.55) c.enzLvl[0] = 1 + (Math.random() < 0.3 ? 1 : 0);
+          if (Math.random() < 0.55) c.enzLvl[1] = 1 + (Math.random() < 0.3 ? 1 : 0);
+          c.enzLvl[2] = 1 + (Math.random() < 0.35 ? 1 : 0);
+          if (Math.random() < 0.40) { c.chemotaxis = true; c.chemoLevel = 1 + (Math.random() < 0.3 ? 1 : 0); }
+          if (Math.random() < 0.22) c.crispr = true;
+          if (Math.random() < 0.30) c.antibiotic = 1;
+          if (Math.random() < 0.18) c.twitching = true;
+          if (Math.random() < 0.18) c.eps = 1;
+        }
         c.ups = genomeUps(c);   // it arrived already carrying these — read the log off the genome
         c.phylo = c.ups.slice();
       }
@@ -2427,7 +2589,7 @@
     // particle lifecycle: drift slowly; when fully eaten or past its lifespan, respawn
     // (past-lifespan particles erode away voxel-by-voxel rather than vanishing)
     for (const s of substrates) {
-      s.x = wrapX(s.x + s.vx*dt); s.y = wrapY(s.y + s.vy*dt);
+      s.x = wrapX(s.x + s.vx*dt); s.y = wrapY(s.y + (s.vy + (columnState ? CFG.column.particleSink : 0))*dt); // #30: detritus rains down the column
       if (s.phase === "live") {
         s.age += dt;
         if (s.organic <= 0) { retireSubstrate(s); continue; }
@@ -2576,11 +2738,13 @@
     if (!near) for (const z of epsSpace.query(c.x, c.y, bpReach + CFG.eps.radius, epsCandidates)) {
       if (z.life > 0 && toroDist2(c.x, c.y, z.x, z.y) < (bpReach + z.r)**2) { near = true; break; }
     }
-    if (!near) { c.x = wrapX(c.x + moveVx*dt); c.y = wrapY(c.y + moveVy*dt); }
+    const damp = columnEdgeDamp(c.y);        // #30: soft-boundary slowdown near the surface/floor (1 in the torus)
+    const cvx = moveVx * damp, cvy = (moveVy + columnDriftVy(c)) * damp;   // add the column's vertical drift too
+    if (!near) { c.x = wrapX(c.x + cvx*dt); c.y = wrapY(c.y + cvy*dt); }
     else {
       const steps = clamp(Math.ceil(stepDist/2), 1, 8);
       for (let s = 0; s < steps; s++) {
-        c.x = wrapX(c.x + moveVx*dt/steps); c.y = wrapY(c.y + moveVy*dt/steps);
+        c.x = wrapX(c.x + cvx*dt/steps); c.y = wrapY(c.y + cvy*dt/steps);
         collideRod(c, !!c.twitching);
       }
     }
@@ -2589,6 +2753,9 @@
     const metab = c.cyst ? CFG.cell.cystMetab : 1;
     const genomeF = 1 + upgradeTier(c)*CFG.cell.genomeUpkeep; // a bigger genome costs more upkeep (streamlining pressure)
     c.energy -= CFG.respirationBase*env.metabolismMult*sizeF*metab*genomeF*dt;
+    // CHEMOLITHOTROPHY: a chemosynthesizer fixes carbon from the dissolved chemical field at its depth,
+    // gaining energy without eating a particle — this is its whole living. It has to STAY in the plume.
+    if (c.chemolithotroph && !c.cyst) c.energy += chemAt(c.y)*CFG.column.chemRate*dt;
     if (c.invuln > 0) c.invuln -= dt;
     if (c.toxT > 0) c.toxT -= dt; // antibiotic-poisoned marker fades (so a death here still counts as antibiotic)
     if (c.energy <= 0) { c.energy = 0; killCell(c, false); return; }
@@ -2814,7 +2981,7 @@
     for (const n of nutrients) {
       if (n.dead) continue;
       n.vx += rand(-D, D)*dt; n.vy += rand(-D, D)*dt; n.vx *= 0.95; n.vy *= 0.95;
-      n.x = wrapX(n.x + n.vx*dt); n.y = wrapY(n.y + n.vy*dt);
+      n.x = wrapX(n.x + n.vx*dt); n.y = wrapY(n.y + (n.vy + (columnState ? CFG.column.particleSink*0.5 : 0))*dt); // #30: dissolved motes settle slowly
       n.life -= dt; if (n.life <= 0) n.dead = true;
     }
     nutrients = nutrients.filter((n) => !n.dead);
@@ -2858,16 +3025,16 @@
       } else {
         let target = null, td = P.senseRange**2;
         const sensed = hunting ? cellSpace.query(pr.x, pr.y, P.senseRange, cellCandidates) : [];
+        // only ACTIVE cells are hunted — cysts are ignored by the chase (still eaten if bumped into, below)
         if (hunting) for (const c of sensed) { if (!c.alive || c.cyst) continue; const d = toroDist2(pr.x, pr.y, c.x, c.y); if (d < td) { td = d; target = c; } }
-        // no active prey in range → drift toward the nearest cyst bank to graze it
-        if (hunting && !target) for (const c of sensed) { if (!c.alive || !c.cyst) continue; const d = toroDist2(pr.x, pr.y, c.x, c.y); if (d < td) { td = d; target = c; } }
         if (target) pr.heading = Math.atan2(dy(target.y, pr.y), dx(target.x, pr.x));
         else { pr.wobble += dt; pr.heading += Math.sin(pr.wobble*1.7)*dt*2; }
         const base = (target ? P.chaseSpeed : P.wanderSpeed)*swimScale();
         const spd = (hunting ? base : base*0.5)/Math.sqrt(env.viscosity);
         pr.vx = Math.cos(pr.heading)*spd; pr.vy = Math.sin(pr.heading)*spd;
       }
-      pr.x = wrapX(pr.x + pr.vx*dt); pr.y = wrapY(pr.y + pr.vy*dt);
+      const pdamp = columnEdgeDamp(pr.y);   // #30: grazers feel the same soft boundary
+      pr.x = wrapX(pr.x + pr.vx*pdamp*dt); pr.y = wrapY(pr.y + pr.vy*pdamp*dt);
       collideCircle(pr, pr.r); // protists are too big to enter tunnels
       pr.pseudo += dt*4;
       const grazeReach = pr.r + CFG.cell.maxHalf + CFG.cell.radius + 2;
@@ -3127,8 +3294,26 @@
     // The sea itself carries the time of day: deep navy at midnight, bright teal at noon. Coloring
     // the WATER (rather than washing a translucent film over the finished frame, as this used to)
     // keeps the organisms at full contrast — noon is brighter without everything going milky.
-    ctx.fillStyle = waterColor(state && state.light != null ? state.light : 0.6);
+    // In a stratified column the sea is a VERTICAL gradient: bright, sunlit surface at the top fading to
+    // dark deep water at the floor. Sample world-depth at a few screen rows and lerp the water color.
+    if (columnState) {
+      const topY = cam.y - VIEW_H/2, botY = cam.y + VIEW_H/2, g = ctx.createLinearGradient(0, 0, 0, VIEW_H);
+      for (let s = 0; s <= 6; s++) { const f = s/6, wy = clamp(topY + (botY - topY)*f, 0, WORLD_H); g.addColorStop(f, waterColor(clamp(columnLightAt(wy), 0, 1))); }
+      ctx.fillStyle = g;
+    } else {
+      ctx.fillStyle = waterColor(state && state.light != null ? state.light : 0.6);
+    }
     ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    // chemical-energy plume: a soft coloured band at the field's depth, so a chemolithotroph run reads as
+    // "the energy is HERE" (a vent glow at the floor, a shimmer in a redox cline).
+    if (columnState && columnState.chem) {
+      const ch = columnState.chem, peakY = ch.peakFrac*WORLD_H - (cam.y - VIEW_H/2);
+      const half = Math.max(50, ch.spread*WORLD_H*2.2);
+      const r = parseInt(ch.color.slice(1, 3), 16), gg = parseInt(ch.color.slice(3, 5), 16), bb = parseInt(ch.color.slice(5, 7), 16);
+      const grad = ctx.createLinearGradient(0, peakY - half, 0, peakY + half);
+      grad.addColorStop(0, `rgba(${r},${gg},${bb},0)`); grad.addColorStop(0.5, `rgba(${r},${gg},${bb},${0.22*ch.strength})`); grad.addColorStop(1, `rgba(${r},${gg},${bb},0)`);
+      ctx.fillStyle = grad; ctx.fillRect(0, peakY - half, VIEW_W, half*2);
+    }
     drawWater(); // ambient background stays unscaled so the corners never go empty
     ctx.save();
     if (ZOOM !== 1) { ctx.translate(VIEW_W/2, VIEW_H/2); ctx.scale(ZOOM, ZOOM); ctx.translate(-VIEW_W/2, -VIEW_H/2); }
@@ -3730,20 +3915,22 @@
     const bks = hist.map(sampleBuckets);
     const keySet = new Set(); for (const b of bks) for (const k in b) keySet.add(+k);
     const keys = [...keySet].sort((a, b) => a - b);   // stable: mask-major, tier-minor — bands don't jump
-    let maxY = chartLog ? 1 : 10, vMax = 10, peakCells = 0;
+    let maxY = chartLog ? 1 : 10, vMax = 10, pMax = 10, peakCells = 0;
     for (let i = 0; i < hist.length; i++) {
       let tot = 0, cells = 0;
       for (const k in bks[i]) { tot += bandVal(bks[i][k]); cells += bks[i][k]; }
       if (tot > maxY) maxY = tot;
       if (cells > peakCells) peakCells = cells;
-      const pv = bandVal(hist[i].p || 0);
-      if (pv > maxY) maxY = pv;
+      // protists and viruses each track their OWN peak, not the bacterial axis — a handful of grazers
+      // (or phages) under a huge bloom would otherwise vanish onto the floor. Their lines are drawn on
+      // independent hidden axes (pMax / vMax) below.
+      if ((hist[i].p || 0) > pMax) pMax = hist[i].p;
       if ((hist[i].v || 0) > vMax) vMax = hist[i].v;
     }
     const pad = H < 70 ? 8 : 14;
     // v is already in stacked units (cells, or stacked log-cells), so the axis itself is linear in them
     const yAt = (v) => H - (v/maxY)*(H - pad) - 2;
-    return { bks, keys, maxY, vMax, peakCells, pad, yAt };
+    return { bks, keys, maxY, vMax, pMax, peakCells, pad, yAt };
   }
   function renderCommunityChart(g, W, H, hist, denom) {
     g.clearRect(0, 0, W, H);
@@ -3772,8 +3959,12 @@
         g.closePath(); g.fill();
         for (let i = 0; i <= last; i++) cum[i] += bandVal(bks[i][key] || 0);
       }
+      // protist count — solid line on its OWN hidden axis (scaled to pMax, not the cell axis), so ten
+      // grazers under a five-thousand-cell bloom stay visible instead of pinned to the floor.
+      const lgPMax = Math.log10(S.pMax + 1) || 1;
+      const yAtP = chartLog ? (v) => H - (Math.log10(v + 1)/lgPMax)*(H - S.pad) - 2 : (v) => H - (v/S.pMax)*(H - S.pad) - 2;
       g.strokeStyle = PROTIST_COLOR; g.lineWidth = H < 70 ? 1.3 : 1.8; g.beginPath();
-      for (let i = 0; i < hist.length; i++) { const x = xAt(i), y = yAt(bandVal(hist[i].p || 0)); i ? g.lineTo(x, y) : g.moveTo(x, y); }
+      for (let i = 0; i < hist.length; i++) { const x = xAt(i), y = yAtP(hist[i].p || 0); i ? g.lineTo(x, y) : g.moveTo(x, y); }
       g.stroke();
       // virus (green-phage) count — dashed line on its OWN hidden axis (scaled to vMax, not the cell axis)
       const lgVMax = Math.log10(S.vMax + 1) || 1;
@@ -4325,14 +4516,15 @@
     const lin = rec.lineages || {};
     const keys = Object.keys(lin);
     if (!keys.length) return null;
-    const root = { abbr: null, color: null, depth: 0, children: [], leaves: [] };
+    const root = { abbr: null, color: null, depth: 0, t: 0, children: [], leaves: [] };
     for (const k of keys) {
       const paths = [lin[k]].concat(Array.isArray(lin[k].variants) ? lin[k].variants : []);
       for (const path of paths) {
         let node = root;
         for (const u of (path.tree || path.ups || [])) {
           let ch = node.children.find((c) => c.abbr === u.abbr);
-          if (!ch) { ch = { abbr: u.abbr, color: u.color, depth: node.depth + 1, children: [], leaves: [] }; node.children.push(ch); }
+          if (!ch) { ch = { abbr: u.abbr, color: u.color, depth: node.depth + 1, t: (isFinite(u.t) ? +u.t : null), children: [], leaves: [] }; node.children.push(ch); }
+          else if (isFinite(u.t) && (ch.t == null || u.t < ch.t)) ch.t = +u.t; // when this mutation FIRST appeared
           node = ch;
         }
         node.leaves.push(+k);                     // every distinct genome/path gets a terminal row
@@ -4340,16 +4532,39 @@
     }
     return root;
   }
-  // Size the down-facing tree by adaptation depth. Leaves spread across the available width, while
-  // deeper histories receive enough vertical room for their mutation labels and descending branches.
+  // The run's timeline for the phylogeny: whether we have per-mutation timestamps (so the vertical axis
+  // can be DAYS rather than mere adaptation depth), and how many whole days that span covers. Real runs
+  // stamp every mutation with its run-clock time; legacy/synthetic records without times fall back to
+  // depth. Kept separate so drawClado (sizing) and renderClado (drawing) agree on the span.
+  function cladoTimeSpan(rec) {
+    const dayLen = (typeof CFG !== "undefined" && CFG.day && CFG.day.lengthSec) || 240;
+    const lin = rec.lineages || {};
+    let maxT = 0, timeMode = false;
+    for (const k in lin) {
+      const paths = [lin[k]].concat(Array.isArray(lin[k].variants) ? lin[k].variants : []);
+      for (const p of paths) for (const u of (p.tree || p.ups || [])) if (u && isFinite(u.t) && u.t > 0) { timeMode = true; if (u.t > maxT) maxT = u.t; }
+    }
+    // history samples carry no timestamp of their own — the whole log spans [0, dur], so time is the
+    // sample index scaled by the run's duration. That duration bounds the axis.
+    if (isFinite(rec.dur) && rec.dur > maxT) maxT = rec.dur;
+    // The axis ends at the ACTUAL run span (not padded out to a whole day), so present-day tips sit at
+    // the bottom rather than leaving a trailing empty day. `days` still governs how many day bands show.
+    const tMax = Math.max(maxT, dayLen);
+    return { timeMode, days: Math.max(1, Math.ceil(tMax / dayLen)), dayLen, tMax };
+  }
+  // Size the down-facing tree by TIME: it grows one band per day, leaves spread across the width, and a
+  // lineage's branch stops at the day it went extinct. Records without per-mutation timestamps fall back
+  // to sizing by adaptation depth (maxDepth*48 + labelBand) — the pre-timeline behaviour.
   function drawClado(canvas, rec) {
     if (!canvas || !rec) return;
     const root = buildClado(rec);
     let leaves = 0, maxDepth = 0;
     if (root) (function count(n) { leaves += n.leaves.length; maxDepth = Math.max(maxDepth, n.depth); n.children.forEach(count); })(root);
+    const { timeMode, days } = cladoTimeSpan(rec);
     const logical = logicalCanvasSize(canvas);
     const labelBand = leaves > 20 ? 100 : 86;
-    const surface = prepareHiDpiCanvas(canvas, logical.width, clamp(maxDepth*48 + labelBand + 32, 170, 620));
+    const bodyH = timeMode ? days*180 : maxDepth*48;      // a full day gets ~180px of vertical room
+    const surface = prepareHiDpiCanvas(canvas, logical.width, clamp(bodyH + labelBand + 32, 170, 900));
     renderClado(surface.context, surface.width, surface.height, rec);
   }
   function renderClado(g, W, H, rec) {
@@ -4362,9 +4577,10 @@
       g.textAlign = "center"; g.fillText("no lineages recorded for this run", W/2, H/2);
       return;
     }
-    // peak population of each lineage, so a band that briefly existed doesn't look like a dynasty
-    const peak = {};
-    for (const s of (rec.hist || [])) { const b = sampleBuckets(s); for (const k in b) peak[k] = Math.max(peak[k] || 0, b[k]); }
+    // peak population (colour rep) and cumulative abundance (summed over every sample ≈ total cell-time
+    // the lineage produced) of each lineage — the latter feeds the per-lineage bar chart at the foot.
+    const peak = {}, cum = {};
+    for (const s of (rec.hist || [])) { const b = sampleBuckets(s); for (const k in b) { peak[k] = Math.max(peak[k] || 0, b[k]); cum[k] = (cum[k] || 0) + (b[k] || 0); } }
     // tips: one per terminal lineage, in depth-first order so branches fan downward without crossing
     const tips = [];
     let maxDepth = 0;
@@ -4374,7 +4590,8 @@
       for (const c of n.children) walk(c);
     })(root);
     if (!tips.length) return;
-    const padL = 22, padR = 84, padT = 18, labelBand = tips.length > 20 ? 98 : 82;
+    const { timeMode, days, dayLen, tMax } = cladoTimeSpan(rec);
+    const padL = timeMode ? 42 : 22, padR = 84, padT = 18, labelBand = tips.length > 20 ? 98 : 82;
     const tipY = H - labelBand, treeBottom = tipY - 10;
     const span = Math.max(1, W - padL - padR);
     tips.forEach((tip, i) => { tip.x = padL + span*(i + 0.5)/tips.length; });
@@ -4386,7 +4603,36 @@
       const range = xs.length ? [Math.min(...xs), Math.max(...xs)] : [W/2, W/2];
       rangeOf.set(n, range); xOf.set(n, (range[0] + range[1])/2);
     })(root);
+    // VERTICAL AXIS = TIME. Each mutation splits its branch off at the DAY it happened, and the tree
+    // grows downward as the run ages. nodeT is clamped monotic (a child never sits above its parent),
+    // which is what keeps the elbows planar. Records with no timestamps fall back to adaptation depth.
+    const nodeT = new Map();
+    (function timeOf(n, pt) {
+      const et = (n.t != null && isFinite(n.t)) ? n.t : null;
+      nodeT.set(n, n.depth === 0 ? 0 : (et != null ? Math.max(pt, et) : pt));
+      for (const c of n.children) timeOf(c, nodeT.get(n));
+    })(root, 0);
+    const yTime = (t) => padT + (tMax ? clamp(t/tMax, 0, 1) : 0)*(treeBottom - padT);
     const yAt = (depth) => padT + (maxDepth ? depth/maxDepth : 0)*(treeBottom - padT);
+    const yNode = (n) => timeMode ? yTime(nodeT.get(n)) : yAt(n.depth);
+    // when each lineage was LAST seen alive (its demise). Samples have no clock of their own — the log
+    // spans [0, dur], so sample i sits at i/(n-1)·dur, exactly how the community chart places them.
+    const hist = rec.hist || [], present = (isFinite(rec.dur) && rec.dur > 0) ? rec.dur : tMax;
+    const sampleTime = (i) => hist.length <= 1 ? present : (i/(hist.length - 1))*present;
+    const lastSeen = {};
+    hist.forEach((s, i) => { const b = sampleBuckets(s), t = sampleTime(i); for (const k in b) if (b[k] > 0) lastSeen[k] = t; });
+    // day bands: a faint fill + a "Day N" label per day, drawn as fills (never strokes) so the tree's
+    // branches stay the only stroked edges the planarity guard sees.
+    if (timeMode) {
+      g.font = "10px 'Trebuchet MS', sans-serif"; g.textBaseline = "top";
+      for (let d = 0; d < days; d++) {
+        const y0 = yTime(d*dayLen), y1 = yTime((d + 1)*dayLen);
+        if (d % 2) { g.fillStyle = "rgba(160,210,225,.05)"; g.fillRect(0, y0, W, y1 - y0); }
+        g.fillStyle = "rgba(190,225,238,.14)"; g.fillRect(0, y0, W, 1);
+        g.fillStyle = "rgba(200,230,240,.5)"; g.textAlign = "left"; g.fillText("Day " + (d + 1), 4, y0 + 3);
+      }
+      g.textBaseline = "middle";
+    }
     // COLOUR HAS TO TRACK THE CHART. The leaves already carry their lineage's colour (the same
     // levelColor the stacked bands use), but the BRANCHES were drawn in the colour of the GENE that
     // split them — a second, unrelated colour system — so nothing traced from a band on the chart
@@ -4415,9 +4661,9 @@
     // out in DFS order, so the tree stays planar. tests/clado-planarity-contracts.mjs guards this.
     g.lineWidth = 2; g.font = "9.5px 'Trebuchet MS', sans-serif";
     (function draw(n) {
-      const x0 = xOf.get(n), y0 = yAt(n.depth);
+      const x0 = xOf.get(n), y0 = yNode(n);
       for (const c of n.children) {
-        const x1 = xOf.get(c), y1 = yAt(c.depth);
+        const x1 = xOf.get(c), y1 = yNode(c);
         g.strokeStyle = lineColor(c);                   // the LINEAGE's colour — same as its band
         g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y0); g.lineTo(x1, y1); g.stroke();
         g.fillStyle = c.color || "#9fc3ba";             // the GENE's colour, for the label only
@@ -4426,25 +4672,41 @@
       }
     })(root);
     // the founder: the genome everything here descends from — one carbohydrase
-    const rx = xOf.get(root), ry = yAt(0);
+    const rx = xOf.get(root), ry = yNode(root);
     g.fillStyle = RESOURCES[2].color;
     g.beginPath(); g.arc(rx, ry, 4, 0, TAU); g.fill();
     g.font = "bold 9.5px 'Trebuchet MS', sans-serif"; g.textAlign = "center"; g.fillText("C1", rx, ry - 10);
-    // Terminal lineages align along the bottom. A thin colored continuation connects a lineage that
-    // stopped adapting early to its present-day tip without pretending another mutation occurred.
-    g.font = "10.5px 'Trebuchet MS', sans-serif";
+    // Each terminal lineage continues down its own column until it goes EXTINCT — the branch simply
+    // stops on that day (capped with a dagger), instead of pretending the lineage lived to the end. A
+    // lineage still present in the final sample runs to the bottom and gets a band swatch. Below the
+    // axis, a bar chart gives each lineage's log(cumulative cells) on a shared baseline — how much that
+    // branch ever produced, comparable at a glance (a rare flicker sits far below a lasting dynasty).
+    let maxCum = 1; for (const tip of tips) maxCum = Math.max(maxCum, cum[tip.key] || 0);
+    const barBase = H - 12, barMaxH = Math.max(10, labelBand - 24), barW = clamp(span/tips.length*0.62, 2, 12);
+    g.fillStyle = "rgba(190,225,238,.14)"; g.fillRect(padL, barBase, span, 1); // bar-chart baseline
     for (const tip of tips) {
-      const xn = xOf.get(tip.node), yn = yAt(tip.node.depth), x = tip.x;
+      const xn = xOf.get(tip.node), yn = yNode(tip.node), x = tip.x;
       const mask = tip.key >> 9, tier = tip.key & 511, col = levelColor(mask, tier);
+      const seen = lastSeen[tip.key];
+      const extinct = timeMode && seen != null && seen < present - 1e-6;
+      const endT = (seen != null) ? Math.max(nodeT.get(tip.node), seen) : present; // exact demise time (or the present)
+      const endY = timeMode ? yTime(endT) : tipY;             // stop at the demise moment (or run to the present)
       g.strokeStyle = col; g.lineWidth = 1.5;
-      g.beginPath(); g.moveTo(xn, yn); g.lineTo(x, yn); g.lineTo(x, tipY); g.stroke(); // elbow: over at the node's depth, then straight down its own column
-      g.fillStyle = col; g.fillRect(x - 5, tipY - 5, 10, 10); // same color as its band on the chart above
-      g.fillStyle = "rgba(215,245,238,.85)";
-      const n = peak[tip.key] || 0;
-      g.save(); g.translate(x + 4, tipY + 9); g.rotate(Math.PI*0.34); g.textAlign = "left";
-      g.fillText(`${n} cell${n === 1 ? "" : "s"} at peak` + (tip.node.depth ? "" : " · founder, never adapted"), 0, 0);
-      g.restore();
+      g.beginPath(); g.moveTo(xn, yn); g.lineTo(x, yn); g.lineTo(x, endY); g.stroke(); // elbow: over at the node's depth, then straight down its own column
+      if (extinct) {                                          // demise marker (filled, never stroked → planarity-safe)
+        g.fillStyle = col; g.beginPath(); g.arc(x, endY, 3.5, 0, TAU); g.fill();
+        g.fillStyle = "#08161a"; g.font = "bold 9px 'Trebuchet MS', sans-serif"; g.textAlign = "center"; g.textBaseline = "middle";
+        g.fillText("†", x, endY + 0.5);
+      } else {
+        g.fillStyle = col; g.fillRect(x - 5, endY - 5, 10, 10); // still present at the end
+      }
+      // per-lineage bar: log(cumulative cells) on the shared baseline
+      const c = cum[tip.key] || 0;
+      const barH = c > 0 ? Math.max(2, (Math.log(c + 1)/Math.log(maxCum + 1))*barMaxH) : 0;
+      g.fillStyle = col; g.fillRect(x - barW/2, barBase - barH, barW, barH);
     }
+    g.fillStyle = "rgba(200,230,240,.5)"; g.font = "9px 'Trebuchet MS', sans-serif";
+    g.textAlign = "left"; g.textBaseline = "bottom"; g.fillText("log cumulative cells", 4, H - 3);
   }
   // Hovering a COLORED BAND on a run chart: that band is one lineage (a trait mask at an adaptation
   // level), so show that lineage's own genome — which is the whole point of the colors.
@@ -4980,6 +5242,8 @@
   if (el.helpBtn) el.helpBtn.addEventListener("click", showHelp);
   [el.sciBtn, el.sciBtn2, el.sciBtn3].forEach((b) => b && b.addEventListener("click", showScience));
   if (el.sciBack) el.sciBack.addEventListener("click", hideScience);
+  if (el.scenariosBtn) el.scenariosBtn.addEventListener("click", showScenarioPicker);
+  if (el.scenarioBack) el.scenarioBack.addEventListener("click", () => el.scenarioPicker && el.scenarioPicker.classList.add("hidden"));
   if (el.sciBody) el.sciBody.querySelectorAll("a").forEach((a) => { a.target = "_blank"; a.rel = "noopener"; }); // Wikipedia opens in a new tab
   if (el.helpBtn2) el.helpBtn2.addEventListener("click", showHelp);
   if (el.helpBtn3) el.helpBtn3.addEventListener("click", showHelp);
@@ -5326,9 +5590,319 @@
   }
   // TUNE_VALIDATOR_END
 
+  // SCENARIO_VALIDATOR_START — pure, data-only validator for #28 scenario JSON. Executed directly by a
+  // Node test (it needs only the TUNE_VALIDATOR block above it). A scenario is UNTRUSTED content: it may
+  // set environment/organism parameters but can never introduce code or a new game verb. Validation is
+  // ATOMIC — any violation rejects the whole scenario and the caller falls back to the stock ocean.
+  //
+  // env overrides are restricted to this whitelist (a subset of the tuning paths). Hard safety caps
+  // (maxCount / safetyMax / maxCells / nutrient.maxCount) and cosmetic device knobs are deliberately
+  // absent, so a scenario cannot raise a ceiling or reach into the touch UI. Setting anything off-list
+  // rejects rather than being silently dropped — an off-list path is a hallucination signal.
+  const SCENARIO_ENV_WHITELIST = new Set([
+    "day.lengthSec", "day.startHour", "day.latitude", "day.dayOfYear",
+    "diel.tempBase", "diel.tempAmp", "diel.tempLag", "diel.foodFloor", "diel.grazeNight",
+    "diel.twilight", "diel.q10", "diel.q10RefC",
+    "substrate.count", "substrate.sizeMin", "substrate.sizeMax", "substrate.lifeMin", "substrate.lifeMax",
+    "predator.count", "predator.senseRange", "predator.chaseSpeed", "predator.wanderSpeed",
+    "predator.mealEnergy", "predator.metabolism", "predator.resistStep", "predator.resistMax",
+    "predator.reproEnergy", "predator.reproCooldown",
+    "phage.greenCount", "phage.goldCount", "phage.hostTolerance", "phage.adsorbBase",
+    "phage.life.0", "phage.life.1", "phage.latent.0", "phage.latent.1", "phage.burst.0", "phage.burst.1",
+    "cell.startEnergy", "cell.divideThreshold", "enzyme.life", "enzyme.maxRadius",
+    "toxin.life", "toxin.maxRadius", "eps.lifePerLevel", "eps.radius",
+  ]);
+  const SCENARIO_PRIMITIVES = new Set(["enzyme0", "enzyme1", "enzyme2", "chemotaxis", "antibiotic", "eps", "crispr", "twitching"]);
+  const SCENARIO_SHAPES = new Set(["aggregate", "ellipse", "shard"]);
+  const SCENARIO_DIFFICULTY = new Set(["easy", "normal", "hard", "extreme"]);
+  const SCENARIO_GENE_MAX = 12; // upper bound for authored genome levels (well above the natural tier ceiling)
+  function scEnvAllowed(path) { return SCENARIO_ENV_WHITELIST.has(path) || /^diel\.water(?:Night|Day)\.[0-2]$/.test(path); }
+  function scStr(v, max) {
+    if (typeof v !== "string") return null;
+    const clean = v.replace(/[ -<>]/g, "");
+    return clean.length > max ? clean.slice(0, max) : clean;
+  }
+  const scColor = (v) => (typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v)) ? v : null;
+  const scClone = (v) => JSON.parse(JSON.stringify(v));
+  function scDeepSet(root, dotted, value) { const p = dotted.split("."); let o = root; for (let i = 0; i < p.length - 1; i++) o = o[p[i]] || (o[p[i]] = {}); o[p[p.length - 1]] = value; }
+  // Every TERMINAL leaf of an override tree (unlike tuneValidatorLeaves, which skips non-numbers) — so a
+  // string/boolean where a number belongs is caught and rejected rather than silently ignored.
+  function scEnvLeaves(obj, path, out) {
+    for (const k of Object.keys(obj)) {
+      const v = obj[k], p = path ? path + "." + k : k;
+      if (v && typeof v === "object") scEnvLeaves(v, p, out); else out.push([p, v]);
+    }
+    return out;
+  }
+  const scReject = (reason) => ({ ok: false, reason });
+  // Reject any object carrying a key outside `allowed` — an unexpected field is a hallucination signal,
+  // never silently ignored.
+  function scOnlyKeys(obj, allowed, where) {
+    for (const k of Object.keys(obj)) if (!allowed.has(k)) return `unknown ${where} field "${k}"`;
+    return null;
+  }
+  // Clamp a scenario-supplied number into its tuning rule (integers rounded). Returns null if not finite.
+  function scClampToRule(path, v) {
+    if (!Number.isFinite(v)) return null;
+    const rule = tuneRule(path, v);
+    let out = Math.max(rule.min, Math.min(rule.max, v));
+    if (rule.integer) out = Math.round(out);
+    return out;
+  }
+  function validateScenario(raw, defaults) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return scReject("scenario is not an object");
+    if (raw.schema !== "bacteria-scenario") return scReject("wrong schema tag");
+    if (raw.version !== 1) return scReject("unsupported schema version");
+    const topErr = scOnlyKeys(raw, new Set(["schema", "version", "meta", "env", "resources", "particles", "actions", "organisms", "column"]), "top-level");
+    if (topErr) return scReject(topErr);
+
+    // ---- meta (required) ----
+    const m = raw.meta;
+    if (!m || typeof m !== "object") return scReject("missing meta");
+    const metaErr = scOnlyKeys(m, new Set(["title", "date", "lesson", "citation", "difficulty", "realWorldBasis", "authorNote"]), "meta");
+    if (metaErr) return scReject(metaErr);
+    const title = scStr(m.title, 80), lesson = scStr(m.lesson, 1200);
+    if (!title) return scReject("meta.title required");
+    if (!lesson) return scReject("meta.lesson required");
+    if (typeof m.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(m.date)) return scReject("meta.date must be YYYY-MM-DD");
+    if (m.difficulty != null && !SCENARIO_DIFFICULTY.has(m.difficulty)) return scReject("meta.difficulty invalid");
+    const meta = { title, date: m.date, lesson,
+      citation: scStr(m.citation, 300) || "", difficulty: m.difficulty || "normal",
+      realWorldBasis: scStr(m.realWorldBasis, 120) || "", authorNote: scStr(m.authorNote, 300) || "" };
+
+    // ---- env → CFG candidate (clamped, then validateTuningConfig has the final word) ----
+    const cfg = scClone(defaults);
+    if (raw.env != null) {
+      if (typeof raw.env !== "object" || Array.isArray(raw.env)) return scReject("env must be an object");
+      for (const [key, value] of scEnvLeaves(raw.env, "", [])) {
+        if (!scEnvAllowed(key)) return scReject(`env path "${key}" is not settable by a scenario`);
+        if (typeof value !== "number" || !Number.isFinite(value)) return scReject(`env.${key} must be a finite number`);
+        scDeepSet(cfg, key, scClampToRule(key, value));
+      }
+    }
+    const cfgErrors = validateTuningConfig(cfg, defaults);
+    if (cfgErrors.length) return scReject("env violates tuning rules: " + cfgErrors[0]);
+
+    // ---- resources: cosmetic re-skin of the 3 fixed classes, by index ----
+    const resources = [];
+    if (raw.resources != null) {
+      if (!Array.isArray(raw.resources) || raw.resources.length > 3) return scReject("resources must be an array of at most 3");
+      const seen = new Set();
+      for (const r of raw.resources) {
+        if (!r || typeof r !== "object") return scReject("resource entry must be an object");
+        const rErr = scOnlyKeys(r, new Set(["index", "label", "enzymeLabel", "color"]), "resource");
+        if (rErr) return scReject(rErr);
+        if (!Number.isInteger(r.index) || r.index < 0 || r.index > 2) return scReject("resource.index must be 0..2");
+        if (seen.has(r.index)) return scReject("duplicate resource.index");
+        seen.add(r.index);
+        const color = r.color == null ? null : scColor(r.color);
+        if (r.color != null && !color) return scReject("resource.color must be #rrggbb");
+        resources.push({ index: r.index, label: scStr(r.label, 40) || "", enzymeLabel: scStr(r.enzymeLabel, 40) || "", color });
+      }
+    }
+
+    // ---- actions: re-weight/re-skin the FIXED primitive pool (no new verbs) ----
+    const actions = {};
+    if (raw.actions != null) {
+      if (typeof raw.actions !== "object" || Array.isArray(raw.actions)) return scReject("actions must be an object");
+      let anyPositive = false;
+      for (const key of Object.keys(raw.actions)) {
+        if (!SCENARIO_PRIMITIVES.has(key)) return scReject(`unknown action primitive "${key}"`);
+        const a = raw.actions[key];
+        if (!a || typeof a !== "object") return scReject("action entry must be an object");
+        const aErr = scOnlyKeys(a, new Set(["label", "color", "weight"]), "action");
+        if (aErr) return scReject(aErr);
+        let weight = 1;
+        if (a.weight != null) { if (!Number.isFinite(a.weight) || a.weight < 0 || a.weight > 10) return scReject("action.weight must be 0..10"); weight = a.weight; }
+        if (weight > 0) anyPositive = true;
+        const color = a.color == null ? null : scColor(a.color);
+        if (a.color != null && !color) return scReject("action.color must be #rrggbb");
+        actions[key] = { label: scStr(a.label, 40) || "", color, weight };
+      }
+      if (Object.keys(actions).length && !anyPositive) return scReject("at least one action must have a positive weight");
+    }
+
+    // ---- particles: scenario substrate types built from the 3 fixed classes ----
+    const particles = {};
+    if (raw.particles != null) {
+      if (typeof raw.particles !== "object" || Array.isArray(raw.particles)) return scReject("particles must be an object");
+      for (const id of Object.keys(raw.particles)) {
+        const p = raw.particles[id];
+        if (!p || typeof p !== "object") return scReject("particle entry must be an object");
+        const pErr = scOnlyKeys(p, new Set(["label", "mix", "rMin", "rMax", "shape", "squash", "weight"]), "particle");
+        if (pErr) return scReject(pErr);
+        if (!Array.isArray(p.mix) || p.mix.length !== 3) return scReject("particle.mix must have length 3");
+        let sum = 0; for (const x of p.mix) { if (!Number.isFinite(x) || x < 0) return scReject("particle.mix entries must be >= 0"); sum += x; }
+        if (sum <= 0) return scReject("particle.mix cannot be all zero");
+        const mix = p.mix.map((x) => x / sum);
+        if (p.shape != null && !SCENARIO_SHAPES.has(p.shape)) return scReject("particle.shape invalid");
+        const rMin = scClampToRule("substrate.sizeMin", Number.isFinite(p.rMin) ? p.rMin : defaults.substrate.sizeMin);
+        const rMax = scClampToRule("substrate.sizeMax", Number.isFinite(p.rMax) ? p.rMax : defaults.substrate.sizeMax);
+        if (rMin == null || rMax == null || rMin > rMax) return scReject("particle rMin/rMax invalid");
+        let weight = 1;
+        if (p.weight != null) { if (!Number.isFinite(p.weight) || p.weight < 0 || p.weight > 10) return scReject("particle.weight must be 0..10"); weight = p.weight; }
+        let squash = null;
+        if (p.squash != null) { if (!Number.isFinite(p.squash) || p.squash < 0.1 || p.squash > 1) return scReject("particle.squash must be 0.1..1"); squash = p.squash; }
+        particles[scStr(id, 40) || "p"] = { label: scStr(p.label, 40) || "", mix, rMin, rMax, shape: p.shape || "aggregate", squash, weight };
+      }
+    }
+
+    // ---- organisms.cells: immigrant/founder genome bundles (data only; genome fields are the exact
+    //      mutable fields the engine already carries — no new field can be smuggled in) ----
+    const organisms = { cells: [] };
+    if (raw.organisms != null) {
+      if (typeof raw.organisms !== "object" || Array.isArray(raw.organisms)) return scReject("organisms must be an object");
+      // v1 applies cells + blooms (immigrant/founder genome bundles). Grazer/phage tuning is done through
+      // env.predator.* / env.phage.* (already whitelisted), so a dedicated grazers/phages block is not yet
+      // a thing — reject it rather than accept-and-ignore, which would be a silent lie to the author.
+      const oErr = scOnlyKeys(raw.organisms, new Set(["cells", "blooms"]), "organisms");
+      if (oErr) return scReject(oErr);
+      const cellList = [].concat(raw.organisms.cells || [], (raw.organisms.blooms || []).map((b) => Object.assign({ bloom: true }, b)));
+      const ids = new Set();
+      for (const c of cellList) {
+        if (!c || typeof c !== "object") return scReject("organism cell must be an object");
+        const cErr = scOnlyKeys(c, new Set(["id", "label", "color", "genome", "immigrateWeight", "bloom"]), "organism cell");
+        if (cErr) return scReject(cErr);
+        const id = scStr(c.id, 40);
+        if (!id || ids.has(id)) return scReject("organism cell id missing or duplicated");
+        ids.add(id);
+        const g = c.genome || {};
+        const gErr = scOnlyKeys(g, new Set(["enzLvl", "chemoLevel", "antibiotic", "eps", "crispr", "twitching", "chemolithotroph"]), "genome");
+        if (gErr) return scReject(gErr);
+        const enz = g.enzLvl;
+        if (!Array.isArray(enz) || enz.length !== 3) return scReject("genome.enzLvl must have length 3");
+        const gi = (v) => Number.isInteger(v) && v >= 0 && v <= SCENARIO_GENE_MAX;
+        for (const e of enz) if (!gi(e)) return scReject("genome.enzLvl entries out of range");
+        for (const k of ["chemoLevel", "antibiotic", "eps"]) if (g[k] != null && !gi(g[k])) return scReject(`genome.${k} out of range`);
+        let iw = 1;
+        if (c.immigrateWeight != null) { if (!Number.isFinite(c.immigrateWeight) || c.immigrateWeight < 0 || c.immigrateWeight > 10) return scReject("immigrateWeight must be 0..10"); iw = c.immigrateWeight; }
+        const color = c.color == null ? null : scColor(c.color);
+        if (c.color != null && !color) return scReject("organism cell color must be #rrggbb");
+        organisms.cells.push({ id, label: scStr(c.label, 40) || "", color,
+          genome: { enzLvl: [enz[0], enz[1], enz[2]], chemoLevel: g.chemoLevel|0, antibiotic: g.antibiotic|0,
+            eps: g.eps|0, crispr: g.crispr === true, twitching: g.twitching === true, chemolithotroph: g.chemolithotroph === true },
+          immigrateWeight: iw, bloom: c.bloom === true });
+      }
+    }
+
+    // ---- column: #30 vertical placeholder — validated so a malformed block still triggers the whole-
+    //      scenario fallback, but NOT applied in v1 (enabled must be false until #30 turns it on) ----
+    let column = null;
+    if (raw.column != null) {
+      const col = raw.column;
+      if (!col || typeof col !== "object") return scReject("column must be an object");
+      const colErr = scOnlyKeys(col, new Set(["enabled", "layers", "thermocline", "chemical"]), "column");
+      if (colErr) return scReject(colErr);
+      if (col.enabled != null && typeof col.enabled !== "boolean") return scReject("column.enabled must be boolean");
+      // optional chemical-energy field for chemolithotroph scenarios
+      if (col.chemical != null) {
+        const cf = col.chemical;
+        if (!cf || typeof cf !== "object") return scReject("column.chemical must be an object");
+        const cfErr = scOnlyKeys(cf, new Set(["peakDepth", "spread", "strength", "color"]), "column.chemical");
+        if (cfErr) return scReject(cfErr);
+        const band = (v, lo, hi, name) => v == null || (Number.isFinite(v) && v >= lo && v <= hi) ? null : `column.chemical ${name} out of range`;
+        for (const chk of [band(cf.peakDepth, 0, 1, "peakDepth"), band(cf.spread, 0.01, 1, "spread"), band(cf.strength, 0, 1, "strength")]) if (chk) return scReject(chk);
+        if (cf.color != null && !scColor(cf.color)) return scReject("column.chemical.color must be #rrggbb");
+      }
+      if (col.layers != null) {
+        if (!Array.isArray(col.layers) || !col.layers.length) return scReject("column.layers must be a non-empty array");
+        let prevDepth = -Infinity;
+        for (const L of col.layers) {
+          if (!L || typeof L !== "object") return scReject("column layer must be an object");
+          const lErr = scOnlyKeys(L, new Set(["depth", "tempC", "salinity", "light", "nutrient"]), "column layer");
+          if (lErr) return scReject(lErr);
+          if (!Number.isFinite(L.depth) || L.depth < 0 || L.depth <= prevDepth) return scReject("column layer depths must be ascending and >= 0");
+          prevDepth = L.depth;
+          const band = (v, lo, hi, name) => v == null || (Number.isFinite(v) && v >= lo && v <= hi) ? null : `column layer ${name} out of range`;
+          for (const chk of [band(L.tempC, -10, 50, "tempC"), band(L.salinity, 0, 60, "salinity"), band(L.light, 0, 1, "light"), band(L.nutrient, 0, 1, "nutrient")]) if (chk) return scReject(chk);
+        }
+      }
+      column = scClone(col); column.enabled = col.enabled === true;
+    }
+
+    return { ok: true, scenario: { meta, cfg, resources, particles, actions, organisms, column } };
+  }
+  // SCENARIO_VALIDATOR_END
+
   const cloneCfg = (value) => JSON.parse(JSON.stringify(value));
   function commitCfg(candidate) {
     for (const leaf of cfgLeaves(candidate)) cfgSet(CFG, leaf.path, leaf.path.reduce((value, key) => value[key], candidate));
+  }
+
+  // ---- #28 scenario loader ---------------------------------------------------------------------
+  // Fetch a scenario by id from the scenario repo, parse + validate it (data-only, atomic). Returns the
+  // normalized scenario, or null on any failure — a bad scenario silently yields the default ocean.
+  async function fetchScenario(id) {
+    if (!/^[a-z0-9-]{1,64}$/.test(id)) return null;              // ids are slugs; never interpolate anything else into the URL
+    try {
+      const res = await fetch(`${SCENARIO_BASE}/scenarios/${id}.json`, { cache: "no-cache" });
+      if (!res.ok) { console.warn("[scenario] fetch failed:", res.status); return null; }
+      const result = validateScenario(await res.json(), CFG_DEFAULTS);
+      if (!result.ok) { console.warn("[scenario] rejected:", result.reason); return null; }
+      return result.scenario;
+    } catch (e) { console.warn("[scenario] load error:", e && e.message); return null; }
+  }
+  // Apply a validated scenario for the whole session: overlay its env onto CFG and re-skin the resources
+  // (colour + enzyme name). The adaptation-pool re-weighting reads activeScenario directly at draw time.
+  function applyScenario(sc) {
+    if (!sc) return;
+    commitCfg(sc.cfg);
+    for (const r of sc.resources || []) {
+      if (r.color) RESOURCES[r.index].color = r.color;
+      if (r.enzymeLabel) RESOURCES[r.index].enzyme = r.enzymeLabel;
+      if (r.label) RESOURCES[r.index].label = r.label;
+    }
+    useScenarioParticles(sc);   // swap the substrate set (oil droplets/tarballs vs marine snow)
+    // #30: a scenario can turn the sea into a stratified water column (clamped Y + depth fields).
+    if (sc.column && sc.column.enabled) { columnState = deriveColumn(sc.column); setWorldYMode(false); }
+    else { columnState = null; setWorldYMode(true); }
+    activeScenario = sc;
+  }
+  // Swap the title screen's lede for the scenario's mini-lesson card.
+  function showScenarioIntro(sc) {
+    if (!el.scenarioCard) return;
+    if (el.scenarioTitle) el.scenarioTitle.textContent = sc.meta.title;
+    if (el.scenarioBasis) el.scenarioBasis.textContent = sc.meta.realWorldBasis || sc.meta.difficulty || "";
+    if (el.scenarioLesson) el.scenarioLesson.textContent = sc.meta.lesson;
+    if (el.scenarioCite) el.scenarioCite.textContent = sc.meta.citation || "";
+    el.scenarioCard.classList.remove("hidden");
+    if (el.defaultLede) el.defaultLede.classList.add("hidden");
+    if (el.startBtn) el.startBtn.textContent = "Begin scenario";
+  }
+  // Boot hook: if the URL names a scenario, load + validate it and stage its intro. Applied at start().
+  async function bootScenario() {
+    let id = null;
+    try { id = new URLSearchParams(location.search).get("scenario"); } catch (e) { return; }
+    if (!id) return;
+    const sc = await fetchScenario(id);
+    if (sc) { applyScenario(sc); showScenarioIntro(sc); }  // apply now so the title-screen ocean previews it; newGame() re-seeds on Begin
+  }
+  // The in-game scenario picker: list the library's index.json; a click reloads into that scenario.
+  async function showScenarioPicker() {
+    if (!el.scenarioPicker) return;
+    el.scenarioPicker.classList.remove("hidden");
+    if (!el.scenarioList) return;
+    el.scenarioList.innerHTML = "<p class='empty'>Loading the scenario library…</p>";
+    let list = [];
+    try {
+      const res = await fetch(`${SCENARIO_BASE}/index.json`, { cache: "no-cache" });
+      if (res.ok) { const idx = await res.json(); if (idx && Array.isArray(idx.scenarios)) list = idx.scenarios; }
+    } catch (e) { /* offline / unreachable → show the empty state below */ }
+    el.scenarioList.innerHTML = "";
+    if (!list.length) { el.scenarioList.innerHTML = "<p class='empty'>No scenarios available right now.</p>"; return; }
+    const seen = new Set();
+    for (const s of list) {
+      if (!s || !/^[a-z0-9-]{1,64}$/.test(String(s.id || ""))) continue; // ignore malformed index rows
+      if (seen.has(s.id)) continue; seen.add(s.id); // a stale/duplicate index row never shows twice
+      const b = document.createElement("button");
+      b.className = "scenario-item";
+      const t = document.createElement("span"); t.className = "st"; t.textContent = String(s.title || s.id);
+      const sub = document.createElement("span"); sub.className = "sb";
+      sub.textContent = [s.realWorldBasis, s.difficulty].filter(Boolean).join(" · ");
+      b.appendChild(t); b.appendChild(sub);
+      b.addEventListener("click", () => { location.href = location.pathname + "?scenario=" + encodeURIComponent(s.id); });
+      el.scenarioList.appendChild(b);
+    }
   }
 
   // log mapping: pos 0…TUNE_STEPS ↔ value in [def/10, def*10], with the default at
@@ -5820,6 +6394,7 @@
   // Keep an autonomous, uncaptioned ocean alive behind the title menu.
   startDemo();
   refreshCheckpointCard();
+  bootScenario();   // #28: if ?scenario=<id> is present, fetch + validate it and stage its intro
   // Clicking the water (rather than a menu button) also means "let me play".
   if (el.title) el.title.addEventListener("click", (e) => { if (e.target === el.title && demo) start(); });
   requestAnimationFrame(frame);

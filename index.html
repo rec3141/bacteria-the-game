@@ -108,7 +108,7 @@
   .zoomctl button:hover { background: rgba(87,224,192,.12); }
 
   /* Overlays (title / death / win) */
-  #help { z-index: 20; }  /* always above the pause / death screens it can be opened from */
+  #help, #science, #scenarioPicker { z-index: 20; }  /* always above the title/pause/death screens they open from */
   /* #title carries a z-index now (it has to sit over the attract-mode sim), which would otherwise
      let it paint OVER the screens opened from it — DOM order alone no longer decides. */
   #scores, #over { z-index: 12; }
@@ -329,6 +329,20 @@
   .titlecard .tag { margin: 6px 0 0; font-size: 14px; letter-spacing: 4px;
     text-transform: uppercase; opacity: .65; }
   #title .lede { max-width: 480px; text-align: center; line-height: 1.6; opacity: .92; font-size: 15px; }
+  #scenarioCard { max-width: 520px; text-align: center; }
+  #scenarioCard h2 { margin: 2px 0 10px; font-size: 24px; color: #eafff8; letter-spacing: .5px; }
+  .scenario-eyebrow { margin: 0; font-size: 12px; letter-spacing: 3px; text-transform: uppercase; color: #57e0c0; }
+  #scenarioCard .lede { max-width: 520px; opacity: .96; }
+  .scenario-cite { margin: 12px 0 0; font-size: 12px; opacity: .6; font-style: italic; }
+  #submitDoiLink { margin-top: 4px; font-size: 12px; color: #57e0c0; opacity: .75; text-decoration: none; }
+  #submitDoiLink:hover { opacity: 1; text-decoration: underline; }
+  #scenarioList { width: 100%; max-width: 560px; display: flex; flex-direction: column; gap: 10px; margin: 8px 0 18px; }
+  .scenario-item { text-align: left; background: rgba(87,224,192,.06); border: 1px solid rgba(87,224,192,.25);
+    border-radius: 10px; padding: 12px 14px; cursor: pointer; color: inherit; font: inherit; transition: background .12s, border-color .12s; }
+  .scenario-item:hover { background: rgba(87,224,192,.14); border-color: rgba(87,224,192,.6); }
+  .scenario-item .st { display: block; font-size: 16px; color: #eafff8; font-weight: 600; }
+  .scenario-item .sb { display: block; font-size: 12px; opacity: .7; margin-top: 3px; }
+  #scenarioList .empty { opacity: .6; font-style: italic; }
   #savedContinueBtn {
     display: flex; flex-direction: column; align-items: center; gap: 3px;
     width: min(430px, 92%); padding: 11px 22px; border-radius: 15px;
@@ -702,7 +716,13 @@
         <h1>Bacteria!</h1>
         <p class="tag">forage · evolve · divide · endure</p>
       </div>
-      <p class="lede"><b>One tiny cell. One living ocean.</b> Chase food, capture new genes, evade hungry protists, and multiply into a lineage strong enough to survive from sunrise to sunrise.</p>
+      <p class="lede" id="defaultLede"><b>One tiny cell. One living ocean.</b> Chase food, capture new genes, evade hungry protists, and multiply into a lineage strong enough to survive from sunrise to sunrise.</p>
+      <div id="scenarioCard" class="hidden">
+        <p class="scenario-eyebrow">Scenario · <span id="scenarioBasis"></span></p>
+        <h2 id="scenarioTitle"></h2>
+        <p class="lede" id="scenarioLesson"></p>
+        <p class="scenario-cite" id="scenarioCite"></p>
+      </div>
       <button id="savedContinueBtn" class="hidden" type="button">
         <strong id="savedContinueTitle">Continue to day 2</strong>
         <span id="savedContinueMeta"></span>
@@ -711,10 +731,12 @@
         <button id="startBtn">Begin life</button>
         <button id="tutorialBtn" class="ghost">Tutorial</button>
         <button id="scoresBtn" class="ghost">High scores</button>
+        <button id="scenariosBtn" class="ghost">Scenarios</button>
         <button id="helpBtn" class="ghost">How to play</button>
         <button id="sciBtn" class="ghost">The science</button>
       </div>
       <button id="updateBtn" class="hidden">↻ Update to latest version</button>
+      <a id="submitDoiLink" href="https://github.com/rec3141/bacteria-the-game-scenarios/issues/new?title=DOI+submission&body=Paste+a+DOI+below+to+turn+a+paper+into+a+playable+level.%0A%0ADOI%3A+" target="_blank" rel="noopener noreferrer">🔬 Turn a paper into a level →</a>
     </div>
     <div id="help" class="screen hidden">
       <h1 id="helpTitle">How to play</h1>
@@ -835,6 +857,12 @@
         <p style="color:var(--muted);font-size:13px;">The real ocean is messier and stranger than any game can be — but if this has made a bacterium, a virus or the microbial loop feel a little more alive, it has done its job. Now go and evolve something.</p>
       </div>
       <button id="sciBack" class="ghost">Back</button>
+    </div>
+    <div id="scenarioPicker" class="screen hidden">
+      <h1>Scenarios</h1>
+      <p class="lede">Each scenario is a real microbial-ecology situation — a distinct ocean with its own lesson, environment, and enzymes. New ones are generated daily.</p>
+      <div id="scenarioList"></div>
+      <button id="scenarioBack" class="ghost">Back</button>
     </div>
     <div id="feedback" class="screen hidden">
       <h1>Feedback</h1>

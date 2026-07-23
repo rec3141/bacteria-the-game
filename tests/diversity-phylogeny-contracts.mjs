@@ -49,16 +49,24 @@ assert.match(game, /richness S[\s\S]*Shannon H′[\s\S]*title = "lineage diversi
   "the live diversity view must identify both indices with the analysis-chart colors");
 
 const clado = game.slice(game.indexOf("function drawClado"), game.indexOf("function showLineageCircos"));
-assert.match(clado, /maxDepth\*48 \+ labelBand/,
-  "a down-facing phylogeny must size its height from adaptation depth");
+assert.match(clado, /timeMode \? days\*180 : maxDepth\*48/,
+  "the phylogeny must size its height per DAY when timed, falling back to adaptation depth");
 assert.match(clado, /tips\.forEach\(\(tip, i\) => \{ tip\.x =/,
   "terminal lineages must spread horizontally along the bottom");
+assert.match(clado, /const yTime = \(t\) => padT \+ \(tMax \? clamp\(t\/tMax/,
+  "the vertical axis must map run-clock time downward (day by day)");
 assert.match(clado, /const yAt = \(depth\) => padT \+ \(maxDepth \? depth\/maxDepth/,
-  "adaptation depth must increase down the vertical axis");
-assert.match(clado, /const x0 = xOf\.get\(n\), y0 = yAt\(n\.depth\)[\s\S]*const x1 = xOf\.get\(c\), y1 = yAt\(c\.depth\)/,
-  "ancestral branches must descend from parent depth to child depth");
-assert.match(clado, /g\.moveTo\(xn, yn\); g\.lineTo\(x, yn\); g\.lineTo\(x, tipY\)/,
-  "each terminal lineage must elbow down to the shared tip row (planar, no crossing diagonals)");
+  "a record without timestamps must still fall back to an adaptation-depth axis");
+assert.match(clado, /const yNode = \(n\) => timeMode \? yTime\(nodeT\.get\(n\)\) : yAt\(n\.depth\)/,
+  "node vertical position must be time when timed, depth otherwise");
+assert.match(clado, /const x0 = xOf\.get\(n\), y0 = yNode\(n\)[\s\S]*const x1 = xOf\.get\(c\), y1 = yNode\(c\)/,
+  "ancestral branches must descend from parent time to child time");
+assert.match(clado, /g\.moveTo\(xn, yn\); g\.lineTo\(x, yn\); g\.lineTo\(x, endY\)/,
+  "each terminal lineage must elbow down to its demise day (planar, no crossing diagonals)");
+assert.match(clado, /const extinct = timeMode && seen != null && seen < present - 1e-6/,
+  "a lineage absent from the final sample must be marked extinct");
+assert.match(clado, /fillText\("Day " \+ \(d \+ 1\)/,
+  "the vertical axis must be labelled by day");
 assert.doesNotMatch(clado, /const xAt = \(d\)/,
   "the old right-facing depth axis must not return");
 

@@ -29,10 +29,12 @@ function makeMockCtx() {
 const factory = new Function(`
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   const TAU = Math.PI * 2;
+  const CFG = { day: { lengthSec: 240 } };            // the time axis reads day length from here
   const CHART = { surface: "#06181d" };
   const RESOURCES = [{ color: "#efd98a" }, { color: "#ef8b3c" }, { color: "#6fa8ff" }];
   const levelColor = () => "#ffffff";                 // colour never moves a point
   const sampleBuckets = (s) => (s && s.buckets) || {}; // peak only tints/labels; geometry ignores it
+  const clockAt = (sec) => String(Math.round(sec || 0)); // demise label; content is irrelevant to geometry
   ${block}
   return { buildClado, renderClado };
 `);
@@ -75,6 +77,30 @@ function randomRun() {
   return { lineages, hist: [] };
 }
 
+// Time-mode runs: every mutation carries an increasing run-clock `t`, and a history with per-day buckets
+// makes some lineages go extinct mid-run (dropping out of later samples). This exercises the DAY axis —
+// branch nodes placed by time, tips stopping at their demise day — which must ALSO stay planar.
+function randomTimedRun() {
+  const lineages = {}, n = 3 + (rnd() * 18 | 0);
+  const keys = [];
+  const dayLen = 240, spanDays = 1 + (rnd() * 3 | 0);
+  for (let i = 0; i < n; i++) {
+    const tree = []; let t = rnd() * 20;
+    for (let d = 0, depth = rnd() * 6 | 0; d < depth; d++) { t += rnd() * dayLen * spanDays / 3; tree.push({ abbr: GENES[rnd() * GENES.length | 0], t }); }
+    const key = rnd() * 4096 | 0;
+    lineages[key] = { tree }; keys.push(key);
+  }
+  // history: a handful of samples across the run; each lineage present until a random cutoff (extinction)
+  const hist = [], nSamp = 4 + (rnd() * 8 | 0);
+  const cutoff = {}; for (const k of keys) cutoff[k] = rnd() * dayLen * spanDays;
+  for (let s = 0; s < nSamp; s++) {
+    const t = (s + 1) / nSamp * dayLen * spanDays, buckets = {};
+    for (const k of keys) if (t <= cutoff[k]) buckets[k] = 1 + (rnd() * 40 | 0);
+    hist.push({ t, buckets });
+  }
+  return { lineages, hist, dur: dayLen * spanDays };   // samples have no clock of their own; time = index/(n-1)·dur
+}
+
 // A hand-built worst case: a founder that never adapted, plus two clades — the classic tangle from #27.
 const handCrafted = { hist: [], lineages: {
   10: { tree: [] },                                                       // founder, never adapted
@@ -88,7 +114,7 @@ const handCrafted = { hist: [], lineages: {
 } };
 
 let totalSegments = 0, checked = 0;
-for (const rec of [handCrafted, ...Array.from({ length: 400 }, randomRun)]) {
+for (const rec of [handCrafted, ...Array.from({ length: 400 }, randomRun), ...Array.from({ length: 400 }, randomTimedRun)]) {
   const g = makeMockCtx();
   renderClado(g, 1000, 640, rec);
   const c = crossings(g.segments);
@@ -102,7 +128,7 @@ assert.ok(totalSegments > 0, "the planarity check must actually have drawn some 
 // and tip continuations must be elbows (a horizontal step then a vertical drop), not single diagonals.
 assert.match(block, /moveTo\(x0, y0\); g\.lineTo\(x1, y0\); g\.lineTo\(x1, y1\)/,
   "branches must be drawn as elbows (across at the parent depth, then straight down to the child)");
-assert.match(block, /moveTo\(xn, yn\); g\.lineTo\(x, yn\); g\.lineTo\(x, tipY\)/,
-  "tip continuations must be drawn as elbows (across at the node depth, then straight down its own column)");
+assert.match(block, /moveTo\(xn, yn\); g\.lineTo\(x, yn\); g\.lineTo\(x, endY\)/,
+  "tip continuations must be drawn as elbows (across at the node depth, then straight down to its demise day)");
 
 console.log(`Cladogram planarity OK: ${checked} runs, ${totalSegments} edges, zero crossings; elbow routing enforced.`);
