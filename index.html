@@ -334,8 +334,10 @@
   .scenario-eyebrow { margin: 0; font-size: 12px; letter-spacing: 3px; text-transform: uppercase; color: #57e0c0; }
   #scenarioCard .lede { max-width: 520px; opacity: .96; }
   .scenario-cite { margin: 12px 0 0; font-size: 12px; opacity: .6; font-style: italic; }
-  #submitDoiLink { margin-top: 4px; font-size: 12px; color: #57e0c0; opacity: .75; text-decoration: none; }
-  #submitDoiLink:hover { opacity: 1; text-decoration: underline; }
+  /* Looks like the link it replaced, but it opens the in-game form rather than sending anyone to GitHub. */
+  #submitDoiBtn.linkish { margin-top: 4px; font-size: 12px; color: #57e0c0; opacity: .75; text-decoration: none;
+    background: none; border: 0; padding: 0; font-family: inherit; cursor: pointer; }
+  #submitDoiBtn.linkish:hover { opacity: 1; text-decoration: underline; }
   #scenarioList { width: 100%; max-width: 560px; display: flex; flex-direction: column; gap: 10px; margin: 8px 0 18px; }
   .scenario-item { text-align: left; background: rgba(87,224,192,.06); border: 1px solid rgba(87,224,192,.25);
     border-radius: 10px; padding: 12px 14px; cursor: pointer; color: inherit; font: inherit; transition: background .12s, border-color .12s; }
@@ -401,6 +403,20 @@
   #fbStatus { min-height: 18px; font-size: 13px; }
   #fbStatus.ok { color: var(--accent); }
   #fbStatus.warn { color: #ffd24a; }
+
+  /* Submit a paper — the account-free replacement for the old "open a GitHub issue" link */
+  #doiSubmit { z-index: 30; justify-content: flex-start; padding-top: 26px; gap: 10px; background: #04141a; }
+  #doiSubmit .fbhint { max-width: 520px; font-size: 13px; color: var(--muted); }
+  #doiInput { width: min(560px, 92%); background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.18);
+    color: #eafff8; border-radius: 8px; padding: 10px 12px; font: inherit; font-size: 14px; outline: none; }
+  #doiInput:focus { border-color: var(--accent); }
+  #doiExamples { width: min(560px, 92%); font-size: 12px; color: var(--muted); text-align: left; }
+  #doiExamples code { background: rgba(0,0,0,.3); border-radius: 5px; padding: 1px 5px; font-size: 11px; }
+  #doiStatus { min-height: 18px; font-size: 13px; max-width: 560px; }
+  #doiStatus.ok { color: var(--accent); }
+  #doiStatus.warn { color: #ffd24a; }
+  /* Appears only once the level actually exists, so it can never offer a link to nothing. */
+  #doiPlayBtn { margin-top: 2px; }
 
   /* Science overlay */
   #science { z-index: 20; justify-content: flex-start; padding-top: 22px; gap: 10px; background: #04141a; }
@@ -736,7 +752,7 @@
         <button id="sciBtn" class="ghost">The science</button>
       </div>
       <button id="updateBtn" class="hidden">↻ Update to latest version</button>
-      <a id="submitDoiLink" href="https://github.com/rec3141/bacteria-the-game-scenarios/issues/new?title=DOI+submission&body=Paste+a+DOI+below+to+turn+a+paper+into+a+playable+level.%0A%0ADOI%3A+" target="_blank" rel="noopener noreferrer">🔬 Turn a paper into a level →</a>
+      <button id="submitDoiBtn" class="linkish">🔬 Turn a paper into a level →</button>
     </div>
     <div id="help" class="screen hidden">
       <h1 id="helpTitle">How to play</h1>
@@ -875,6 +891,21 @@
       <div class="btnrow">
         <button id="fbSend">Send</button>
         <button id="fbCancel" class="ghost">Cancel</button>
+      </div>
+    </div>
+    <div id="doiSubmit" class="screen hidden">
+      <h1>Turn a paper into a level</h1>
+      <p class="fbhint">Paste the DOI of a microbiology paper and it becomes a playable ocean — its organisms,
+        its chemistry, its lesson. No account needed. It usually takes about twenty minutes to build,
+        and then it lives in Scenarios for everyone.</p>
+      <input id="doiInput" placeholder="10.1126/science.1261359" autocomplete="off" spellcheck="false" inputmode="text">
+      <div id="doiExamples">A DOI starts with <code>10.</code> and is on the paper's first page or in its URL —
+        <code>doi.org/10.1038/nature12352</code> works too.</div>
+      <div id="doiStatus" aria-live="polite"></div>
+      <button id="doiPlayBtn" class="hidden">Play it now</button>
+      <div class="btnrow">
+        <button id="doiSend">Submit</button>
+        <button id="doiCancel" class="ghost">Cancel</button>
       </div>
     </div>
     <div id="over" class="screen hidden">

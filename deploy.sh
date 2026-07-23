@@ -27,8 +27,8 @@ REMOTE="$REMOTE_HOST:$REMOTE_DIR/"
 SITE_URL="${SITE_URL:-https://bacteria.cryomics.org/}"
 # .htaccess ships too: without it DreamHost caches .js for 30 DAYS, which pins a phone to
 # whichever build it happened to download first. A new docroot must never inherit that.
-FILES=(index.html game.js scores.php score_schema.php feedback.php README.md Bacteria.swf assets
-       manifest.webmanifest icon.svg .htaccess)
+FILES=(index.html game.js scores.php score_schema.php feedback.php scenario-request.php README.md
+       Bacteria.swf assets manifest.webmanifest icon.svg .htaccess)
 
 FORCE=0
 [ "${1:-}" = "--force" ] && FORCE=1
@@ -65,7 +65,7 @@ known_blobs() {   # every version of $1 this repo has ever held, plus the one on
 unstamp() { LC_ALL=C sed -E 's/([0-9a-f]{7,40}|dev)-[0-9]{10}/__BUILD__/g'; }
 is_stamped() { [ "$1" = "index.html" ] || [ "$1" = "game.js" ]; }
 DRIFT=""
-for f in index.html game.js scores.php score_schema.php feedback.php README.md manifest.webmanifest icon.svg Bacteria.swf .htaccess; do
+for f in index.html game.js scores.php score_schema.php feedback.php scenario-request.php README.md manifest.webmanifest icon.svg Bacteria.swf .htaccess; do
   [ -f "$f" ] || continue
   # `|| true` on the REMOTE side: a missing file makes cat exit non-zero, and with
   # `set -o pipefail` that would kill the whole deploy — which is exactly what happens
@@ -127,6 +127,18 @@ echo "==> ensure the leaderboard store exists and is writable by PHP"
 # follows $REMOTE_DIR: each target owns its own scores.json, so deploying the northinglab
 # copy can't reach over and touch the cryomics leaderboard
 ssh "$REMOTE_HOST" "cd ~/'$REMOTE_DIR' && { [ -f scores.json ] || printf '[]' > scores.json; } && chmod 664 scores.json && echo '   scores.json ready'"
+
+echo "==> ensure the scenario request queue exists"
+# scenario-queue.json is PUBLIC on purpose — the scenarios repo's workflow fetches it over https
+# every 15 minutes to find newly submitted papers, and it holds nothing but DOIs and timestamps.
+# scenario-ratelimit.json is the opposite: hashed addresses, blocked from the web in .htaccess,
+# 660 so only PHP reads it.
+ssh "$REMOTE_HOST" "cd ~/'$REMOTE_DIR' \
+  && { [ -f scenario-queue.json ] || printf '{\"schema\":\"bacteria-scenario-queue\",\"version\":1,\"requests\":[]}' > scenario-queue.json; } \
+  && chmod 664 scenario-queue.json \
+  && { [ -f scenario-ratelimit.json ] || printf '{}' > scenario-ratelimit.json; } \
+  && chmod 660 scenario-ratelimit.json \
+  && echo '   scenario-queue.json ready'"
 
 echo "==> prune old backups (keep the 10 most recent FOR THIS TARGET)"
 # scoped to this target's slug — otherwise a busy site's backups would evict the other's

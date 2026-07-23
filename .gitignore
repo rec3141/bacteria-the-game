@@ -3,8 +3,11 @@
 .DS_Store
 *.log
 
-# server-generated leaderboard store (never commit runtime data)
+# server-generated stores (never commit runtime data)
 scores.json
+feedback.json
+scenario-queue.json
+scenario-ratelimit.json
 
 # old saved WordPress page wrapper (superseded by index.html)
 game.html

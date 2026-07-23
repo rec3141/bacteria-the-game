@@ -402,6 +402,10 @@
     defaultLede: document.getElementById("defaultLede"), scenarioCard: document.getElementById("scenarioCard"),
     scenarioTitle: document.getElementById("scenarioTitle"), scenarioBasis: document.getElementById("scenarioBasis"),
     scenarioLesson: document.getElementById("scenarioLesson"), scenarioCite: document.getElementById("scenarioCite"),
+    submitDoiBtn: document.getElementById("submitDoiBtn"), doiSubmit: document.getElementById("doiSubmit"),
+    doiInput: document.getElementById("doiInput"), doiStatus: document.getElementById("doiStatus"),
+    doiSend: document.getElementById("doiSend"), doiCancel: document.getElementById("doiCancel"),
+    doiPlayBtn: document.getElementById("doiPlayBtn"),
     savedContinueBtn: document.getElementById("savedContinueBtn"),
     savedContinueTitle: document.getElementById("savedContinueTitle"),
     savedContinueMeta: document.getElementById("savedContinueMeta"), saveStatus: document.getElementById("saveStatus"),
@@ -690,6 +694,7 @@
     if (adminOpen && e.key === "/" && el.adminSearch) { e.preventDefault(); el.adminSearch.focus(); el.adminSearch.select(); return; }
     if (e.key === "Escape") { if (adminOpen) { toggleAdmin(false); return; } if (sciOpen) { hideScience(); return; } if (helpOpen) { hideHelp(); return; }
       if (el.feedback && !el.feedback.classList.contains("hidden")) { hideFeedback(); return; }
+      if (el.doiSubmit && !el.doiSubmit.classList.contains("hidden")) { hideDoiSubmit(); return; }
       if (demo && demo.watch) { endTutorial(); return; }   // leave the tutorial, back to the menu
       if (!(state && state.demo)) togglePause(); return; }
     if (e.key.toLowerCase() === "m") { cycleAudio(); return; } // cycle: all on → music off → effects off → muted
@@ -4998,6 +5003,90 @@
         if (el.fbStatus) { el.fbStatus.textContent = "Couldn't reach the server — your text is still here, try again in a moment."; el.fbStatus.className = "warn"; }
       });
   }
+  // SUBMIT A PAPER. This used to be a link to GitHub's new-issue form, which asked someone who just
+  // wanted to see their favourite paper as a level to go make an account first — the same bad trade
+  // feedback.php already refuses for bug reports. Now it posts to our own scenario-request.php, which
+  // appends the DOI to a queue that a workflow in the scenarios repo polls every 15 minutes. Nothing
+  // here talks to GitHub, and no credential lives on our server; see that file's header for why.
+  const SCENARIO_REQUEST_URL = "scenario-request.php";
+  const DOI_RE = /^10\.\d{4,9}\/\S+$/;                       // mirrors scripts/doi-id.mjs
+  const cleanDoi = (s) => String(s || "").trim().replace(/^https?:\/\/(dx\.)?doi\.org\//i, "");
+  // Build + raw.githubusercontent's cache put the level roughly 20 minutes out, so give up well after
+  // that rather than leaving a tab fetching forever.
+  const DOI_POLL_MS = 20000, DOI_POLL_LIMIT_MS = 30 * 60 * 1000;
+  let doiPollTimer = null;
+
+  function doiStatus(msg, cls) {
+    if (!el.doiStatus) return;
+    el.doiStatus.textContent = msg;
+    el.doiStatus.className = cls || "";
+  }
+  function stopDoiPoll() { if (doiPollTimer) { clearTimeout(doiPollTimer); doiPollTimer = null; } }
+  function showDoiSubmit() {
+    if (!el.doiSubmit) return;
+    doiStatus("");
+    if (el.doiSend) el.doiSend.disabled = false;
+    if (el.doiPlayBtn) el.doiPlayBtn.classList.add("hidden");
+    el.doiSubmit.classList.remove("hidden");
+    if (el.doiInput) el.doiInput.focus();
+  }
+  function hideDoiSubmit() {
+    stopDoiPoll();                                            // no background fetching once it's closed
+    if (el.doiSubmit) el.doiSubmit.classList.add("hidden");
+  }
+  // Watch for the level to appear in the library. The id came from the server rather than being
+  // derived here, so this can't drift from what the generator will actually name the file.
+  function pollForScenario(id, startedAt) {
+    stopDoiPoll();
+    if (Date.now() - startedAt > DOI_POLL_LIMIT_MS) {
+      doiStatus("Still building — it'll turn up in Scenarios when it's ready.", "");
+      return;
+    }
+    doiPollTimer = setTimeout(() => {
+      fetch(`${SCENARIO_BASE}/scenarios/${encodeURIComponent(id)}.json`, { cache: "no-cache" })
+        .then((r) => {
+          if (!r.ok) { pollForScenario(id, startedAt); return; }
+          doiStatus("Your level is ready. 🦠", "ok");
+          if (el.doiPlayBtn) {
+            el.doiPlayBtn.classList.remove("hidden");
+            el.doiPlayBtn.onclick = () => { location.href = location.pathname + "?scenario=" + encodeURIComponent(id); };
+          }
+        })
+        .catch(() => pollForScenario(id, startedAt));          // offline for a moment: just keep waiting
+    }, DOI_POLL_MS);
+  }
+  function sendDoiRequest() {
+    if (!el.doiInput) return;
+    const doi = cleanDoi(el.doiInput.value);
+    // Check it here as well as on the server so a typo comes back instantly instead of in a round trip.
+    if (!DOI_RE.test(doi)) {
+      doiStatus("That doesn't look like a DOI. They look like 10.1126/science.1261359 — check the paper's first page.", "warn");
+      return;
+    }
+    if (el.doiSend) el.doiSend.disabled = true;
+    if (el.doiPlayBtn) el.doiPlayBtn.classList.add("hidden");
+    doiStatus("Sending…", "");
+    fetch(SCENARIO_REQUEST_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ doi }) })
+      .then((r) => r.json().then((body) => ({ ok: r.ok, body })))
+      .then(({ ok, body }) => {
+        if (!ok || !body || !body.ok) {
+          // The endpoint's refusals are written to be read by a person (bad DOI, daily limit), so show
+          // what it said rather than a generic failure.
+          if (el.doiSend) el.doiSend.disabled = false;
+          doiStatus((body && body.error) || "Couldn't queue that one — try again in a moment.", "warn");
+          return;
+        }
+        doiStatus(body.queued
+          ? "Queued! Your paper is being turned into a level — about twenty minutes. You can close this; it'll appear in Scenarios."
+          : "That paper is already on its way — it'll appear in Scenarios shortly.", "ok");
+        if (body.id) pollForScenario(body.id, Date.now());
+      })
+      .catch(() => {
+        if (el.doiSend) el.doiSend.disabled = false;
+        doiStatus("Couldn't reach the server — your DOI is still here, try again in a moment.", "warn");
+      });
+  }
+
   let helpOpen = false, sciOpen = false;
   // The day's real-time length is a tunable knob, so the help screen must not hardcode it — it used
   // to promise "one hour per real minute", which stopped being true the moment day.lengthSec moved.
@@ -6294,6 +6383,11 @@
   if (el.feedbackBtn2) el.feedbackBtn2.addEventListener("click", showFeedback);
   if (el.fbSend) el.fbSend.addEventListener("click", sendFeedback);
   if (el.fbCancel) el.fbCancel.addEventListener("click", hideFeedback);
+  if (el.submitDoiBtn) el.submitDoiBtn.addEventListener("click", showDoiSubmit);
+  if (el.doiSend) el.doiSend.addEventListener("click", sendDoiRequest);
+  if (el.doiCancel) el.doiCancel.addEventListener("click", hideDoiSubmit);
+  // Enter submits: pasting a DOI and hitting return is the whole interaction.
+  if (el.doiInput) el.doiInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); sendDoiRequest(); } });
   if (el.menuBtn) el.menuBtn.addEventListener("click", toTitle);
   if (el.menuBtn2) el.menuBtn2.addEventListener("click", toTitle);
   if (el.demoPlay) el.demoPlay.addEventListener("click", start);

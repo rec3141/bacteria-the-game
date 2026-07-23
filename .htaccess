@@ -31,3 +31,26 @@
     Deny from all
   </IfModule>
 </Files>
+
+# Rate-limit state for scenario-request.php: hashed visitor addresses, so it stays off the web for
+# the same reason feedback.json does. Note the file NEXT to it, scenario-queue.json, is deliberately
+# NOT blocked — the scenarios repo's workflow fetches that one over https to find newly submitted
+# papers, and blocking it would silently stop every player submission from ever being built.
+<Files "scenario-ratelimit.json">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</Files>
+
+# The queue is fetched cross-origin by GitHub Actions and must never be served stale, or a submission
+# sits invisible until whatever cached copy expires.
+<Files "scenario-queue.json">
+  <IfModule mod_headers.c>
+    Header set Cache-Control "no-store"
+    Header set Access-Control-Allow-Origin "*"
+  </IfModule>
+</Files>
