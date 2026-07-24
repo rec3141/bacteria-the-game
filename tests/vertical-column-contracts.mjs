@@ -174,12 +174,21 @@ assert.equal(dhTorus({ y: 1000, eps: 0 }), 0, "no vertical drift in the classic 
   assert.ok(prev < solidity(makeTerrainChunk(layer({ porosity: 0 }), 450, 300, [], 1)) * 0.75,
     "high porosity must open real voids, not just roughen the surface");
 
-  // identical for every player: a scenario is a shared level, and two runs on different seabeds are
-  // not comparable
+  // The shaping function is PURE — a given seed always yields the same chunk. The lab depends on that
+  // to preview faithfully, and it is what lets the per-run randomization below stay honest.
   const a = makeTerrainChunk(layer({ roughness: 0.6, porosity: 0.4 }), 450, 300, [], 1);
   const b = makeTerrainChunk(layer({ roughness: 0.6, porosity: 0.4 }), 450, 300, [], 1);
-  assert.ok(a.grid.every((v, i) => v === b.grid[i]), "terrain must be deterministic, never Math.random()");
-  assert.ok(!/Math\.random\(\)/.test(grab("makeTerrainChunk")), "terrain generation must not use Math.random()");
+  assert.ok(a.grid.every((v, i) => v === b.grid[i]), "same seed must yield the same chunk");
+  assert.ok(!/Math\.random\(\)/.test(grab("makeTerrainChunk")), "the shaping function itself must stay pure");
+  // a different seed genuinely rearranges the layout
+  const c = makeTerrainChunk(layer({ roughness: 0.6, porosity: 0.4 }), 450, 300, [], 987654);
+  assert.ok(a.grid.some((v, i) => v !== c.grid[i]), "a different seed must move the pores and spires");
+
+  // Per-run randomization: each real run draws a fresh terrain seed, folded into every layer, so the
+  // seabed is a surprise. The scenario's env is untouched, so difficulty is not — only the layout moves.
+  const build = grab("buildTerrain");
+  assert.match(build, /seed: \(terrainRunSeed \+ \(li \+ 1\) \* 9973\)/, "each layer must fold in the per-run seed");
+  assert.match(game, /terrainRunSeed = isDemo \? 0 : /, "a real run draws a fresh seed; the demo background stays stable");
 
   // it is scenery: no resource content, and it collides even for a twitching cell that may crawl
   // through food particles
@@ -210,7 +219,6 @@ assert.equal(dhTorus({ y: 1000, eps: 0 }), 0, "no vertical drift in the classic 
     "a terrain chunk's border continues into its neighbour and must shade as buried, not exposed");
   assert.ok(!/\? d\[k-n\] : 0/.test(depth), "the hard-coded 0 for out-of-bounds must be gone");
 
-  const build = grab("buildTerrain");
   // solidFill still exists (it suppresses pores in fully-buried mass) and is exercised directly above;
   // it is simply no longer fed by an out-of-world row.
   assert.match(grab("makeTerrainChunk"), /layer\.porosity > 0 && !solidFill/,

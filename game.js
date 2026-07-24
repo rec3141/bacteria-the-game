@@ -883,6 +883,13 @@
   // it appearing in the food accounting, the diel particle budget, the resource-balance floor, the
   // sinking sweep and the lifecycle respawn, none of which mean anything for a slab of ice.
   let terrain = [];
+  // Re-rolled each run so the seabed is a surprise every time, not the same fixed layout. The shaping
+  // functions stay PURE — deterministic in their seed — so the lab still previews faithfully and two
+  // chunks with the same seed still match; only which seed a run draws changes. The scenario's ENV
+  // (food, grazers, temperature) is untouched, so difficulty is unchanged: only the pore-and-spire
+  // arrangement varies, which is scenery, not the challenge. 0 during the demo, so the attract-mode
+  // background is stable.
+  let terrainRunSeed = 0;
   let ZOOM = 1; // world magnification — bumped on touch devices so cells aren't tiny on a small screen
   let isTouch = false; // coarse-pointer device → mobile control + HUD layout (minimap top-left, etc.)
   let chartLog = false; // generation-history charts: log vs. linear y-axis (toggled by clicking a chart)
@@ -1271,7 +1278,8 @@
         spireHeight: clamp(raw.spireHeight == null ? 0 : raw.spireHeight, 0, 800),
         spireWidth: clamp(raw.spireWidth == null ? 60 : raw.spireWidth, 10, 400),
         warp: clamp(raw.warp == null ? 0 : raw.warp, 0, 1),
-        seed: (li + 1) * 9973,
+        // per-run seed folded in, so this run's pores and spires sit somewhere new
+        seed: (terrainRunSeed + (li + 1) * 9973) >>> 0,
         label: raw.label || (raw.at === "top" ? "ice" : "sediment"), cy: 0 };
       // Square chunks, tiled across the world AND down through the layer. Square because the particle
       // cache and its draw path assume it; capped because one canvas per chunk and a 2600-wide slab
@@ -1295,7 +1303,7 @@
         for (let i = 0; i < cols; i++) {
           // Outside the world the layer is solid: it is the mass the visible face is attached to, and
           // pores out there would read as holes in a ceiling nobody can reach.
-          const chunk = makeTerrainChunk(layer, (i + 0.5) * side, side, lut, (li + 1) * 9973, false);
+          const chunk = makeTerrainChunk(layer, (i + 0.5) * side, side, lut, layer.seed, false);
           if (chunk) terrain.push(chunk);
         }
       }
@@ -1495,6 +1503,8 @@
     if (isDemo) setWorld(VIEW_W, VIEW_H); else setWorld(WORLD_DEF_W, WORLD_DEF_H);
     setWorldYMode(!columnState);               // #30: torus by default; a column scenario clamps Y into a water column
     // Terrain before the founder: it is solid, so the cell must not be seeded inside the sea floor.
+    // A fresh seed each real run makes the seabed a surprise; the demo keeps a stable background.
+    terrainRunSeed = isDemo ? 0 : (Math.random() * 0x7fffffff) >>> 0;
     buildTerrain(activeScenario && !isDemo ? activeScenario.terrain : null);
     const first = makeCell(WORLD_W/2, WORLD_H/2, CFG.cell.startEnergy, -Math.PI/2, 1);
     // #28: in a scenario the founder carries the first authored archetype's genome (e.g. the alkB oil
