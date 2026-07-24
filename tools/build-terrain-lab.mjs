@@ -29,7 +29,11 @@ function slice(name) {
 
 // The shaping pipeline, verbatim. makeTerrainChunk is the one that matters: it decides what is rock
 // and what is water, and everything the lab shows is that decision rendered.
-const ENGINE = ["terrainHash", "terrainNoise1", "terrainFbm1", "terrainNoise2",
+// terrainScale is not optional: makeTerrainChunk calls it for all three sampling scales, so leaving it
+// out of this list embeds a generator that throws ReferenceError the moment you press Generate. The
+// smoke test below exists because --check only detects DRIFT between the slice and
+// game.js — it happily reported "up to date" while shipping a lab that could not run at all.
+const ENGINE = ["terrainHash", "terrainScale", "terrainNoise1", "terrainFbm1", "terrainNoise2",
                 "terrainSpireLift", "terrainLutFor", "makeTerrainChunk", "surfaceDepth"]
   .map(slice).join("\n\n");
 
@@ -591,6 +595,31 @@ syncInputs();
 render();
 </script>
 `;
+
+// ---- smoke test: the embedded engine must actually RUN ----------------------------------------------
+// Shipping a lab whose generator throws is silent: the page loads, the controls render, and it dies only
+// when someone presses Generate. So execute the slice and demand a chunk. This runs BEFORE the write and
+// before the up-to-date early exit, because an already-written broken lab must fail too — otherwise
+// --check cheerfully reports "up to date" about a page that cannot run.
+{
+  let made;
+  try {
+    const run = new Function(`
+      const WORLD_H = 2000, WORLD_W = 2600, CFG = { grid: { cs: 7 } };
+      const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+      ${ENGINE}
+      return makeTerrainChunk;`)();
+    const layer = { at: "bottom", thickness: 200, cy: 1900, roughness: 0.5, porosity: 0.35, poreSize: 20,
+                    featureSize: 300, spires: 0.3, spireHeight: 90, spireWidth: 80, warp: 0.6, seed: 4242 };
+    made = run(layer, 450, 200, [], layer.seed, false);
+  } catch (e) {
+    console.error(`\n  the embedded generator does not run: ${e.message}`);
+    console.error("  a function it calls is missing from the ENGINE list above.\n");
+    process.exit(1);
+  }
+  if (!made) { console.error("\n  the embedded generator produced no chunk at all\n"); process.exit(1); }
+  console.log("smoke test: embedded generator runs and returns a chunk");
+}
 
 mkdirSync(join(root, "tools"), { recursive: true });
 const out = join(root, "tools", "terrain-lab.html");

@@ -212,6 +212,11 @@ function terrainHash(a, b, seed, px) {
     return ((h ^ (h >>> 16)) >>> 0) / 4294967296;      // → [0,1)
   }
 
+function terrainScale(want) {
+    const cells = Math.max(1, Math.round(WORLD_W / Math.max(1, want)));
+    return { scale: WORLD_W / cells, px: cells };
+  }
+
 function terrainNoise1(x, seed, px) {
     const i = Math.floor(x), f = x - i, s = f * f * (3 - 2 * f);
     return terrainHash(i, 0, seed, px) * (1 - s) + terrainHash(i + 1, 0, seed, px) * s;
