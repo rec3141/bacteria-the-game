@@ -83,8 +83,9 @@ assert.match(game, /state\.calLive\[CAL_PHAGE\] \+= CFG\.cell\.crisprEnergy; sta
   "CRISPR-harvesting a phage credits the phage calorie bucket — the source to watch for a runaway");
 assert.match(game, /mort: state\.mortLive, cin: state\.calLive/,
   "each live sample records calorie intake by source");
-assert.match(game, /if \(mode === 3\) return \(s && s\.cin\) \? s\.cin : \[0,0,0,0,0,0\];/,
-  "the sub-chart reads the 6-source calorie vector in mode 3 (autotrophy is the sixth)");
+assert.match(game, /if \(mode === 3\) return \(s && s\.cin\) \? s\.cin : new Array\(CAL_LABELS\.length\)\.fill\(0\);/,
+  "the sub-chart reads the calorie vector in mode 3, falling back to a full-width zero vector — a " +
+  "fallback narrower than the real vector renders a truncated chart on any sample missing the key");
 // the vector, its colours and its labels must stay the same width, or the legend mislabels the chart
 {
   // to end of line, not to the first "]" — CAL_COLORS contains RESOURCES[0] and friends

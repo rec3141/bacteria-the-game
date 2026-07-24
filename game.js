@@ -2956,8 +2956,8 @@
       state.fullT = state.fullInterval;
       const fs = communitySample();
       state.fullHist.push({ eco: fs.eco, buckets: fs.buckets, sub: subTotals.slice(), p: predators.length, v: greenCount, mort: state.mortFull, cin: state.calFull, lsp: state.lifeFull });
-      state.mortFull = [0, 0, 0, 0];
-      state.calFull = [0, 0, 0, 0, 0];
+      state.mortFull = new Array(MORT_LABELS.length).fill(0);
+      state.calFull = new Array(CAL_LABELS.length).fill(0);   // see the note on the live reset above
       state.lifeFull = new Array(LIFE_BINS).fill(0);
       if (state.fullHist.length > 600) { state.fullHist = state.fullHist.filter((_, i) => i % 2 === 0); state.fullInterval *= 2; }
     }
@@ -4206,9 +4206,11 @@
   const lifeBin = (age) => Math.max(0, Math.min(LIFE_BINS - 1, Math.floor(Math.log2(Math.max(age, LIFE_MIN) / LIFE_MIN))));
   const lifeBinLabel = (b) => { const s = LIFE_MIN * Math.pow(2, b); return s >= 1 ? Math.round(s) + "s" : s + "s"; };
   function subVals(s, mode = subMode) {
-    if (mode === 1) return (s && s.mort) ? s.mort : [0,0,0,0];
-    if (mode === 3) return (s && s.cin) ? s.cin : [0,0,0,0,0,0];   // calories consumed by source
-    return (s && s.sub) ? s.sub : [0,0,0];
+    // Widths derive from the label arrays: a fallback narrower than the vector it stands in for renders a
+    // truncated chart on any sample that lacks the key, which reads as "that source contributed nothing".
+    if (mode === 1) return (s && s.mort) ? s.mort : new Array(MORT_LABELS.length).fill(0);
+    if (mode === 3) return (s && s.cin) ? s.cin : new Array(CAL_LABELS.length).fill(0);   // calories consumed by source
+    return (s && s.sub) ? s.sub : new Array(RESOURCES.length).fill(0);
   }
   function subColors(mode = subMode) { return mode === 1 ? MORT_COLORS : mode === 3 ? CAL_COLORS : RESOURCES.map((r) => r.color); }
   function updateSubLegend() {
