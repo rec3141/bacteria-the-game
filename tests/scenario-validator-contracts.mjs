@@ -12,18 +12,33 @@ const scen = game.match(/\/\/ SCENARIO_VALIDATOR_START[\s\S]*?\/\/ SCENARIO_VALI
 assert.ok(tune && scen, "both validator blocks must be extractable");
 const { validateScenario } = new Function(`${tune}\n${scen}\nreturn { validateScenario };`)();
 
-const defaults = {
-  day: { lengthSec: 240, startHour: 0, latitude: 45, dayOfYear: 172 },
-  diel: { tempBase: 20, tempAmp: 6, tempLag: 0.15, foodFloor: 0.3, grazeNight: 1, twilight: 0.1, q10: 2, q10RefC: 20,
-          waterNight: [5, 20, 30], waterDay: [40, 120, 150] },
-  substrate: { count: 80, sizeMin: 20, sizeMax: 60, lifeMin: 30, lifeMax: 90 },
-  predator: { count: 4, senseRange: 170, chaseSpeed: 42.5, wanderSpeed: 25, mealEnergy: 58, metabolism: 10,
-              resistStep: 0.12, resistMax: 0.85, reproEnergy: 320, reproCooldown: 11, safetyMax: 300 },
-  phage: { greenCount: 18, goldCount: 4, hostTolerance: 2, adsorbBase: 0.3, maxCount: 2500,
-           life: [16, 24], latent: [9, 15], burst: [4, 8] },
-  cell: { startEnergy: 100, divideThreshold: 200, maxEnergy: 260 },
-  enzyme: { life: 6, maxRadius: 40 }, toxin: { life: 4.5, maxRadius: 40 }, eps: { lifePerLevel: 4, radius: 24 },
-};
+// The defaults come out of game.js's own CFG rather than being restated here. A hand-written copy
+// drifts: this one had substrate at count 80 / size 20-60 when the game actually uses 60 / 30-200,
+// so every assertion below was measured against an ocean that does not exist. The identical copy in
+// the scenario repo's defaults.json had drifted in 17 values and was being quoted to the generator
+// as ground truth, which is how scenarios ended up with a fraction of the intended food.
+const cfgStart = game.indexOf("const CFG = {");
+assert.ok(cfgStart >= 0, "CFG must be findable in game.js");
+const defaults = (() => {
+  const open = game.indexOf("{", cfgStart);
+  let depth = 0, i = open, inLine = false, inBlock = false, quote = null;
+  for (; i < game.length; i++) {
+    const c = game[i], n = game[i + 1];
+    if (inLine) { if (c === "\n") inLine = false; continue; }
+    if (inBlock) { if (c === "*" && n === "/") { inBlock = false; i++; } continue; }
+    if (quote) { if (c === "\\") { i++; continue; } if (c === quote) quote = null; continue; }
+    if (c === "/" && n === "/") { inLine = true; i++; continue; }
+    if (c === "/" && n === "*") { inBlock = true; i++; continue; }
+    if (c === '"' || c === "'" || c === "`") { quote = c; continue; }
+    if (c === "{") depth++;
+    else if (c === "}") { depth--; if (depth === 0) { i++; break; } }
+  }
+  return new Function(`return ${game.slice(open, i)};`)();
+})();
+// a guard on the guard: if the shape ever changes, fail loudly rather than test a partial object
+for (const k of ["substrate", "diel", "cell", "predator", "phage", "day"]) {
+  assert.ok(defaults[k] && typeof defaults[k] === "object", `extracted CFG is missing ${k}`);
+}
 
 // A scenario must leave enough food to be survivable. Generated scenarios kept writing real microbial
 // dimensions into substrate.sizeMin/sizeMax — 3-9, 0.4-1.2 — which are RADII IN SCREEN PIXELS
