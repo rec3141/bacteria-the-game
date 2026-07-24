@@ -78,6 +78,37 @@ for (const k of ["substrate", "diel", "cell", "predator", "phage", "day"]) {
   }
 }
 
+// What a scenario may set is now a deny-rule over CFG rather than a hand-kept allow-list. The list
+// had gone stale in the way lists do — it reached 45 of 195 tuning paths, so generated levels could
+// only ever differ in the same handful of knobs. Opening it up is only safe because the rule still
+// resolves each path against the real defaults tree, so nothing invented gets through, and because
+// the ceilings that bound memory and frame time stay closed.
+{
+  const mk = (env) => ({ schema: "bacteria-scenario", version: 1,
+    meta: { title: "T", date: "2026-07-23", lesson: "L" }, env });
+  const accepts = (path, v) => validateScenario(mk({ [path]: v }), defaults).ok;
+
+  for (const [path, v] of [["diel.waterNight.0", 3], ["diel.waterDay.2", 120], ["predator.chaseSpeed", 60],
+                           ["phage.burst.1", 12], ["cell.uptake", 18], ["cycle.protistThrust", 300],
+                           ["enzyme.maxRadius", 30]]) {
+    assert.ok(accepts(path, v), `${path} should be settable — it is expressive and safely bounded`);
+  }
+  // ceilings exist to bound memory and frame time; a scenario raising one is a dead tab, not a level
+  for (const path of ["cell.maxCells", "phage.maxCount", "predator.safetyMax", "predator.immigrateCap",
+                      "phage.greenFloorMax", "phage.seedPerCell"]) {
+    assert.ok(!accepts(path, 999999), `${path} is a hard ceiling and must stay closed to scenarios`);
+  }
+  // device/input knobs and the attract-mode dish are not ecology
+  for (const path of ["touchSpeedScale", "cell.touchRunSecs", "phage.goldCountTouch", "demo.foodScale", "grid.cs"]) {
+    assert.ok(!accepts(path, 2), `${path} is a device/rendering knob, not a scenario's business`);
+  }
+  // the column has its own authored block; setting it twice two ways lets a scenario contradict itself
+  assert.ok(!accepts("column.enabled", 1), "column.* must be set through the column block, not env");
+  // and an invented path must still reject rather than be silently dropped — it is a hallucination signal
+  assert.ok(!accepts("nonsense.invented", 1), "an unknown path must reject");
+  assert.ok(!accepts("substrate.__proto__", 1), "a prototype-shaped path must not resolve");
+}
+
 const base = () => ({
   schema: "bacteria-scenario", version: 1,
   meta: { title: "Deepwater Horizon", date: "2026-07-18", lesson: "Oil-degrading bacteria bloomed on the 2010 plume.", realWorldBasis: "Deepwater Horizon (2010)" },

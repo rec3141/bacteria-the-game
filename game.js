@@ -5465,6 +5465,8 @@
     "cycle.reseedProtists": "Protists seeded when the grazers are wiped out.",
     "cycle.protistThrust": "Swim speed of the protist you steer after a role swap.",
     "cycle.protistEatScore": "Calories scored per bacterium eaten while you're the protist.",
+    "cycle.preyFloor": "While you're the grazer, bacteria keep drifting in until there are at least this many to hunt — the prey population the sea maintains around you.",
+    "cycle.preyEvery": "Seconds between those top-ups of drifting-in prey.",
     "toxin.life": "Seconds the antibiotic cloud lingers.",
     "toxin.maxRadius": "Antibiotic cloud radius at full growth (px).",
     "toxin.growTime": "Seconds the antibiotic cloud takes to reach full size.",
@@ -5691,23 +5693,30 @@
   // set environment/organism parameters but can never introduce code or a new game verb. Validation is
   // ATOMIC — any violation rejects the whole scenario and the caller falls back to the stock ocean.
   //
-  // env overrides are restricted to this whitelist (a subset of the tuning paths). Hard safety caps
-  // (maxCount / safetyMax / maxCells / nutrient.maxCount) and cosmetic device knobs are deliberately
-  // absent, so a scenario cannot raise a ceiling or reach into the touch UI. Setting anything off-list
-  // rejects rather than being silently dropped — an off-list path is a hallucination signal.
-  const SCENARIO_ENV_WHITELIST = new Set([
-    "day.lengthSec", "day.startHour", "day.latitude", "day.dayOfYear",
-    "diel.tempBase", "diel.tempAmp", "diel.tempLag", "diel.foodFloor", "diel.grazeNight",
-    "diel.twilight", "diel.q10", "diel.q10RefC",
-    "substrate.count", "substrate.sizeMin", "substrate.sizeMax", "substrate.lifeMin", "substrate.lifeMax",
-    "predator.count", "predator.senseRange", "predator.chaseSpeed", "predator.wanderSpeed",
-    "predator.mealEnergy", "predator.metabolism", "predator.resistStep", "predator.resistMax",
-    "predator.reproEnergy", "predator.reproCooldown",
-    "phage.greenCount", "phage.goldCount", "phage.hostTolerance", "phage.adsorbBase",
-    "phage.life.0", "phage.life.1", "phage.latent.0", "phage.latent.1", "phage.burst.0", "phage.burst.1",
-    "cell.startEnergy", "cell.divideThreshold", "enzyme.life", "enzyme.maxRadius",
-    "toxin.life", "toxin.maxRadius", "eps.lifePerLevel", "eps.radius",
-  ]);
+  // What a scenario may set is defined by what it may NOT, rather than by a hand-kept list of what it
+  // may. The list version had gone stale in the way a list always does: it named 45 of the 195 tuning
+  // paths, so every generated scenario could only ever differ in the same handful of knobs — same
+  // ocean, different title — while the other 150 (protist behaviour, the whole phage lifecycle, even
+  // the sea's colour) sat unreachable and unmentioned. A new tuning knob was also silently off-limits
+  // to scenarios until someone remembered to add it here, which nobody ever did.
+  //
+  // A path is settable when it names an existing numeric leaf of CFG and is not denied below. That
+  // still rejects anything invented (an off-list path is a hallucination signal, and rejecting is what
+  // makes it visible) while opening up everything that is genuinely expressive.
+  const SCENARIO_ENV_DENY = [
+    // hard resource ceilings — these exist to bound memory and frame time, and a scenario raising one
+    // is the difference between a dense sea and a dead tab
+    /^cell\.maxCells$/, /^phage\.maxCount$/, /^predator\.(safetyMax|immigrateCap)$/,
+    /^phage\.(greenFloorMax|seedPerCell|seedRoundsMax|seedBatch)$/, /^nutrient\.maxCount$/,
+    // device and input concerns: nothing to do with an ecosystem, and not a scenario's business
+    /^touch/, /touchSpeedScale/, /Touch(\.|$)/, /^cell\.touch/,
+    // the attract-mode dish, and the rendering grid — cosmetic/perf, not ecology
+    /^demo\./, /^grid\./,
+    // the water column has its own authored block in the schema; setting it twice, two ways, would let
+    // a scenario contradict itself
+    /^column\./,
+  ];
+  function scEnvDenied(path) { return SCENARIO_ENV_DENY.some((re) => re.test(path)); }
   const SCENARIO_PRIMITIVES = new Set(["enzyme0", "enzyme1", "enzyme2", "chemotaxis", "antibiotic", "eps", "crispr", "twitching"]);
   const SCENARIO_SHAPES = new Set(["aggregate", "ellipse", "shard"]);
   const SCENARIO_DIFFICULTY = new Set(["easy", "normal", "hard", "extreme"]);
@@ -5716,7 +5725,18 @@
   // every hand-authored level (the thinnest is 69%) and far above the 0.02%-3% the generator produced
   // when it wrote particle sizes in micrometres.
   const SCENARIO_MIN_FOOD = 0.5;
-  function scEnvAllowed(path) { return SCENARIO_ENV_WHITELIST.has(path) || /^diel\.water(?:Night|Day)\.[0-2]$/.test(path); }
+  // Settable when it is a real numeric leaf of the defaults and not denied. Resolving against the
+  // defaults tree is what keeps this safe: a scenario cannot introduce a key the game does not already
+  // have, so "not on the deny list" can never mean "anything at all".
+  function scEnvAllowed(path, defaults) {
+    if (scEnvDenied(path)) return false;
+    let node = defaults;
+    for (const part of path.split(".")) {
+      if (node == null || typeof node !== "object") return false;
+      node = Array.isArray(node) ? node[Number(part)] : node[part];
+    }
+    return typeof node === "number" && Number.isFinite(node);
+  }
   function scStr(v, max) {
     if (typeof v !== "string") return null;
     const clean = v.replace(/[\u0000-\u001f<>]/g, "");
@@ -5778,7 +5798,7 @@
     if (raw.env != null) {
       if (typeof raw.env !== "object" || Array.isArray(raw.env)) return scReject("env must be an object");
       for (const [key, value] of scEnvLeaves(raw.env, "", [])) {
-        if (!scEnvAllowed(key)) return scReject(`env path "${key}" is not settable by a scenario`);
+        if (!scEnvAllowed(key, defaults)) return scReject(`env path "${key}" is not settable by a scenario`);
         if (typeof value !== "number" || !Number.isFinite(value)) return scReject(`env.${key} must be a finite number`);
         scDeepSet(cfg, key, scClampToRule(key, value));
       }
