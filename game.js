@@ -219,7 +219,13 @@
       // CHEMOLITHOTROPHY: energy/s a chemolithotroph cell gains at the FULL chemical-field concentration.
       // Chemosynthesizers fix carbon from a dissolved reduced chemical (H2S at a vent, NH3/NO2 in a redox
       // cline) rather than digesting particles — so they feed from the field at their depth, not from food.
-      chemRate: 20 },
+      // Sized against the alternative: cell.uptake is 14/s while actively grazing motes, so the plume
+      // core pays ~4.5/s for standing still, which is a third of ideal feeding but needs no food and
+      // never runs out. That divides a cell about every 24s in the core, marginal at the plume's edge,
+      // and starves outside it — so the field is somewhere you must STAY, which is the whole mechanic.
+      // It was 20, which is more than the best feeding in the game: a plume-dweller divided every 4s
+      // and hit the 10k cell cap inside a minute. A scenario scales this with column.chemical.strength.
+      chemRate: 5 },
     // trophic role-swap: when your whole population dies you flip to the other trophic level
     // instead of a game-over — bacteria extinct → you become a protist (grazer); protists extinct → back to a bacterium.
     cycle: { reseedBacteria: 16, reseedProtists: 4, protistThrust: 240, protistEatScore: 30,
@@ -2291,6 +2297,9 @@
     state.dead = state.dead || [];
     state.dead.push({ enzLvl: c.enzLvl.slice(), chemotaxis: !!c.chemotaxis, chemoLevel: c.chemoLevel || 0,
                       crispr: !!c.crispr, antibiotic: c.antibiotic || 0, twitching: !!c.twitching, eps: c.eps || 0,
+                      // the seed bank is what cysts revive from, so it has to carry the metabolism too —
+                      // otherwise a vent community comes back from its own cysts unable to feed
+                      chemolithotroph: !!c.chemolithotroph,
                       ups: (c.ups || []).slice(0, 512),
                       phylo: (c.phylo || c.ups || []).slice(0, 512) });
     if (state.dead.length > 400) state.dead.shift();   // a rolling bank, not an ever-growing one
@@ -2592,6 +2601,11 @@
     d1.antibiotic = d2.antibiotic = c.antibiotic;
     d1.twitching = d2.twitching = !!c.twitching;
     d1.eps = d2.eps = c.eps || 0;
+    // #30: chemosynthesis is a METABOLISM, so of course it is heritable. Leaving it out made the
+    // mechanic look broken rather than wrong: the founder thrived in its plume for one division, then
+    // both daughters reverted to heterotrophy — with the enzLvl [0,0,1] a chemolithotroph is authored
+    // with, which is next to no digestive ability — and the whole lineage starved within the minute.
+    d1.chemolithotroph = d2.chemolithotroph = !!c.chemolithotroph;
     d1.enzLvl = c.enzLvl.slice(); d2.enzLvl = c.enzLvl.slice();
     d1.ups = d2.ups = c.ups || [];   // the adaptation log is heritable too (shared until one of them adapts)
     d1.phylo = d2.phylo = c.phylo || c.ups || []; // event ancestry survives gain and gene loss alike
@@ -3591,7 +3605,15 @@
       const half = Math.max(50, ch.spread*WORLD_H*2.2);
       const r = parseInt(ch.color.slice(1, 3), 16), gg = parseInt(ch.color.slice(3, 5), 16), bb = parseInt(ch.color.slice(5, 7), 16);
       const grad = ctx.createLinearGradient(0, peakY - half, 0, peakY + half);
-      grad.addColorStop(0, `rgba(${r},${gg},${bb},0)`); grad.addColorStop(0.5, `rgba(${r},${gg},${bb},${0.22*ch.strength})`); grad.addColorStop(1, `rgba(${r},${gg},${bb},0)`);
+      // Track the ACTUAL field: chemAt is a Gaussian, so the band you see is the energy you get. Drawn
+      // as a 3-stop linear ramp it faded evenly across ±790px, which warmed the whole view without ever
+      // showing an edge — and a player who cannot see where the plume ends cannot play the one mechanic
+      // that asks them to stay inside it.
+      for (let i = 0; i <= 10; i++) {
+        const f = i/10, dFrac = (f - 0.5) * 2 * (half/WORLD_H);
+        const a = Math.exp(-(dFrac*dFrac) / (2*ch.spread*ch.spread)) * CHEM_PLUME_ALPHA * ch.strength;
+        grad.addColorStop(f, `rgba(${r},${gg},${bb},${a.toFixed(3)})`);
+      }
       ctx.fillStyle = grad; ctx.fillRect(0, peakY - half, VIEW_W, half*2);
     }
     drawWater(); // ambient background stays unscaled so the corners never go empty
@@ -3684,6 +3706,9 @@
   // particle is re-cached (i.e. when something carved it), which is exactly when the
   // surface moved. Reuses one buffer per particle so carving doesn't churn the heap.
   const GRAIN_MAXD = 14; // deeper than this is all core; clamps the LUT
+  // Opacity of the chemical plume at its core, before the scenario's own strength scales it. It was
+  // 0.22, which put the band ~16 RGB points above the water — technically drawn, practically invisible.
+  const CHEM_PLUME_ALPHA = 0.4;
   function surfaceDepth(p) {
     const n = p.n, N = n*n;
     let d = p.depthBuf;

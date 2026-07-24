@@ -270,3 +270,32 @@ assert.equal(dhTorus({ y: 1000, eps: 0 }), 0, "no vertical drift in the classic 
 }
 
 console.log("Vertical-column contract OK: Y-mode plumbing, no seam wrap, save/restore, phase-2 depth fields, phase-3 buoyancy, and solid porous terrain.");
+
+// ---- chemolithotrophy is a metabolism, and metabolisms are heritable ------------------------------
+// The trait was set on the founder from its archetype but copied nowhere, so the mechanic looked
+// broken rather than wrong: the founder thrived in its plume for one division (~4s), then both
+// daughters reverted to heterotrophy carrying the enzLvl [0,0,1] a chemolithotroph is authored with —
+// almost no digestive ability — and the lineage starved. Three vent/Winogradsky scenarios ship it.
+{
+  const divide = game.slice(game.indexOf("function divide(c)"), game.indexOf("function killCell"));
+  assert.match(divide, /d1\.chemolithotroph = d2\.chemolithotroph = !!c\.chemolithotroph/,
+    "daughters must inherit chemosynthesis, or the lineage loses its metabolism on the first division");
+  // every other heritable trait is copied right beside it; if one is added, it belongs here too
+  for (const trait of ["twitching", "eps", "crispr", "antibiotic", "chemoLevel"]) {
+    assert.ok(divide.includes(`d1.${trait}`), `${trait} must still be inherited`);
+  }
+
+  // the seed bank is what cysts revive from, so it carries the metabolism as well
+  const bank = game.slice(game.indexOf("state.dead.push({"), game.indexOf("if (state.dead.length > 400)"));
+  assert.match(bank, /chemolithotroph: !!c\.chemolithotroph/,
+    "a revived cyst must come back able to feed the way it did");
+  // and the bundle that reads those genomes back must apply it
+  assert.match(game, /c\.chemolithotroph = !!g\.chemolithotroph/, "applyGenomeBundle must restore the trait");
+
+  // Balance: the plume must be worth standing in but not better than the best feeding in the game,
+  // or a chemolithotroph divides faster than anything can eat it and pins the cell cap.
+  const chemRate = Number(game.match(/chemRate: ([\d.]+)/)[1]);
+  const uptake = Number(game.match(/uptake: ([\d.]+)/)[1]);
+  assert.ok(chemRate > 0, "chemosynthesis must actually pay");
+  assert.ok(chemRate < uptake, `standing in a plume (${chemRate}/s) must not beat active feeding (${uptake}/s)`);
+}
