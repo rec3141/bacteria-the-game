@@ -43,4 +43,36 @@ assert.match(minimapDraw, /const used = \[\][\s\S]*?minimapPointBuckets\[key\][\
 assert.doesNotMatch(minimapDraw, /fillRect\(MX\(c\.x\)/,
   "the minimap must not issue one fillRect call per sampled cell");
 
+// ---- column mode: the floor is an edge, not a seam ------------------------------------------------
+// In a water column Y is CLAMPED, so an organism can rest at exactly y === WORLD_H. rebuild() applied
+// the torus modulo regardless, and WORLD_H % WORLD_H === 0 filed it in row 0 — the SURFACE — while
+// query() clamped rows and scanned the floor. Nothing found it. In play that meant holding yourself
+// against the bottom made your own cell vanish: undrawn, unhuntable, uninfectable, until you let go.
+{
+  const W = 2600, H = 2000;
+  const floorGrid = new TorusSpatialGrid(W, H, 64);
+  floorGrid.yWrap = false;
+  const onFloor = { x: 1300, y: H };          // resting exactly on the bottom
+  const nearFloor = { x: 1300, y: H - 3 };    // a whisker above it
+  const atSurface = { x: 1300, y: 0 };
+  floorGrid.rebuild([onFloor, nearFloor, atSurface]);
+
+  const atBottom = floorGrid.query(1300, H, 40, []);
+  assert.ok(atBottom.includes(onFloor), "an organism resting on the floor must be found at the floor");
+  assert.ok(atBottom.includes(nearFloor), "its neighbour a few px up must be found with it");
+  assert.ok(!atBottom.includes(atSurface), "the surface must not answer a query about the floor");
+
+  const atTop = floorGrid.query(1300, 0, 40, []);
+  assert.ok(!atTop.includes(onFloor), "the floor must not be mis-filed at the surface");
+  assert.ok(atTop.includes(atSurface), "the surface organism belongs at the surface");
+
+  // and the torus must keep wrapping: the same two coordinates ARE neighbours when Y is a seam
+  const torusGrid = new TorusSpatialGrid(W, H, 64);
+  torusGrid.yWrap = true;
+  const top = { x: 1300, y: 1 }, bottom = { x: 1300, y: H - 1 };
+  torusGrid.rebuild([top, bottom]);
+  assert.ok(torusGrid.query(1300, 0, 40, []).includes(bottom),
+    "on a torus the bottom edge is still a neighbour of the top");
+}
+
 console.log("Spatial index contracts OK: torus seams, resizing, hot paths, and rendering are indexed.");

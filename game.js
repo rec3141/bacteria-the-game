@@ -797,7 +797,15 @@
       for (const item of items) {
         if ((include && !include(item)) || !Number.isFinite(item.x) || !Number.isFinite(item.y)) continue;
         const x = ((item.x % this.worldWidth) + this.worldWidth) % this.worldWidth;
-        const y = ((item.y % this.worldHeight) + this.worldHeight) % this.worldHeight;
+        // Y wraps only when the world does. In column mode Y is CLAMPED to [0, WORLD_H], and the
+        // modulo used to be applied anyway — so anything resting exactly on the floor (y === WORLD_H)
+        // computed WORLD_H % WORLD_H === 0 and got filed in row 0, the surface. query() clamps rows
+        // correctly in column mode, so it scanned the floor and never found it: hold yourself against
+        // the bottom and your own cell vanished from the screen, from predation checks, from phage
+        // adsorption — everything spatial — until you let go and drifted up a pixel.
+        const y = this.yWrap
+          ? ((item.y % this.worldHeight) + this.worldHeight) % this.worldHeight
+          : Math.min(this.worldHeight, Math.max(0, item.y));
         const col = Math.min(this.cols - 1, Math.floor(x / this.bucketWidth));
         const row = Math.min(this.rows - 1, Math.floor(y / this.bucketHeight));
         this.buckets[row * this.cols + col].push(item);
