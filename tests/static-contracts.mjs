@@ -60,8 +60,10 @@ assert.match(subChartRenderer, /const vals = hist\.map\(\(s\) => subVals\(s, mod
   "the lower chart must render the values recorded at each sample");
 assert.doesNotMatch(subChartRenderer, /run\[k\] \+=|vals\[i\]\[k\] = run\[k\]/,
   "cause-of-mortality samples must not be accumulated a second time by the renderer");
-assert.match(game, /mort: state\.mortLive[\s\S]*?state\.mortLive = \[0, 0, 0, 0\]/,
-  "live mortality counters must reset after each instantaneous sample");
+assert.match(game, /mort: state\.mortLive[\s\S]*?state\.mortLive = new Array\(MORT_LABELS\.length\)\.fill\(0\)/,
+  "live mortality counters must reset after each instantaneous sample — to a width derived from the " +
+  "label array, not a hand-counted literal (a stale literal is what silently dropped autotrophy from " +
+  "the calorie chart: the missing slot went undefined, then NaN, from the second interval onward)");
 assert.match(help, /id="analysisSubChart"[\s\S]*?Cause of mortality[\s\S]*?id="analysisMortChart"/,
   "the completion analysis must show food and mortality as separate charts");
 assert.match(help, /id="detailSubChart"[\s\S]*?Cause of mortality[\s\S]*?id="detailMortChart"/,

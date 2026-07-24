@@ -2940,8 +2940,12 @@
       state.chartT = CHART.interval;
       const s = communitySample();
       state.history.push({ eco: s.eco, buckets: s.buckets, sub: subTotals.slice(), p: predators.length, v: greenCount, mort: state.mortLive, cin: state.calLive, lsp: state.lifeLive });
-      state.mortLive = [0, 0, 0, 0]; // reset the per-interval death tally for the next sample
-      state.calLive = [0, 0, 0, 0, 0]; // reset the per-interval calorie-intake tally too
+      // Reset the per-interval tallies for the next sample. Width is derived from the label arrays, never
+      // written out: this reset was left at 5 when autotrophy became the 6th calorie source, so calLive[5]
+      // was `undefined` from the second interval onward and `undefined + fixed` poisoned the whole series
+      // with NaN. The first sample charted fine, which is exactly what made it hard to see.
+      state.mortLive = new Array(MORT_LABELS.length).fill(0);
+      state.calLive = new Array(CAL_LABELS.length).fill(0);
       state.lifeLive = new Array(LIFE_BINS).fill(0); // reset the per-interval lifespan histogram too
       if (state.history.length > CHART.samples) state.history.shift();
       updateLegend(s.eco, predators.length, greenCount);

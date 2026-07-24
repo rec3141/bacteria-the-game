@@ -95,6 +95,16 @@ assert.match(game, /if \(mode === 3\) return \(s && s\.cin\) \? s\.cin : \[0,0,0
   assert.equal(labels, colors, "every calorie source needs a colour");
   assert.equal(labels, live, "every calorie source needs a slot in the per-interval vector");
 }
+// ...and the per-interval RESET must be the same width as the vector it resets. A hand-written literal
+// here was left at 5 when autotrophy became the 6th source: the first sample charted correctly, then
+// every later interval wrote `undefined + fixed` = NaN into calLive[5] and autotrophy vanished from the
+// chart. Derive the width from the label arrays so the two cannot drift apart again.
+assert.match(game, /state\.mortLive = new Array\(MORT_LABELS\.length\)\.fill\(0\);/,
+  "the mortality tally must reset to exactly as many slots as there are causes of death");
+assert.match(game, /state\.calLive = new Array\(CAL_LABELS\.length\)\.fill\(0\);/,
+  "the calorie tally must reset to exactly as many slots as there are calorie sources");
+assert.doesNotMatch(game, /state\.(mortLive|calLive) = \[0(, ?0)*\];/,
+  "no hand-counted reset literals — that is the bug that hid autotrophy");
 // Records already on the leaderboard carry the old 5-source vector; both normalizers must still take
 // them and pad, or every existing run silently loses its calorie breakdown the day this ships.
 assert.match(game, /scoreClientVector\(value\.cin, 6, 100000000\) \|\| scoreClientVector\(value\.cin, 5, 100000000\)/,
