@@ -165,7 +165,7 @@ assert.equal(dhTorus({ y: 1000, eps: 0 }), 0, "no vertical drift in the classic 
     }
     return game.slice(i, j);
   };
-  const src = ["terrainHash", "terrainNoise1", "terrainFbm1", "terrainNoise2", "terrainSpireLift", "makeTerrainChunk"].map(grab).join("\n");
+  const src = ["terrainHash", "terrainScale", "terrainNoise1", "terrainFbm1", "terrainNoise2", "terrainSpireLift", "makeTerrainChunk"].map(grab).join("\n");
   const { makeTerrainChunk } = new Function(
     `const WORLD_H = 2000, WORLD_W = 2600; const CFG = { grid: { cs: 7 } };
      const clamp = (v,a,b) => v<a?a:v>b?b:v;\n${src}\nreturn { makeTerrainChunk };`)();
@@ -246,7 +246,7 @@ assert.equal(dhTorus({ y: 1000, eps: 0 }), 0, "no vertical drift in the classic 
   {
     const spireSrc = ["terrainHash", "terrainNoise1", "terrainFbm1", "terrainSpireLift"].map(grab).join("\n");
     const { terrainSpireLift } = new Function(
-      `const clamp=(v,a,b)=>v<a?a:v>b?b:v;\n${spireSrc}\nreturn { terrainSpireLift };`)();
+      `const WORLD_W = 2600; const clamp=(v,a,b)=>v<a?a:v>b?b:v;\n${spireSrc}\nreturn { terrainSpireLift };`)();
     const L = { spires: 0.55, spireHeight: 320, spireWidth: 55, seed: 9973 };
     const profile = [];
     for (let x = 0; x < 2600; x += 4) profile.push(terrainSpireLift(L, x));
@@ -368,3 +368,49 @@ console.log("Vertical-column contract OK: Y-mode plumbing, no seam wrap, save/re
   assert.match(game, /c\.energy -= respirationRate\(c, sizeF, metab, genomeF\)\*dt;/,
     "the sim subtracts the rate the helper returns, so the displayed number cannot drift from the real one");
 }
+
+// ---- the seabed must close around the torus ---------------------------------------------------------
+// The world wraps in X. Terrain noise is sampled in WORLD coordinates, which makes neighbouring CHUNKS
+// meet exactly — but the lattice index just keeps counting, so x=WORLD_W and x=0 were unrelated noise
+// butted together: a vertical seam through the seabed, surface height stepping ~19px and pores cut off
+// mid-feature. Every field must now be periodic in WORLD_W.
+assert.match(game, /function terrainHash\(a, b, seed, px\) \{\s*\n\s*if \(px > 0\) a = \(\(a % px\) \+ px\) % px;/,
+  "terrainHash must wrap its x lattice index, or no terrain field can close around the wrap");
+assert.match(game, /function terrainScale\(want\) \{[\s\S]*?Math\.round\(WORLD_W \/ Math\.max\(1, want\)\)[\s\S]*?scale: WORLD_W \/ cells, px: cells/,
+  "sampling scales must snap to a whole number of lattice cells per world — a fractional period cannot close");
+assert.match(game, /const p2 = px > 0 \? Math\.max\(1, Math\.round\(px \* 2\.3\)\)[\s\S]*?const p4 = px > 0 \? Math\.max\(1, Math\.round\(px \* 4\.7\)\)/,
+  "every fbm octave needs its own whole-cell period — an octave that does not close reintroduces the " +
+  "seam at a third the amplitude, which is harder to see and no less wrong");
+assert.match(game, /const k = \(\(s % slots\) \+ slots\) % slots;/,
+  "spire slot IDENTITY must wrap, or a chimney is sheared in half at the seam");
+assert.match(game, /const centre = \(s \+ 0\.5\) \* spacing/,
+  "...while spire GEOMETRY keeps the unwrapped index, so a spire straddling the seam stays continuous");
+for (const [call, what] of [
+  [/terrainFbm1\(wx \/ feat\.scale, seed, feat\.px\)/, "the surface profile"],
+  [/terrainNoise2\(wx \/ warp\.scale, wy \/ warp\.scale, seed \+ 31, warp\.px\)/, "the organic warp"],
+  [/terrainNoise2\(sx \/ pores\.scale, sy \/ pores\.scale, seed \+ 7, pores\.px\)/, "the pore network"],
+]) assert.match(game, call, `${what} must sample on a snapped, periodic scale`);
+
+// and prove it numerically, with the real functions
+{
+  const grab = (re) => game.match(re)[0];
+  const src = ["terrainHash", "terrainScale", "terrainNoise1", "terrainFbm1", "terrainNoise2", "terrainSpireLift"]
+    .map((f) => grab(new RegExp(`function ${f}\\([\\s\\S]*?\\n  \\}`))).join("\n");
+  const W = 2600;
+  const api = new Function("WORLD_W", `${src}\nreturn {terrainFbm1,terrainNoise2,terrainSpireLift,terrainScale};`)(W);
+  const L = { thickness: 200, roughness: 0.5, featureSize: 300, poreSize: 20, warp: 0.6,
+              spires: 0.4, spireHeight: 120, spireWidth: 80, seed: 12345 };
+  const feat = api.terrainScale(Math.max(40, L.featureSize));
+  const face = (x) => (api.terrainFbm1(x / feat.scale, L.seed, feat.px) - 0.5) * L.roughness * L.thickness
+                      - api.terrainSpireLift(L, x);
+  assert.ok(Math.abs(face(W) - face(0)) < 1e-9,
+    `the surface must be continuous across the wrap, got a ${Math.abs(face(W) - face(0)).toFixed(2)}px step`);
+  const wp = api.terrainScale(Math.max(24, L.poreSize * 3)), pr = api.terrainScale(Math.max(8, L.poreSize));
+  const pore = (x, y) => {
+    const dx = (api.terrainNoise2(x / wp.scale, y / wp.scale, L.seed + 31, wp.px) - 0.5) * 2 * L.warp * wp.scale;
+    return api.terrainNoise2((x + dx) / pr.scale, y / pr.scale, L.seed + 7, pr.px);
+  };
+  for (let y = 1600; y < 1990; y += 13) assert.ok(Math.abs(pore(W, y) - pore(0, y)) < 1e-9,
+    `the warped pore field must be continuous across the wrap at y=${y}`);
+}
+console.log("Terrain wrap contracts OK: surface, warp, pores and spires all close around the torus.");

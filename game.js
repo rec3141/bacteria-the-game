@@ -1166,27 +1166,48 @@
   //
   // Everything is derived from a hash of the world position, never Math.random(): the same scenario
   // must produce the same seabed for every player, or two people cannot compare a run in it.
-  function terrainHash(a, b, seed) {
+  // The world is a torus in X: swim off the right edge and you arrive at the left. So every terrain
+  // field must be PERIODIC in WORLD_W, or the two edges are unrelated noise butted together and the
+  // seabed has a visible vertical seam running through it — surface height stepping, pores and veins
+  // cut off mid-feature. Sampling in world coordinates (which the chunk builder does) makes chunk
+  // neighbours meet exactly, but does nothing for the wrap, because the lattice index just keeps
+  // counting. `px` is that period measured in LATTICE cells: wrap the index and the field closes.
+  function terrainHash(a, b, seed, px) {
+    if (px > 0) a = ((a % px) + px) % px;
     let h = (a * 374761393 + b * 668265263 + seed * 2147483647) >>> 0;
     h = ((h ^ (h >>> 13)) * 1274126177) >>> 0;
     return ((h ^ (h >>> 16)) >>> 0) / 4294967296;      // → [0,1)
   }
+  // A period only closes if it is a WHOLE number of lattice cells, so the requested feature size is
+  // snapped to the nearest size that divides the world. The shift is at most half a cell — 289px
+  // instead of a requested 300 — which is invisible, unlike the seam.
+  function terrainScale(want) {
+    const cells = Math.max(1, Math.round(WORLD_W / Math.max(1, want)));
+    return { scale: WORLD_W / cells, px: cells };
+  }
   // Smooth 1-D value noise across x, used for the surface profile. Interpolated so neighbouring chunks
   // meet exactly — a seam in the seabed would read as a crack you could swim through.
-  function terrainNoise1(x, seed) {
+  function terrainNoise1(x, seed, px) {
     const i = Math.floor(x), f = x - i, s = f * f * (3 - 2 * f);
-    return terrainHash(i, 0, seed) * (1 - s) + terrainHash(i + 1, 0, seed) * s;
+    return terrainHash(i, 0, seed, px) * (1 - s) + terrainHash(i + 1, 0, seed, px) * s;
   }
-  function terrainFbm1(x, seed) {
-    return terrainNoise1(x, seed) * 0.6 + terrainNoise1(x * 2.3 + 11.7, seed + 1) * 0.3
-         + terrainNoise1(x * 4.7 + 23.1, seed + 2) * 0.1;
+  function terrainFbm1(x, seed, px) {
+    // Each octave needs its OWN whole-cell period, so the 2.3x and 4.7x multipliers are rounded to
+    // whatever lands on an integer count. An octave whose period does not close reintroduces the seam
+    // at one third the amplitude, which is harder to see and no less wrong.
+    const p2 = px > 0 ? Math.max(1, Math.round(px * 2.3)) : 0;
+    const p4 = px > 0 ? Math.max(1, Math.round(px * 4.7)) : 0;
+    const m2 = px > 0 ? p2 / px : 2.3, m4 = px > 0 ? p4 / px : 4.7;
+    return terrainNoise1(x, seed, px) * 0.6 + terrainNoise1(x * m2 + 11.7, seed + 1, p2) * 0.3
+         + terrainNoise1(x * m4 + 23.1, seed + 2, p4) * 0.1;
   }
-  // 2-D value noise for the pore network.
-  function terrainNoise2(x, y, seed) {
+  // 2-D value noise for the pore network. Periodic in x only — y is clamped in column mode, so the
+  // top and bottom of the world never meet and there is no seam to close there.
+  function terrainNoise2(x, y, seed, px) {
     const xi = Math.floor(x), yi = Math.floor(y), fx = x - xi, fy = y - yi;
     const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
-    const a = terrainHash(xi, yi, seed), b = terrainHash(xi + 1, yi, seed);
-    const c = terrainHash(xi, yi + 1, seed), d = terrainHash(xi + 1, yi + 1, seed);
+    const a = terrainHash(xi, yi, seed, px), b = terrainHash(xi + 1, yi, seed, px);
+    const c = terrainHash(xi, yi + 1, seed, px), d = terrainHash(xi + 1, yi + 1, seed, px);
     return (a * (1 - sx) + b * sx) * (1 - sy) + (c * (1 - sx) + d * sx) * sy;
   }
 
@@ -1197,15 +1218,21 @@
   // because a slot's shape depends only on the slot, never on which chunk is asking.
   function terrainSpireLift(layer, wx) {
     if (!(layer.spires > 0) || !(layer.spireHeight > 0)) return 0;
-    const spacing = Math.max(20, layer.spireWidth * 2.2);
+    // Slot spacing is snapped so a whole number of slots fits the world, and the slot index is wrapped
+    // when hashed — otherwise slot 0 and the last slot are strangers and a chimney gets sheared in half
+    // at the wrap. The GEOMETRY still uses the unwrapped index, so a spire straddling the seam keeps a
+    // single continuous centre instead of being torn in two.
+    const slots = Math.max(1, Math.round(WORLD_W / Math.max(20, layer.spireWidth * 2.2)));
+    const spacing = WORLD_W / slots;
     const slot = Math.floor(wx / spacing);
     let lift = 0;
     // neighbours too: a wide spire centred in the next slot still reaches into this one
     for (let s = slot - 1; s <= slot + 1; s++) {
-      if (terrainHash(s, 101, layer.seed) >= layer.spires) continue;      // this slot stays bare
-      const centre = (s + 0.5) * spacing + (terrainHash(s, 202, layer.seed) - 0.5) * spacing * 0.55;
-      const height = layer.spireHeight * (0.45 + 0.55 * terrainHash(s, 303, layer.seed));
-      const halfW = Math.max(6, layer.spireWidth * (0.45 + 0.55 * terrainHash(s, 404, layer.seed)));
+      const k = ((s % slots) + slots) % slots;                            // identity wraps, position does not
+      if (terrainHash(k, 101, layer.seed) >= layer.spires) continue;      // this slot stays bare
+      const centre = (s + 0.5) * spacing + (terrainHash(k, 202, layer.seed) - 0.5) * spacing * 0.55;
+      const height = layer.spireHeight * (0.45 + 0.55 * terrainHash(k, 303, layer.seed));
+      const halfW = Math.max(6, layer.spireWidth * (0.45 + 0.55 * terrainHash(k, 404, layer.seed)));
       const d = Math.abs(wx - centre) / halfW;
       if (d >= 1) continue;
       // squared falloff, so it tapers to a point rather than ending in a cliff
@@ -1237,22 +1264,28 @@
     const n = Math.ceil(side / cs) + 2, half = n * cs / 2;
     const grid = new Float32Array(n * n);
     const fromTop = layer.at === "top";
+    // Snapped once per chunk, not per voxel: each field's sampling scale, adjusted to divide the world
+    // exactly, plus its period in lattice cells. This is what makes the seabed close around the torus.
+    const feat = terrainScale(Math.max(40, layer.featureSize));
+    const warp = terrainScale(Math.max(24, layer.poreSize * 3));
+    const pores = terrainScale(Math.max(8, layer.poreSize));
     let solid = 0;
     for (let gj = 0; gj < n; gj++) for (let gi = 0; gi < n; gi++) {
       const wx = cxWorld + (gi + 0.5) * cs - half;
       const wy = layer.cy + (gj + 0.5) * cs - half;
       // Surface height at this x: the layer's face, displaced by the roughness profile. Sampled in
       // WORLD x so the profile is continuous across chunk boundaries.
-      const undulation = (terrainFbm1(wx / Math.max(40, layer.featureSize), seed) - 0.5) * 2 * layer.roughness * layer.thickness * 0.5;
+      const undulation = (terrainFbm1(wx / feat.scale, seed, feat.px) - 0.5) * 2 * layer.roughness * layer.thickness * 0.5;
       // Organic warp: displace the sampling point by a second noise field before reading the surface
       // and the pores. Straight noise gives round blobs; warping stretches and forks them into veins
       // and branches — the difference between a rocky lump and something that reads as coral. Sampled
       // in world coordinates so it stays continuous across chunks.
       let sx = wx, sy = wy;
       if (layer.warp > 0) {
-        const ws = Math.max(24, layer.poreSize * 3);
-        sx = wx + (terrainNoise2(wx / ws, wy / ws, seed + 31) - 0.5) * 2 * layer.warp * ws;
-        sy = wy + (terrainNoise2(wx / ws + 5.2, wy / ws + 1.3, seed + 41) - 0.5) * 2 * layer.warp * ws;
+        // The displacement is periodic, so sx(wx + WORLD_W) = sx(wx) + WORLD_W — which is exactly what
+        // the pore lookup below needs for its own period to survive being warped.
+        sx = wx + (terrainNoise2(wx / warp.scale, wy / warp.scale, seed + 31, warp.px) - 0.5) * 2 * layer.warp * warp.scale;
+        sy = wy + (terrainNoise2(wx / warp.scale + 5.2, wy / warp.scale + 1.3, seed + 41, warp.px) - 0.5) * 2 * layer.warp * warp.scale;
       }
       // Spires push the face further into the water: chimneys up off a vent floor, keels and
       // stalactites down off a ceiling. Same term either way, opposite sign. The warp bends them too,
@@ -1267,7 +1300,7 @@
         // riddle the top of sediment — which is what makes it somewhere to hide rather than a wall.
         const depthIn = fromTop ? face - wy : wy - face;            // 0 at the water face
         const openness = clamp(1 - depthIn / Math.max(1, layer.thickness), 0, 1);
-        const pore = terrainNoise2(sx / Math.max(8, layer.poreSize), sy / Math.max(8, layer.poreSize), seed + 7);
+        const pore = terrainNoise2(sx / pores.scale, sy / pores.scale, seed + 7, pores.px);
         if (pore < layer.porosity * (0.35 + 0.65 * openness)) continue;
       }
       grid[gj * n + gi] = 1; solid++;
