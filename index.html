@@ -145,6 +145,13 @@
   #roleTag { align-self: center; font-size: 12px; font-weight: bold; letter-spacing: .5px;
     color: #ffd6ec; background: rgba(255,158,192,.16); border: 1px solid rgba(255,158,192,.5);
     padding: 1px 9px; border-radius: 11px; }
+  /* Autotrophy readout: what this cell is living on where it stands. Gold like the plume and the
+     calories-chart source, so the three read as one thing. */
+  #autoTrophy { align-self: center; font-size: 12px; letter-spacing: .3px; white-space: nowrap;
+    color: #ffe08a; background: rgba(255,210,74,.13); border: 1px solid rgba(255,210,74,.45);
+    padding: 1px 9px; border-radius: 11px; font-variant-numeric: tabular-nums; }
+  #autoTrophy.starving { color: #ffc9c9; background: rgba(240,90,90,.16); border-color: rgba(240,90,90,.55); }
+  #autoTrophy.hidden { display: none; }
   #roleFlash { position: absolute; top: 34%; left: 50%; transform: translate(-50%,-50%) scale(.9);
     z-index: 9; text-align: center; pointer-events: none; opacity: 0;
     transition: opacity .3s ease, transform .3s ease; }
@@ -746,6 +753,9 @@
         <div class="bar"><span id="energyFill"></span></div>
         <span id="energyTxt" class="stat">0</span>
         <span class="stats-inline"><b id="colony">1</b>&#8202;active · <b id="cysts">0</b>&#8202;cysts · gen&#8202;<b id="gen">1</b> · <b id="score">0</b>&#8202;cal · <b id="time">0:00</b></span>
+        <!-- Only for an autotroph: what the cell is actually living on, right where it is. The depth
+             gauge beside the minimap says which way to swim; this says how it is going here. -->
+        <span id="autoTrophy" class="hidden"></span>
         <span id="roleTag" class="hidden">🛡️ PROTIST</span>
       </div>
       <div class="hudrow genome-row">

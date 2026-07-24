@@ -401,6 +401,7 @@
     energyFill: document.getElementById("energyFill"), energyTxt: document.getElementById("energyTxt"),
     gen: document.getElementById("gen"), score: document.getElementById("score"), colony: document.getElementById("colony"), cysts: document.getElementById("cysts"),
     time: document.getElementById("time"), roleTag: document.getElementById("roleTag"),
+    autoTrophy: document.getElementById("autoTrophy"),
     genome: document.getElementById("genome"), helix: document.getElementById("helix"),
     title: document.getElementById("title"), over: document.getElementById("over"), chartwrap: document.getElementById("chartwrap"), hud: document.getElementById("hud"),
     stage: document.getElementById("stage"), game: document.getElementById("game"),
@@ -3046,7 +3047,7 @@
     const sizeF = cellHalfLen(c)/CFG.cell.baseHalf;
     const metab = c.cyst ? CFG.cell.cystMetab : 1;
     const genomeF = 1 + upgradeTier(c)*CFG.cell.genomeUpkeep; // a bigger genome costs more upkeep (streamlining pressure)
-    c.energy -= CFG.respirationBase*env.metabolismMult*sizeF*metab*genomeF*dt;
+    c.energy -= respirationRate(c, sizeF, metab, genomeF)*dt;
     // CHEMOLITHOTROPHY: a chemosynthesizer fixes carbon from the dissolved chemical field at its depth,
     // gaining energy without eating a particle — this is its whole living. It has to STAY in the plume.
     // AUTOTROPHY: fixing carbon without eating anything. Light alone is oxygenic photosynthesis (a
@@ -4106,6 +4107,54 @@
     for (const ph of phages) if (ph.type === "gold" && !ph.dead) drawMiniStar(MX(ph.x), MY(ph.y), 5.5*ps, 2.4*ps, "#ffd24a");
     // your cell — a white-ringed teal DIAMOND, dead center
     if (pc) drawMiniDiamond(cx0, cy0, 4.5*ps, "#8dffdc");
+    ctx.restore();
+    drawDepthGauge(mx, my, mw, mh, vs, ps);
+  }
+  // A depth gauge for an autotroph: where light and the chemical actually are, down the column.
+  // It hangs off the minimap because the minimap ALREADY maps world Y to screen Y at the same scale,
+  // so a bar beside it is automatically the same depth axis — the marker on the gauge and the diamond
+  // on the map sit at the same height, and no extra bookkeeping can make them disagree.
+  //
+  // Shown only when the cell you are steering actually lives on these gradients. To a heterotroph
+  // they are scenery, and a gauge for something you cannot eat is just clutter over the ocean.
+  function drawDepthGauge(mx, my, mw, mh, vs, ps) {
+    const pc = controlledCell();
+    if (!columnState || !pc || !(pc.phototroph || pc.chemolithotroph)) return;
+    const chans = [];
+    if (pc.phototroph) chans.push({ c: "#ffe9a8", f: (y) => clamp(columnLightAt(y), 0, 1) });
+    if (pc.chemolithotroph && columnState.chem) chans.push({ c: columnState.chem.color, f: (y) => chemAt(y) });
+    // With both, the third bar is what actually feeds you: the scarcer input. It is the one to swim
+    // toward, so it gets its own column rather than leaving the player to intersect two in their head.
+    if (chans.length === 2) chans.push({ c: "#8dffdc", f: (y) => Math.min(chans[0].f(y), chans[1].f(y)), wide: true });
+
+    const bw = 7 * vs, gap = 3 * vs;
+    const totalW = chans.reduce((a, ch) => a + (ch.wide ? bw * 1.6 : bw) + gap, 0) - gap;
+    // outside the map, on whichever side has room: the map hugs the right edge on desktop, the left on a phone
+    const gx = isTouch ? mx + mw + gap * 2 : mx - totalW - gap * 2;
+    ctx.save();
+    ctx.globalAlpha = isTouch ? 1 : 0.85;
+    ctx.fillStyle = isTouch ? "rgba(4,20,26,0.94)" : "rgba(4,20,26,0.7)";
+    ctx.fillRect(gx - gap, my, totalW + gap * 2, mh);
+    let x = gx;
+    const rows = Math.max(24, Math.round(mh / (2 * vs)));   // enough bands to read as a gradient
+    for (const ch of chans) {
+      const w = ch.wide ? bw * 1.6 : bw;
+      for (let i = 0; i < rows; i++) {
+        const v = ch.f(((i + 0.5) / rows) * WORLD_H);
+        if (v <= 0.004) continue;
+        ctx.globalAlpha = clamp(v, 0, 1) * (isTouch ? 1 : 0.9);
+        ctx.fillStyle = ch.c;
+        ctx.fillRect(x, my + (i / rows) * mh, w, mh / rows + 0.7);
+      }
+      x += w + gap;
+    }
+    // your depth, across the whole gauge — the same line the minimap diamond sits on
+    ctx.globalAlpha = 1;
+    const py = my + clamp(pc.y / WORLD_H, 0, 1) * mh;
+    ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1.2 * ps;
+    ctx.beginPath(); ctx.moveTo(gx - gap, py); ctx.lineTo(gx + totalW + gap, py); ctx.stroke();
+    ctx.strokeStyle = "rgba(120,220,200,0.4)"; ctx.lineWidth = 1;
+    ctx.strokeRect(gx - gap, my, totalW + gap * 2, mh);
     ctx.restore();
   }
   function drawMiniDiamond(x, y, r, fill) {
@@ -5219,6 +5268,41 @@
     p.style.top  = clamp(e.clientY - h/2, 6, vh - h - 6) + "px";
   }
   function fmtDur(s) { const m = Math.floor(s/60); return m + ":" + String(s % 60).padStart(2, "0"); }
+  // Energy/s a cell burns just existing. The simulation and the HUD readout both go through this, so
+  // the number the player is shown cannot drift away from the number actually being subtracted. The
+  // factors are passed in where the caller has already computed them, and derived here otherwise.
+  function respirationRate(c, sizeF, metab, genomeF) {
+    if (sizeF == null) sizeF = cellHalfLen(c)/CFG.cell.baseHalf;
+    if (metab == null) metab = c.cyst ? CFG.cell.cystMetab : 1;
+    if (genomeF == null) genomeF = 1 + upgradeTier(c)*CFG.cell.genomeUpkeep;
+    return CFG.respirationBase*env.metabolismMult*sizeF*metab*genomeF;
+  }
+  // What an autotroph is living on, right where it is standing. The depth gauge beside the minimap
+  // answers "which way do I swim"; this answers "is it working here", which is the question you have
+  // while you are already moving. Reports the SCARCER input when a cell needs both, because that is
+  // the one setting its growth — and turns red when the intake no longer covers respiration, which is
+  // the moment a photolithotroph needs to know night is coming.
+  function updateAutotrophyReadout(c) {
+    const box = el.autoTrophy;
+    if (!box) return;
+    if (!c || !columnState || !(c.phototroph || c.chemolithotroph)) { box.classList.add("hidden"); return; }
+    const light = c.phototroph ? clamp(columnLightAt(c.y), 0, 1) : 1;
+    const chem = c.chemolithotroph ? chemAt(c.y) : 1;
+    const supply = Math.min(light, chem);
+    // a dormant cyst fixes nothing (the intake is gated on !c.cyst) and burns at the cyst rate — which
+    // is exactly the state a photolithotroph is in overnight, so the readout has to be honest about it
+    const gain = c.cyst ? 0 : supply * (c.phototroph ? CFG.column.photoRate : CFG.column.chemRate);
+    const parts = [];
+    if (c.phototroph) parts.push(`☀ ${Math.round(light*100)}%`);
+    if (c.chemolithotroph) parts.push(`⚗ ${Math.round(chem*100)}%`);
+    const net = gain - respirationRate(c);   // the same rate the simulation subtracts
+    // A dormant cyst burns ~0.03/s, which rounds to a nonsense "-0.0". Show the sign only when the
+    // number carries one at this precision.
+    const shown = Math.abs(net) < 0.05 ? "0.0" : (net > 0 ? "+" : "") + net.toFixed(1);
+    box.textContent = `${parts.join(" · ")} → ${shown}/s`;
+    box.classList.toggle("starving", net < -0.05);
+    box.classList.remove("hidden");
+  }
   function clockStr() { // in-game 24h clock — one full turn every day.lengthSec
     const h = dayHour(state.tod || 0), hh = Math.floor(h), mm = Math.floor((h - hh)*60);
     const day = (state.day || 1) > 1 ? `d${state.day} ` : "";   // only once a run has outlived its first day
@@ -5649,8 +5733,9 @@
     // as a protist there's no genome to show — hide the strand and flag the role instead
     if (el.genome) el.genome.style.display = protist ? "none" : "";
     if (el.roleTag) el.roleTag.classList.toggle("hidden", !protist);
-    if (protist) return;
+    if (protist) { if (el.autoTrophy) el.autoTrophy.classList.add("hidden"); return; }
     const c = controlledCell();
+    updateAutotrophyReadout(c);
     drawHelix(c); // DNA double-helix backbone under the genome, drawn in the current lineage's color
     syncRolodex(c);
     const pc = controlledCell();

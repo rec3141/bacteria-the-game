@@ -336,3 +336,30 @@ console.log("Vertical-column contract OK: Y-mode plumbing, no seam wrap, save/re
   assert.ok(photoRate > 0 && photoRate < uptake,
     `full sunlight (${photoRate}/s) must pay, but not beat active feeding (${uptake}/s)`);
 }
+
+// ---- telling the player where the energy is -------------------------------------------------------
+// Two readouts answering two different questions. The depth gauge beside the minimap says WHICH WAY to
+// swim; the HUD chip says whether it is working HERE, which is what you want while already moving.
+{
+  const gauge = game.slice(game.indexOf("function drawDepthGauge"), game.indexOf("function drawMiniDiamond"));
+  // shown only when the cell you steer actually lives on these gradients — to a heterotroph they are
+  // scenery, and a gauge for something you cannot eat is clutter over the ocean
+  assert.match(gauge, /if \(!columnState \|\| !pc \|\| !\(pc\.phototroph \|\| pc\.chemolithotroph\)\) return;/,
+    "the gauge appears only for an autotroph in a column");
+  // it hangs off the minimap so it inherits that widget's world-Y mapping and cannot drift from it
+  assert.match(game, /drawDepthGauge\(mx, my, mw, mh, vs, ps\);/, "the gauge is drawn from the minimap, sharing its geometry");
+  assert.match(gauge, /my \+ clamp\(pc\.y \/ WORLD_H, 0, 1\) \* mh/, "your depth marker uses the same axis as the map");
+  assert.match(gauge, /Math\.min\(chans\[0\]\.f\(y\), chans\[1\]\.f\(y\)\)/,
+    "with both gradients the gauge shows the limiting factor — the bar you actually swim toward");
+  assert.match(gauge, /isTouch \? mx \+ mw \+ gap \* 2 : mx - totalW - gap \* 2/,
+    "it sits outside the map on whichever side has room (map is right on desktop, left on a phone)");
+
+  // The HUD chip must report the SAME numbers the simulation applies, or it teaches the wrong lesson.
+  const readout = game.slice(game.indexOf("function updateAutotrophyReadout"), game.indexOf("function clockStr"));
+  assert.match(readout, /Math\.min\(light, chem\)/, "it reports the limiting factor, as the intake does");
+  assert.match(readout, /c\.cyst \? 0 :/, "a dormant cyst fixes nothing, and the chip must not claim otherwise");
+  assert.match(readout, /respirationRate\(c\)/, "the burn comes from the shared helper, not a second copy of the formula");
+  // and the simulation goes through that same helper
+  assert.match(game, /c\.energy -= respirationRate\(c, sizeF, metab, genomeF\)\*dt;/,
+    "the sim subtracts the rate the helper returns, so the displayed number cannot drift from the real one");
+}
