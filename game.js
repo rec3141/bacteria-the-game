@@ -5712,6 +5712,10 @@
   const SCENARIO_SHAPES = new Set(["aggregate", "ellipse", "shard"]);
   const SCENARIO_DIFFICULTY = new Set(["easy", "normal", "hard", "extreme"]);
   const SCENARIO_GENE_MAX = 12; // upper bound for authored genome levels (well above the natural tier ceiling)
+  // Least food a scenario may leave on the board, as a fraction of the default ocean's. 0.5 is below
+  // every hand-authored level (the thinnest is 69%) and far above the 0.02%-3% the generator produced
+  // when it wrote particle sizes in micrometres.
+  const SCENARIO_MIN_FOOD = 0.5;
   function scEnvAllowed(path) { return SCENARIO_ENV_WHITELIST.has(path) || /^diel\.water(?:Night|Day)\.[0-2]$/.test(path); }
   function scStr(v, max) {
     if (typeof v !== "string") return null;
@@ -5781,6 +5785,34 @@
     }
     const cfgErrors = validateTuningConfig(cfg, defaults);
     if (cfgErrors.length) return scReject("env violates tuning rules: " + cfgErrors[0]);
+
+    // A scenario must leave enough food on the board to be survivable. Author-supplied sizes are
+    // RADII IN SCREEN PIXELS (default 20-60), and generated scenarios kept setting them to real
+    // microbial dimensions instead — 3-9, or 0.4-1.2 — which is correct biology in the wrong unit and
+    // left boards with under 3% of the default food. Nothing could eat, so the level was unplayable.
+    //
+    // This is a floor applied to SCENARIOS ONLY, deliberately not a tuning rule: the tuning panel is
+    // for deliberate experiments and must stay free to explore a starved sea. And it is a clamp rather
+    // than a rejection because the whole scenario is atomic — rejecting would throw away a good lesson
+    // over one mis-scaled number, and fall back to the stock ocean with no explanation.
+    const foodMass = (a, b, p, n) => {
+      // mean squared radius under the Junge spectrum powerLawSize() samples (PDF ∝ R^-p), times count
+      const num = (Math.pow(b, 3 - p) - Math.pow(a, 3 - p)) / (3 - p);
+      const den = (Math.pow(b, 1 - p) - Math.pow(a, 1 - p)) / (1 - p);
+      return (num / den) * n;
+    };
+    {
+      const S = cfg.substrate, dS = defaults.substrate, p = S.sizeExp != null ? S.sizeExp : 1.6;
+      const want = foodMass(dS.sizeMin, dS.sizeMax, p, dS.count) * SCENARIO_MIN_FOOD;
+      const have = foodMass(S.sizeMin, S.sizeMax, p, S.count);
+      if (Number.isFinite(have) && have > 0 && have < want) {
+        // scale the radii, not the count: a scenario's particle count is usually a deliberate
+        // statement about productivity, whereas the sizes here are simply in the wrong unit
+        const k = Math.sqrt(want / have);
+        S.sizeMin = scClampToRule("substrate.sizeMin", S.sizeMin * k);
+        S.sizeMax = scClampToRule("substrate.sizeMax", S.sizeMax * k);
+      }
+    }
 
     // ---- resources: cosmetic re-skin of the 3 fixed classes, by index ----
     const resources = [];

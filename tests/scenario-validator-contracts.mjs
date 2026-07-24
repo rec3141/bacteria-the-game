@@ -25,6 +25,44 @@ const defaults = {
   enzyme: { life: 6, maxRadius: 40 }, toxin: { life: 4.5, maxRadius: 40 }, eps: { lifePerLevel: 4, radius: 24 },
 };
 
+// A scenario must leave enough food to be survivable. Generated scenarios kept writing real microbial
+// dimensions into substrate.sizeMin/sizeMax — 3-9, 0.4-1.2 — which are RADII IN SCREEN PIXELS
+// (default 20-60), leaving boards with under 3% of the default food. Every one was unplayable.
+{
+  const mk = (env) => ({ schema: "bacteria-scenario", version: 1,
+    meta: { title: "T", date: "2026-07-23", lesson: "L" }, env });
+  const food = (s) => {
+    const p = 1.6, a = s.sizeMin, b = s.sizeMax;
+    return ((Math.pow(b, 3 - p) - Math.pow(a, 3 - p)) / (3 - p)) /
+           ((Math.pow(b, 1 - p) - Math.pow(a, 1 - p)) / (1 - p)) * s.count;
+  };
+  const D = defaults.substrate;
+  const want = food(D) * 0.5;
+
+  // micrometre-scale sizes must be rescued, not passed through
+  for (const env of [
+    { "substrate.sizeMin": 3, "substrate.sizeMax": 9, "substrate.count": 95 },
+    { "substrate.sizeMin": 0.4, "substrate.sizeMax": 1.2, "substrate.count": 40 },
+    { "substrate.sizeMin": 2, "substrate.sizeMax": 8, "substrate.count": 30 },
+  ]) {
+    const r = validateScenario(mk(env), defaults);
+    assert.ok(r.ok, `a mis-scaled scenario must be repaired, not rejected: ${r.reason}`);
+    assert.ok(food(r.scenario.cfg.substrate) >= want * 0.999,
+      `scenario left only ${Math.round(food(r.scenario.cfg.substrate) / food(D) * 100)}% of the default food`);
+  }
+
+  // and a legitimately authored board must come through untouched — including a deliberately
+  // coarse one, which must not be "corrected" toward the default
+  for (const env of [{ "substrate.count": 80 }, { "substrate.count": 55 },
+                     { "substrate.sizeMin": 40, "substrate.sizeMax": 120, "substrate.count": 60 }]) {
+    const r = validateScenario(mk(env), defaults);
+    assert.ok(r.ok, "a legitimate scenario must validate");
+    const s = r.scenario.cfg.substrate;
+    assert.equal(s.sizeMin, env["substrate.sizeMin"] ?? D.sizeMin, "a healthy board must not be rescaled");
+    assert.equal(s.sizeMax, env["substrate.sizeMax"] ?? D.sizeMax, "a healthy board must not be rescaled");
+  }
+}
+
 const base = () => ({
   schema: "bacteria-scenario", version: 1,
   meta: { title: "Deepwater Horizon", date: "2026-07-18", lesson: "Oil-degrading bacteria bloomed on the 2010 plume.", realWorldBasis: "Deepwater Horizon (2010)" },
