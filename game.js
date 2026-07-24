@@ -1221,9 +1221,20 @@
       // Surface height at this x: the layer's face, displaced by the roughness profile. Sampled in
       // WORLD x so the profile is continuous across chunk boundaries.
       const undulation = (terrainFbm1(wx / Math.max(40, layer.featureSize), seed) - 0.5) * 2 * layer.roughness * layer.thickness * 0.5;
+      // Organic warp: displace the sampling point by a second noise field before reading the surface
+      // and the pores. Straight noise gives round blobs; warping stretches and forks them into veins
+      // and branches — the difference between a rocky lump and something that reads as coral. Sampled
+      // in world coordinates so it stays continuous across chunks.
+      let sx = wx, sy = wy;
+      if (layer.warp > 0) {
+        const ws = Math.max(24, layer.poreSize * 3);
+        sx = wx + (terrainNoise2(wx / ws, wy / ws, seed + 31) - 0.5) * 2 * layer.warp * ws;
+        sy = wy + (terrainNoise2(wx / ws + 5.2, wy / ws + 1.3, seed + 41) - 0.5) * 2 * layer.warp * ws;
+      }
       // Spires push the face further into the water: chimneys up off a vent floor, keels and
-      // stalactites down off a ceiling. Same term either way, opposite sign.
-      const lift = terrainSpireLift(layer, wx);
+      // stalactites down off a ceiling. Same term either way, opposite sign. The warp bends them too,
+      // so a warped spire field reads as branching fronds rather than straight cones.
+      const lift = terrainSpireLift(layer, sx);
       const face = fromTop ? layer.thickness + undulation + lift : WORLD_H - layer.thickness + undulation - lift;
       const inside = solidFill || (fromTop ? wy <= face : wy >= face);
       if (!inside) continue;
@@ -1233,7 +1244,7 @@
         // riddle the top of sediment — which is what makes it somewhere to hide rather than a wall.
         const depthIn = fromTop ? face - wy : wy - face;            // 0 at the water face
         const openness = clamp(1 - depthIn / Math.max(1, layer.thickness), 0, 1);
-        const pore = terrainNoise2(wx / Math.max(8, layer.poreSize), wy / Math.max(8, layer.poreSize), seed + 7);
+        const pore = terrainNoise2(sx / Math.max(8, layer.poreSize), sy / Math.max(8, layer.poreSize), seed + 7);
         if (pore < layer.porosity * (0.35 + 0.65 * openness)) continue;
       }
       grid[gj * n + gi] = 1; solid++;
@@ -1259,6 +1270,7 @@
         spires: clamp(raw.spires == null ? 0 : raw.spires, 0, 1),
         spireHeight: clamp(raw.spireHeight == null ? 0 : raw.spireHeight, 0, 800),
         spireWidth: clamp(raw.spireWidth == null ? 60 : raw.spireWidth, 10, 400),
+        warp: clamp(raw.warp == null ? 0 : raw.warp, 0, 1),
         seed: (li + 1) * 9973,
         label: raw.label || (raw.at === "top" ? "ice" : "sediment"), cy: 0 };
       // Square chunks, tiled across the world AND down through the layer. Square because the particle
@@ -1390,6 +1402,32 @@
     return hit ? { x: px, y: py } : null;
   }
 
+  // Is a disc of radius r at (wx, wy) clear of all terrain? Used to keep the founder out of the rock.
+  function clearOfTerrain(wx, wy, r) {
+    for (const p of terrain) if (pushCircleOut(p, wx, wy, r)) return false;
+    return true;
+  }
+  // A spawn point for the founder that is not embedded in terrain and not trapped in a tight pore.
+  // Searches outward from a preferred depth (mid-column normally; the chemical plume for a
+  // chemolithotroph), preferring the open middle of the water so it never lands in a sealed void.
+  // Needs real room — the cell's whole reach — so a one-cell pocket doesn't count as clear.
+  function founderSpawn(preferY) {
+    if (!columnState || !terrain.length) return { x: WORLD_W / 2, y: preferY };
+    const r = CFG.cell.maxHalf + CFG.cell.radius + 6, cx = WORLD_W / 2, cs = CFG.grid.cs;
+    for (let dyv = 0; dyv <= WORLD_H * 0.5; dyv += cs * 2) {
+      for (const yy of dyv === 0 ? [preferY] : [preferY - dyv, preferY + dyv]) {
+        const y = clamp(yy, r, WORLD_H - r);
+        for (let dxv = 0; dxv <= WORLD_W / 2; dxv += cs * 3) {
+          for (const xx of dxv === 0 ? [cx] : [cx - dxv, cx + dxv]) {
+            const x = wrapX(xx);
+            if (clearOfTerrain(x, y, r)) return { x, y };
+          }
+        }
+      }
+    }
+    return { x: cx, y: clamp(preferY, r, WORLD_H - r) };   // terrain fills the column: best effort
+  }
+
   // Resolve the rod against every solid particle: three probes — both poles and the centre.
   // (The gaps BETWEEN probes are why a very long cell can still clip a one-voxel wall; substepping
   // stops the tunnelling, not the sampling. Worth more probes on a long cell if that ever shows.)
@@ -1463,6 +1501,9 @@
     // degrader), so the run opens as the organism the lesson describes rather than a bare cell.
     if (!isDemo) { const arche = scenarioArchetypes(); if (arche && arche.length) { applyGenomeBundle(first, arche[0].genome); first.ups = genomeUps(first); first.phylo = first.ups.slice();
       if (columnState && columnState.chem && first.chemolithotroph) first.y = wrapY(columnState.chem.peakFrac * WORLD_H); } } // a chemosynthesizer starts IN its plume
+    // Never open the run wedged inside solid terrain or a sealed pore. Nudge the founder to open water
+    // near where it wanted to be (mid-column, or its plume depth for a chemolithotroph).
+    if (!isDemo && columnState && terrain.length) { const s = founderSpawn(first.y); first.x = s.x; first.y = s.y; }
     for (let i = 0; i < Math.round(CFG.cell.startUpgrades); i++) grantRandomUpgrade(first); // testing aid
     // In the demo NOTHING is controlled: the attract mode is the simulation running itself, and a
     // cell left "controlled" with no one at the keys would just sit there tumbling in place.
@@ -6259,13 +6300,13 @@
       terrain = [];
       for (const t of raw.terrain) {
         if (!t || typeof t !== "object" || Array.isArray(t)) return scReject("terrain layer must be an object");
-        const tErr = scOnlyKeys(t, new Set(["at", "thickness", "color", "label", "roughness", "porosity", "poreSize", "featureSize", "spires", "spireHeight", "spireWidth"]), "terrain layer");
+        const tErr = scOnlyKeys(t, new Set(["at", "thickness", "color", "label", "roughness", "porosity", "poreSize", "featureSize", "spires", "spireHeight", "spireWidth", "warp"]), "terrain layer");
         if (tErr) return scReject(tErr);
         if (t.at !== "top" && t.at !== "bottom") return scReject('terrain layer "at" must be "top" or "bottom"');
         if (!Number.isFinite(t.thickness) || t.thickness < 20 || t.thickness > 800) return scReject("terrain thickness must be 20..800");
         if (t.color != null && !/^#[0-9a-fA-F]{6}$/.test(t.color)) return scReject("terrain color must be #rrggbb");
         const frac = (v, name) => v == null || (Number.isFinite(v) && v >= 0 && v <= 1) ? null : `terrain ${name} must be 0..1`;
-        for (const chk of [frac(t.roughness, "roughness"), frac(t.porosity, "porosity"), frac(t.spires, "spires")]) if (chk) return scReject(chk);
+        for (const chk of [frac(t.roughness, "roughness"), frac(t.porosity, "porosity"), frac(t.spires, "spires"), frac(t.warp, "warp")]) if (chk) return scReject(chk);
         if (t.spireHeight != null && (!Number.isFinite(t.spireHeight) || t.spireHeight < 0 || t.spireHeight > 800)) return scReject("terrain spireHeight must be 0..800");
         if (t.spireWidth != null && (!Number.isFinite(t.spireWidth) || t.spireWidth < 10 || t.spireWidth > 400)) return scReject("terrain spireWidth must be 10..400");
         if (t.poreSize != null && (!Number.isFinite(t.poreSize) || t.poreSize < 6 || t.poreSize > 200)) return scReject("terrain poreSize must be 6..200");
@@ -6277,7 +6318,8 @@
           featureSize: t.featureSize == null ? 260 : t.featureSize,
           spires: t.spires == null ? 0 : t.spires,
           spireHeight: t.spireHeight == null ? 0 : t.spireHeight,
-          spireWidth: t.spireWidth == null ? 60 : t.spireWidth });
+          spireWidth: t.spireWidth == null ? 60 : t.spireWidth,
+          warp: t.warp == null ? 0 : t.warp });
       }
     }
 

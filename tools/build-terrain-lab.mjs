@@ -42,12 +42,12 @@ for (const k of ["grainStrength", "grainRim", "grainFalloff", "grainFloor"]) {
 const CS = Number(game.match(/grid:\s*\{\s*cs:\s*(\d+)/)[1]);
 
 const PRESETS = {
-  "sea ice":        { at: "top",    thickness: 175, color: "#cfe4f2", label: "sea ice",           roughness: 0.50, porosity: 0.45, poreSize: 18, featureSize: 300, spires: 0,    spireHeight: 0,   spireWidth: 60 },
-  "vent chimneys":  { at: "bottom", thickness: 200, color: "#3f3a44", label: "sulfide chimneys",  roughness: 0.30, porosity: 0.30, poreSize: 22, featureSize: 220, spires: 0.55, spireHeight: 300, spireWidth: 52 },
-  "estuarine mud":  { at: "bottom", thickness: 220, color: "#4f3d2a", label: "estuarine mud",     roughness: 0.35, porosity: 0.45, poreSize: 30, featureSize: 400, spires: 0,    spireHeight: 0,   spireWidth: 60 },
-  "reef carbonate": { at: "bottom", thickness: 240, color: "#c9bda2", label: "reef carbonate",    roughness: 0.70, porosity: 0.40, poreSize: 24, featureSize: 260, spires: 0.25, spireHeight: 140, spireWidth: 90 },
-  "streambed":      { at: "bottom", thickness: 200, color: "#6a6152", label: "streambed gravel",  roughness: 0.55, porosity: 0.50, poreSize: 32, featureSize: 320, spires: 0,    spireHeight: 0,   spireWidth: 60 },
-  "lake bed":       { at: "bottom", thickness: 200, color: "#4a4530", label: "lake sediment",     roughness: 0.30, porosity: 0.40, poreSize: 30, featureSize: 450, spires: 0,    spireHeight: 0,   spireWidth: 60 },
+  "sea ice":        { at: "top",    thickness: 175, color: "#cfe4f2", label: "sea ice",           roughness: 0.50, porosity: 0.45, poreSize: 18, featureSize: 300, spires: 0,    spireHeight: 0,   spireWidth: 60, warp: 0 },
+  "vent chimneys":  { at: "bottom", thickness: 200, color: "#3f3a44", label: "sulfide chimneys",  roughness: 0.30, porosity: 0.30, poreSize: 22, featureSize: 220, spires: 0.55, spireHeight: 300, spireWidth: 52, warp: 0 },
+  "coral reef":     { at: "bottom", thickness: 300, color: "#d7a48a", label: "coral reef",        roughness: 0.55, porosity: 0.55, poreSize: 30, featureSize: 220, spires: 0.45, spireHeight: 220, spireWidth: 70, warp: 0.7 },
+  "estuarine mud":  { at: "bottom", thickness: 220, color: "#4f3d2a", label: "estuarine mud",     roughness: 0.35, porosity: 0.45, poreSize: 30, featureSize: 400, spires: 0,    spireHeight: 0,   spireWidth: 60, warp: 0 },
+  "streambed":      { at: "bottom", thickness: 200, color: "#6a6152", label: "streambed gravel",  roughness: 0.55, porosity: 0.50, poreSize: 32, featureSize: 320, spires: 0,    spireHeight: 0,   spireWidth: 60, warp: 0.25 },
+  "lake bed":       { at: "bottom", thickness: 200, color: "#4a4530", label: "lake sediment",     roughness: 0.30, porosity: 0.40, poreSize: 30, featureSize: 450, spires: 0,    spireHeight: 0,   spireWidth: 60, warp: 0 },
 };
 
 const html = `<meta charset="utf-8">
@@ -103,6 +103,9 @@ const html = `<meta charset="utf-8">
   .presets button { background: transparent; border: 1px dashed var(--line); color: var(--muted);
                     border-radius: 999px; padding: 4px 10px; font: inherit; font-size: 11.5px; cursor: pointer; }
   .presets button:hover { border-style: solid; border-color: var(--accent); color: var(--accent); }
+  #random { background: transparent; color: var(--fg); border: 1px solid var(--line); border-radius: 7px;
+            padding: 7px; font: inherit; font-size: 12.5px; cursor: pointer; }
+  #random:hover { border-color: var(--accent); color: var(--accent); }
   button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
   canvas { display: block; width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--line);
@@ -164,6 +167,10 @@ const html = `<meta charset="utf-8">
       <div class="row"><label for="featureSize">Relief scale</label><output id="featureSize-o"></output>
         <input type="range" id="featureSize" min="40" max="2000" step="10">
         <p class="hint">How wide those undulations are.</p></div>
+      <div class="row"><label for="warp">Organic warp</label><output id="warp-o"></output>
+        <input type="range" id="warp" min="0" max="1" step="0.01">
+        <p class="hint">Bends the whole structure into veins and branches instead of round blobs — turn it
+          up for coral, sponges, a reef.</p></div>
     </div>
 
     <div class="card">
@@ -191,6 +198,7 @@ const html = `<meta charset="utf-8">
     <div class="card">
       <h2>Start from</h2>
       <div class="presets" id="presets"></div>
+      <button id="random" class="ghost" style="margin-top:10px;width:100%">🎲 Randomize</button>
     </div>
   </div>
 
@@ -233,13 +241,13 @@ ${ENGINE}
 // ---- end of the embedded generator ----------------------------------------------------------------
 
 const PRESETS = ${JSON.stringify(PRESETS, null, 2)};
-const KEYS = ["thickness","roughness","featureSize","porosity","poreSize","spires","spireHeight","spireWidth"];
+const KEYS = ["thickness","roughness","featureSize","porosity","poreSize","spires","spireHeight","spireWidth","warp"];
 const state = { ...PRESETS["vent chimneys"] };
 
 const $ = (id) => document.getElementById(id);
 const fmt = { thickness: (v) => v + " px", featureSize: (v) => v + " px", poreSize: (v) => v + " px",
               spireHeight: (v) => v + " px", spireWidth: (v) => v + " px",
-              roughness: (v) => (+v).toFixed(2), porosity: (v) => (+v).toFixed(2), spires: (v) => (+v).toFixed(2) };
+              roughness: (v) => (+v).toFixed(2), porosity: (v) => (+v).toFixed(2), spires: (v) => (+v).toFixed(2), warp: (v) => (+v).toFixed(2) };
 
 function buildChunks(porosityOverride) {
   const thickness = clamp(state.thickness, 20, WORLD_H * 0.4);
@@ -247,7 +255,7 @@ function buildChunks(porosityOverride) {
   const layer = { at: state.at, thickness,
     roughness: state.roughness, porosity, poreSize: state.poreSize,
     featureSize: state.featureSize, spires: state.spires, spireHeight: state.spireHeight,
-    spireWidth: state.spireWidth, seed: 9973, label: state.label, cy: 0 };
+    spireWidth: state.spireWidth, warp: state.warp, seed: 9973, label: state.label, cy: 0 };
   const side = clamp(thickness, 64, 420);
   const lut = terrainLutFor(state.color);
   const reach = thickness + layer.spireHeight;
@@ -330,6 +338,7 @@ function render() {
     json.spireHeight = Math.round(state.spireHeight);
     json.spireWidth = Math.round(state.spireWidth);
   }
+  if (state.warp > 0) json.warp = +(+state.warp).toFixed(2);
   $("json").value = '"terrain": [\\n  ' + JSON.stringify(json, null, 2).split("\\n").join("\\n  ") + "\\n]";
 }
 const stat = (v, l, warn) =>
@@ -372,6 +381,35 @@ $("presets").addEventListener("click", (e) => {
 });
 renderPresets();
 
+// Randomize: a plausible seabed or ceiling, not noise. Materials carry a matched colour and label, and
+// spires/warp toggle on at random so you get chimneys and coral some of the time, flat mud others.
+const RND_MATERIALS = {
+  top: [["#cfe4f2", "sea ice"], ["#dbe9f2", "platelet ice"], ["#b9d4e6", "glacial ice"]],
+  bottom: [["#3f3a44", "sulfide floor"], ["#4f3d2a", "estuarine mud"], ["#c9bda2", "reef carbonate"],
+           ["#6a6152", "streambed gravel"], ["#4a4530", "lake sediment"], ["#d7a48a", "coral"],
+           ["#7a5a3a", "sandy floor"], ["#5a5560", "basalt"]],
+};
+const rnd = (a, b) => a + Math.random() * (b - a);
+const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+$("random").addEventListener("click", () => {
+  const at = pick(["top", "bottom"]);
+  const [color, label] = pick(RND_MATERIALS[at]);
+  const spiry = Math.random() < 0.5, warpy = Math.random() < 0.5;
+  Object.assign(state, {
+    at, color, label,
+    thickness: Math.round(rnd(120, 420)),
+    roughness: +rnd(0.2, 0.9).toFixed(2),
+    porosity: +rnd(0.2, 0.6).toFixed(2),
+    poreSize: Math.round(rnd(14, 55)),
+    featureSize: Math.round(rnd(150, 520)),
+    spires: spiry ? +rnd(0.25, 0.6).toFixed(2) : 0,
+    spireHeight: spiry ? Math.round(rnd(120, 340)) : 0,
+    spireWidth: Math.round(rnd(40, 130)),
+    warp: warpy ? +rnd(0.3, 0.8).toFixed(2) : 0,
+  });
+  syncInputs(); render();
+});
+
 $("save").addEventListener("click", () => {
   const name = prompt("Save this terrain as:", state.label || "my terrain");
   if (!name || !name.trim()) return;
@@ -390,6 +428,7 @@ function currentTerrain() {
   if (state.spires > 0 && state.spireHeight > 0) {
     json.spires = +(+state.spires).toFixed(2); json.spireHeight = Math.round(state.spireHeight); json.spireWidth = Math.round(state.spireWidth);
   }
+  if (state.warp > 0) json.warp = +(+state.warp).toFixed(2);
   return [json];
 }
 

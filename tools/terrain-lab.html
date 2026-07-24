@@ -51,6 +51,9 @@
   .presets button { background: transparent; border: 1px dashed var(--line); color: var(--muted);
                     border-radius: 999px; padding: 4px 10px; font: inherit; font-size: 11.5px; cursor: pointer; }
   .presets button:hover { border-style: solid; border-color: var(--accent); color: var(--accent); }
+  #random { background: transparent; color: var(--fg); border: 1px solid var(--line); border-radius: 7px;
+            padding: 7px; font: inherit; font-size: 12.5px; cursor: pointer; }
+  #random:hover { border-color: var(--accent); color: var(--accent); }
   button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
   canvas { display: block; width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--line);
@@ -112,6 +115,10 @@
       <div class="row"><label for="featureSize">Relief scale</label><output id="featureSize-o"></output>
         <input type="range" id="featureSize" min="40" max="2000" step="10">
         <p class="hint">How wide those undulations are.</p></div>
+      <div class="row"><label for="warp">Organic warp</label><output id="warp-o"></output>
+        <input type="range" id="warp" min="0" max="1" step="0.01">
+        <p class="hint">Bends the whole structure into veins and branches instead of round blobs — turn it
+          up for coral, sponges, a reef.</p></div>
     </div>
 
     <div class="card">
@@ -139,6 +146,7 @@
     <div class="card">
       <h2>Start from</h2>
       <div class="presets" id="presets"></div>
+      <button id="random" class="ghost" style="margin-top:10px;width:100%">🎲 Randomize</button>
     </div>
   </div>
 
@@ -246,9 +254,20 @@ function makeTerrainChunk(layer, cxWorld, side, lut, seed, solidFill) {
       // Surface height at this x: the layer's face, displaced by the roughness profile. Sampled in
       // WORLD x so the profile is continuous across chunk boundaries.
       const undulation = (terrainFbm1(wx / Math.max(40, layer.featureSize), seed) - 0.5) * 2 * layer.roughness * layer.thickness * 0.5;
+      // Organic warp: displace the sampling point by a second noise field before reading the surface
+      // and the pores. Straight noise gives round blobs; warping stretches and forks them into veins
+      // and branches — the difference between a rocky lump and something that reads as coral. Sampled
+      // in world coordinates so it stays continuous across chunks.
+      let sx = wx, sy = wy;
+      if (layer.warp > 0) {
+        const ws = Math.max(24, layer.poreSize * 3);
+        sx = wx + (terrainNoise2(wx / ws, wy / ws, seed + 31) - 0.5) * 2 * layer.warp * ws;
+        sy = wy + (terrainNoise2(wx / ws + 5.2, wy / ws + 1.3, seed + 41) - 0.5) * 2 * layer.warp * ws;
+      }
       // Spires push the face further into the water: chimneys up off a vent floor, keels and
-      // stalactites down off a ceiling. Same term either way, opposite sign.
-      const lift = terrainSpireLift(layer, wx);
+      // stalactites down off a ceiling. Same term either way, opposite sign. The warp bends them too,
+      // so a warped spire field reads as branching fronds rather than straight cones.
+      const lift = terrainSpireLift(layer, sx);
       const face = fromTop ? layer.thickness + undulation + lift : WORLD_H - layer.thickness + undulation - lift;
       const inside = solidFill || (fromTop ? wy <= face : wy >= face);
       if (!inside) continue;
@@ -258,7 +277,7 @@ function makeTerrainChunk(layer, cxWorld, side, lut, seed, solidFill) {
         // riddle the top of sediment — which is what makes it somewhere to hide rather than a wall.
         const depthIn = fromTop ? face - wy : wy - face;            // 0 at the water face
         const openness = clamp(1 - depthIn / Math.max(1, layer.thickness), 0, 1);
-        const pore = terrainNoise2(wx / Math.max(8, layer.poreSize), wy / Math.max(8, layer.poreSize), seed + 7);
+        const pore = terrainNoise2(sx / Math.max(8, layer.poreSize), sy / Math.max(8, layer.poreSize), seed + 7);
         if (pore < layer.porosity * (0.35 + 0.65 * openness)) continue;
       }
       grid[gj * n + gi] = 1; solid++;
@@ -308,7 +327,8 @@ const PRESETS = {
     "featureSize": 300,
     "spires": 0,
     "spireHeight": 0,
-    "spireWidth": 60
+    "spireWidth": 60,
+    "warp": 0
   },
   "vent chimneys": {
     "at": "bottom",
@@ -321,7 +341,22 @@ const PRESETS = {
     "featureSize": 220,
     "spires": 0.55,
     "spireHeight": 300,
-    "spireWidth": 52
+    "spireWidth": 52,
+    "warp": 0
+  },
+  "coral reef": {
+    "at": "bottom",
+    "thickness": 300,
+    "color": "#d7a48a",
+    "label": "coral reef",
+    "roughness": 0.55,
+    "porosity": 0.55,
+    "poreSize": 30,
+    "featureSize": 220,
+    "spires": 0.45,
+    "spireHeight": 220,
+    "spireWidth": 70,
+    "warp": 0.7
   },
   "estuarine mud": {
     "at": "bottom",
@@ -334,20 +369,8 @@ const PRESETS = {
     "featureSize": 400,
     "spires": 0,
     "spireHeight": 0,
-    "spireWidth": 60
-  },
-  "reef carbonate": {
-    "at": "bottom",
-    "thickness": 240,
-    "color": "#c9bda2",
-    "label": "reef carbonate",
-    "roughness": 0.7,
-    "porosity": 0.4,
-    "poreSize": 24,
-    "featureSize": 260,
-    "spires": 0.25,
-    "spireHeight": 140,
-    "spireWidth": 90
+    "spireWidth": 60,
+    "warp": 0
   },
   "streambed": {
     "at": "bottom",
@@ -360,7 +383,8 @@ const PRESETS = {
     "featureSize": 320,
     "spires": 0,
     "spireHeight": 0,
-    "spireWidth": 60
+    "spireWidth": 60,
+    "warp": 0.25
   },
   "lake bed": {
     "at": "bottom",
@@ -373,16 +397,17 @@ const PRESETS = {
     "featureSize": 450,
     "spires": 0,
     "spireHeight": 0,
-    "spireWidth": 60
+    "spireWidth": 60,
+    "warp": 0
   }
 };
-const KEYS = ["thickness","roughness","featureSize","porosity","poreSize","spires","spireHeight","spireWidth"];
+const KEYS = ["thickness","roughness","featureSize","porosity","poreSize","spires","spireHeight","spireWidth","warp"];
 const state = { ...PRESETS["vent chimneys"] };
 
 const $ = (id) => document.getElementById(id);
 const fmt = { thickness: (v) => v + " px", featureSize: (v) => v + " px", poreSize: (v) => v + " px",
               spireHeight: (v) => v + " px", spireWidth: (v) => v + " px",
-              roughness: (v) => (+v).toFixed(2), porosity: (v) => (+v).toFixed(2), spires: (v) => (+v).toFixed(2) };
+              roughness: (v) => (+v).toFixed(2), porosity: (v) => (+v).toFixed(2), spires: (v) => (+v).toFixed(2), warp: (v) => (+v).toFixed(2) };
 
 function buildChunks(porosityOverride) {
   const thickness = clamp(state.thickness, 20, WORLD_H * 0.4);
@@ -390,7 +415,7 @@ function buildChunks(porosityOverride) {
   const layer = { at: state.at, thickness,
     roughness: state.roughness, porosity, poreSize: state.poreSize,
     featureSize: state.featureSize, spires: state.spires, spireHeight: state.spireHeight,
-    spireWidth: state.spireWidth, seed: 9973, label: state.label, cy: 0 };
+    spireWidth: state.spireWidth, warp: state.warp, seed: 9973, label: state.label, cy: 0 };
   const side = clamp(thickness, 64, 420);
   const lut = terrainLutFor(state.color);
   const reach = thickness + layer.spireHeight;
@@ -473,6 +498,7 @@ function render() {
     json.spireHeight = Math.round(state.spireHeight);
     json.spireWidth = Math.round(state.spireWidth);
   }
+  if (state.warp > 0) json.warp = +(+state.warp).toFixed(2);
   $("json").value = '"terrain": [\n  ' + JSON.stringify(json, null, 2).split("\n").join("\n  ") + "\n]";
 }
 const stat = (v, l, warn) =>
@@ -515,6 +541,35 @@ $("presets").addEventListener("click", (e) => {
 });
 renderPresets();
 
+// Randomize: a plausible seabed or ceiling, not noise. Materials carry a matched colour and label, and
+// spires/warp toggle on at random so you get chimneys and coral some of the time, flat mud others.
+const RND_MATERIALS = {
+  top: [["#cfe4f2", "sea ice"], ["#dbe9f2", "platelet ice"], ["#b9d4e6", "glacial ice"]],
+  bottom: [["#3f3a44", "sulfide floor"], ["#4f3d2a", "estuarine mud"], ["#c9bda2", "reef carbonate"],
+           ["#6a6152", "streambed gravel"], ["#4a4530", "lake sediment"], ["#d7a48a", "coral"],
+           ["#7a5a3a", "sandy floor"], ["#5a5560", "basalt"]],
+};
+const rnd = (a, b) => a + Math.random() * (b - a);
+const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+$("random").addEventListener("click", () => {
+  const at = pick(["top", "bottom"]);
+  const [color, label] = pick(RND_MATERIALS[at]);
+  const spiry = Math.random() < 0.5, warpy = Math.random() < 0.5;
+  Object.assign(state, {
+    at, color, label,
+    thickness: Math.round(rnd(120, 420)),
+    roughness: +rnd(0.2, 0.9).toFixed(2),
+    porosity: +rnd(0.2, 0.6).toFixed(2),
+    poreSize: Math.round(rnd(14, 55)),
+    featureSize: Math.round(rnd(150, 520)),
+    spires: spiry ? +rnd(0.25, 0.6).toFixed(2) : 0,
+    spireHeight: spiry ? Math.round(rnd(120, 340)) : 0,
+    spireWidth: Math.round(rnd(40, 130)),
+    warp: warpy ? +rnd(0.3, 0.8).toFixed(2) : 0,
+  });
+  syncInputs(); render();
+});
+
 $("save").addEventListener("click", () => {
   const name = prompt("Save this terrain as:", state.label || "my terrain");
   if (!name || !name.trim()) return;
@@ -533,6 +588,7 @@ function currentTerrain() {
   if (state.spires > 0 && state.spireHeight > 0) {
     json.spires = +(+state.spires).toFixed(2); json.spireHeight = Math.round(state.spireHeight); json.spireWidth = Math.round(state.spireWidth);
   }
+  if (state.warp > 0) json.warp = +(+state.warp).toFixed(2);
   return [json];
 }
 
