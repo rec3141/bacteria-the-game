@@ -218,9 +218,23 @@
   #scoresTable td { border-bottom: 1px solid rgba(255,255,255,.05); font-variant-numeric: tabular-nums; }
   #scoresTable .num { text-align: right; }
   #scoresTable .rk { text-align: right; opacity: .45; }
-  #scoresTable .nm { text-align: left; max-width: 128px; overflow: hidden; text-overflow: ellipsis; font-weight: bold; color: #eafff8; }
+  /* Names are capped at 18 characters, so this no longer needs to clip — and clipping is what hid the
+     scenario chip entirely, since it lives in this cell. */
+  #scoresTable .nm { text-align: left; max-width: 210px; font-weight: bold; color: #eafff8; }
   #scoresTable .dt { opacity: .55; font-size: 11px; }
   #scoresTable .anon { opacity: .4; font-weight: normal; color: inherit; }
+  /* Which sea the run was set in. Scores are not comparable across scenarios, so the chip is a
+     statement about the score as much as a link. Hue comes from the id, so it is stable per level. */
+  /* On its own line under the name: a scenario title is far longer than a player name, and inline it
+     was simply clipped away by the cell. */
+  #scoresTable .schip { display: inline-block; margin: 3px 6px 1px 0; padding: 1px 7px; border-radius: 999px;
+    font-size: 10px; font-weight: 600; letter-spacing: .2px; text-decoration: none;
+    color: var(--chip); border: 1px solid color-mix(in srgb, var(--chip) 55%, transparent);
+    background: color-mix(in srgb, var(--chip) 14%, transparent);
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #scoresTable .schips { display: block; margin-top: 2px; }
+  #scoresTable .schips .schip { max-width: 168px; vertical-align: middle; }
+  #scoresTable .schip:hover { background: color-mix(in srgb, var(--chip) 30%, transparent); }
   #scoresTable .livedot { display: inline-block; width: 7px; height: 7px; border-radius: 50%;
     background: var(--accent); margin-right: 5px; vertical-align: middle; box-shadow: 0 0 6px var(--accent); }
   #scoresTable tr.srow { cursor: pointer; }
@@ -334,6 +348,9 @@
   .scenario-eyebrow { margin: 0; font-size: 12px; letter-spacing: 3px; text-transform: uppercase; color: #57e0c0; }
   #scenarioCard .lede { max-width: 520px; opacity: .96; }
   .scenario-cite { margin: 12px 0 0; font-size: 12px; opacity: .6; font-style: italic; }
+  /* The DOI inside the citation links to the paper — this is the one place the source belongs. */
+  .scenario-cite .cite-doi { color: var(--accent); text-decoration: none; border-bottom: 1px dotted currentColor; }
+  .scenario-cite .cite-doi:hover { opacity: 1; border-bottom-style: solid; }
   /* Looks like the link it replaced, but it opens the in-game form rather than sending anyone to GitHub. */
   #submitDoiBtn.linkish { margin: 6px 0 0; font-size: 12px; color: #57e0c0; opacity: .75; text-decoration: none;
     background: none; border: 0; padding: 0; font-family: inherit; cursor: pointer; }

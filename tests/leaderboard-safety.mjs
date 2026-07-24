@@ -63,4 +63,38 @@ for (const record of board) {
   for (const upgrade of record.upgrades) assert.match(upgrade.color, /^#[0-9A-Fa-f]{3,8}$/);
 }
 
+// ---- the scenario chip -----------------------------------------------------------------------
+// A row now says which ocean the score was set in, and links to it. The id reaches an href, so it is
+// constrained to the same slug shape the game demands before it will fetch a scenario — and anything
+// else is DROPPED rather than cleaned, because a malformed id has no meaning worth preserving.
+{
+  const normalizer = game.slice(game.indexOf("function normalizeScoreRecord"), game.indexOf("// SCORE_NORMALIZER_END"));
+  assert.match(normalizer, /scenario: typeof value\.scenario === "string" && \/\^\[a-z0-9-\]\{1,64\}\$\/\.test/,
+    "an incoming scenario id must be slug-checked, not trusted");
+
+  const chip = game.slice(game.indexOf("const chipHtml ="), game.indexOf("let h = `<table id=\"scoresTable\">"));
+  assert.match(chip, /escapeHtml\(label\)/, "a scenario title is authored elsewhere and must be escaped");
+  assert.match(chip, /encodeURIComponent\(id\)/, "the id must be encoded into the link");
+  assert.ok(!/innerHTML\s*=/.test(chip), "the chip must be built as escaped markup, not assigned raw");
+  // the paper belongs with the lesson on the scenario card, not repeated down a table of numbers
+  assert.ok(!/doi\.org/.test(chip), "the leaderboard must not carry a DOI link");
+
+  // ...and on that card it is built from DOM nodes, because the citation is authored text that
+  // happens to contain a DOI — only the matched DOI may become a link.
+  const cite = game.slice(game.indexOf("function renderCitation"), game.indexOf("// Swap the title screen's lede"));
+  assert.match(cite, /node\.textContent = ""/, "the citation node must be cleared, not appended to");
+  assert.match(cite, /createTextNode/, "the non-DOI remainder must stay text");
+  assert.match(cite, /a\.href = "https:\/\/doi\.org\/" \+ encodeURI\(doi\)/,
+    "the link must be built from the matched DOI only — never from the raw citation");
+  assert.match(cite, /rel = "noopener noreferrer"/, "an outbound paper link must not hand over window.opener");
+  assert.ok(!/innerHTML/.test(cite), "the citation must never be assigned as markup");
+
+  // and the PHP side must keep the field, or it never survives a round trip through the board
+  const schema = readFileSync(resolve(root, "score_schema.php"), "utf8");
+  assert.match(schema, /'scenario' => score_slug\(/, "the server must normalize the scenario id");
+  assert.match(schema, /function score_slug/, "score_slug must exist");
+  assert.match(schema, /preg_match\('\/\^\[a-z0-9-\]\{1,' \. \(int\)\$max \. '\}\$\/'/,
+    "the server must apply the same slug shape as the client");
+}
+
 console.log("Leaderboard safety OK: malformed nested arrays and objects normalize without renderer hazards.");

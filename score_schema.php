@@ -185,7 +185,19 @@ function score_normalize_record($record, $now) {
     'live' => score_value($record, 'live', false) === true, // run is still continuable — PUBLIC in-progress flag
     'lineages' => score_lineages(score_value($record, 'lineages')),
     'roleSwaps' => score_role_swaps(score_value($record, 'roleSwaps')),
+    // Which scenario the run was played in ('' = the stock ocean). Scores are not comparable across
+    // scenarios, so the board has to say. Constrained to the same slug shape the game requires before
+    // it will fetch a scenario, because the value ends up in a link.
+    'scenario' => score_slug(score_value($record, 'scenario', ''), 64),
   ];
+}
+
+// A scenario id: lowercase alphanumerics and dashes, nothing else. Anything that does not match is
+// dropped rather than sanitised — a malformed id has no meaning and must never reach a URL.
+function score_slug($value, $max) {
+  if (!is_string($value)) return '';
+  $value = substr($value, 0, $max);
+  return preg_match('/^[a-z0-9-]{1,' . (int)$max . '}$/', $value) ? $value : '';
 }
 
 function score_json($value) {

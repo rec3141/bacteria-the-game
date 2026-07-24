@@ -4227,6 +4227,10 @@
       // is false) silently dropped every divider on incoming records. Preserve the object shape.
       roleSwaps: Array.isArray(value.roleSwaps)
         ? value.roleSwaps.slice(0, 32).filter(scoreClientObject).map((v) => ({ t: scoreClientNumber(v.t, 0, 86400), to: v.to === "bacterium" ? "bacterium" : "protist" })) : [],
+      // Which ocean the run was set in ("" = the stock one). Same slug shape the game demands before
+      // it will fetch a scenario, because this value ends up in a link on the leaderboard. Anything
+      // else is dropped rather than cleaned: a malformed id has no meaning.
+      scenario: typeof value.scenario === "string" && /^[a-z0-9-]{1,64}$/.test(value.scenario) ? value.scenario : "",
     };
   }
   function normalizeScoreList(value) {
@@ -4279,6 +4283,10 @@
     const rec = { id, score: Math.round(state.score), gen: state.gen, date: id, dur: Math.round(state.elapsed), hist: state.fullHist, upgrades: state.upgrades, name: playerName,
                   day: state.day || 1, device: state.device || "desktop", lineages: state.lineages, roleSwaps: state.roleSwaps,
                   live: dayComplete || undefined, // survived to sunrise → continuable; PUBLIC, so every viewer sees it's still going. Omitted (cleared) once the run finally dies out.
+                  // Which ocean this was. Two runs are not comparable across scenarios — one may have
+                  // half the food and twice the grazers — so the board has to say which level a score
+                  // came from. undefined on the stock ocean, so a default run is unchanged on the wire.
+                  scenario: (activeScenario && activeScenario.id) || undefined,
                   tuned: cfgTuned() || undefined }; // undefined → omitted by JSON.stringify, so untuned runs are unchanged on the wire
     if (!scoreWorthSaving(rec)) { justFinishedTs = null; lastRec = null; return false; }
     justFinishedTs = id; lastRec = rec;
@@ -4413,6 +4421,21 @@
     const arrow = (c) => scoreSort.key === c ? (scoreSort.dir < 0 ? " ▾" : " ▴") : "";
     const badge = (c, r) => leader[c] === recId(r) ? ` <span class="lead" title="best ${c}">🏆</span>` : "";
     const COLS = [["name", "Name", "nm"], ["score", "Calories", "num"], ["gen", "Gen", "num"], ["dur", "Time", "num"], ["ad", "Adapt.", "num"], ["date", "Date", "num dt"]];
+    // Scenario chip. Two runs are not comparable across scenarios — one ocean may have half the food
+    // and twice the grazers — so a row has to say which sea it was set in, and let you go play it.
+    const chipHtml = (r) => {
+      const id = typeof r.scenario === "string" && /^[a-z0-9-]{1,64}$/.test(r.scenario) ? r.scenario : "";
+      if (!id) return "";                                   // the stock ocean needs no chip
+      const meta = scenarioIndexById && scenarioIndexById.get(id);
+      const label = (meta && meta.title) || id;
+      // The index may not have arrived (or the level may have been renamed away). Still chip it: the
+      // id alone is enough to say "a different sea", and the link still works.
+      // No paper link here — the citation belongs with the lesson on the scenario card, where it is
+      // already shown; repeating it on every score row is noise in a table of numbers.
+      return `<span class="schips"><a class="schip" style="--chip:${scenarioHue(id)}" href="${location.pathname}?scenario=${encodeURIComponent(id)}"` +
+             ` title="${escapeHtml(label)} — play this scenario">${escapeHtml(label)}</a></span>`;
+    };
+
     let h = `<table id="scoresTable"><thead><tr><th class="rk">#</th>`;
     for (const [key, label, cls] of COLS) h += `<th data-k="${key}" class="sortable ${cls}">${label}${arrow(key)}</th>`;
     h += `<th class="run">Run</th></tr></thead><tbody>`;
@@ -4422,7 +4445,7 @@
       const inProgress = !isLive && (isOwnBrew || r.live === true); // 🧫 = still being cultivated (public to everyone)
       const brewTag = inProgress ? `<span class="brew" title="${isOwnBrew ? `Your saved brew — still going · continue to day ${brew.savedDay + 1} from the menu` : "Still in progress — this lineage is being cultivated"}">🔬</span>` : "";
       h += `<tr class="srow${isLive || isOwnBrew || recId(r) === justFinishedTs ? " current" : ""}" data-id="${recId(r)}"><td class="rk">${i+1}</td>`;
-      h += `<td class="nm">${isLive ? '<span class="livedot"></span>' : ''}${brewTag}${r.name ? escapeHtml(r.name) : `<span class="anon">${isLive ? "this run" : "anon"}</span>`}</td>`;
+      h += `<td class="nm">${isLive ? '<span class="livedot"></span>' : ''}${brewTag}${r.name ? escapeHtml(r.name) : `<span class="anon">${isLive ? "this run" : "anon"}</span>`}${chipHtml(r)}</td>`;
       h += `<td class="num">${SCORE_VAL.score(r).toLocaleString()}${badge("score", r)}</td>`;
       h += `<td class="num">${SCORE_VAL.gen(r)}${badge("gen", r)}</td>`;
       h += `<td class="num">${fmtDur(SCORE_VAL.dur(r))}${badge("dur", r)}</td>`;
@@ -4431,6 +4454,15 @@
       h += `<td class="chart"><canvas width="132" height="30" data-cid="${recId(r)}"></canvas></td></tr>`;
     });
     el.scoresList.innerHTML = h + `</tbody></table>`;
+    // Only reach for the index if a row is actually from a scenario, and re-render once it lands so
+    // the chips pick up their real titles instead of the raw id.
+    if (!scenarioIndexById && arr.some((r) => r && typeof r.scenario === "string" && r.scenario)) {
+      ensureScenarioIndex(() => renderScoreList());
+    }
+    // The chip and the doi link are inside a row that opens the run detail on click — without this a
+    // click on either would also open the detail behind the navigation.
+    el.scoresList.querySelectorAll("a.schip, a.sdoi").forEach((a) =>
+      a.addEventListener("click", (e) => e.stopPropagation()));
     el.scoresList.querySelectorAll("canvas[data-cid]").forEach((cv) => { // the run's simplified generational trajectory
       const rec = arr.find((r) => String(recId(r)) === cv.getAttribute("data-cid"));
       if (rec) {
@@ -4922,6 +4954,30 @@
   // the food/mortality/diversity panel, the phylogeny, the genome. That's the same page the leaderboard opens
   // for a saved run, so pause just opens it on the live one. "← Back to list" from there still takes
   // you to the board, so nothing is lost.
+  // Titles and DOIs for the leaderboard's scenario chips. Fetched once, lazily, and only when a row
+  // actually carries a scenario — a board of stock-ocean runs should not reach across the network.
+  // A failure is not worth reporting: the chip falls back to the raw id, which still links correctly.
+  let scenarioIndexById = null, scenarioIndexPending = null;
+  function ensureScenarioIndex(onLoad) {
+    if (scenarioIndexById || scenarioIndexPending) return;
+    scenarioIndexPending = fetch(`${SCENARIO_BASE}/index.json`, { cache: "no-cache" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((idx) => {
+        scenarioIndexById = new Map();
+        if (idx && Array.isArray(idx.scenarios)) for (const s of idx.scenarios) if (s && s.id) scenarioIndexById.set(s.id, s);
+        scenarioIndexPending = null;
+        if (typeof onLoad === "function") onLoad();
+      })
+      .catch(() => { scenarioIndexById = new Map(); scenarioIndexPending = null; });
+  }
+  // A stable colour per scenario, so the same sea is the same hue everywhere and two adjacent rows
+  // from different levels are told apart at a glance. Hashed from the id: no palette to maintain, and
+  // a level generated tomorrow gets its colour without anyone choosing one.
+  function scenarioHue(id) {
+    let hash = 0;
+    for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
+    return `hsl(${hash % 360} 62% 62%)`;
+  }
   function showScores(opts) {
     const active = !!(state && state.running && !state.demo); // paused mid-game — the background sim isn't a game to end
     const live = !!(opts && opts.liveDetail) && active;
@@ -5990,6 +6046,10 @@
       if (!res.ok) { console.warn("[scenario] fetch failed:", res.status); return null; }
       const result = validateScenario(await res.json(), CFG_DEFAULTS);
       if (!result.ok) { console.warn("[scenario] rejected:", result.reason); return null; }
+      // The id is ours, not the file's: it comes from the URL we just fetched and has already been
+      // checked against the slug pattern. Stamping it here is what lets a leaderboard row say which
+      // ocean a score was set in, and link back to it.
+      result.scenario.id = id;
       return result.scenario;
     } catch (e) { console.warn("[scenario] load error:", e && e.message); return null; }
   }
@@ -6009,13 +6069,34 @@
     else { columnState = null; setWorldYMode(true); }
     activeScenario = sc;
   }
+  // Show a scenario's citation, with the DOI in it turned into a link to the paper. Built from DOM
+  // nodes rather than innerHTML: the citation is authored by the generator from a stranger's DOI, so
+  // it is text until proven otherwise, and only the part matching a DOI ever becomes a link.
+  const CITE_DOI = /\b10\.\d{4,9}\/[^\s,;)\]]+/;
+  function renderCitation(node, citation) {
+    node.textContent = "";
+    const text = String(citation || "");
+    if (!text) return;
+    const m = text.match(CITE_DOI);
+    if (!m) { node.textContent = text; return; }
+    const doi = m[0].replace(/[.,;)\]]+$/, "");   // trailing punctuation belongs to the sentence, not the DOI
+    node.appendChild(document.createTextNode(text.slice(0, m.index)));
+    const a = document.createElement("a");
+    a.className = "cite-doi";
+    a.href = "https://doi.org/" + encodeURI(doi);
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.textContent = doi;
+    node.appendChild(a);
+    node.appendChild(document.createTextNode(text.slice(m.index + doi.length)));
+  }
   // Swap the title screen's lede for the scenario's mini-lesson card.
   function showScenarioIntro(sc) {
     if (!el.scenarioCard) return;
     if (el.scenarioTitle) el.scenarioTitle.textContent = sc.meta.title;
     if (el.scenarioBasis) el.scenarioBasis.textContent = sc.meta.realWorldBasis || sc.meta.difficulty || "";
     if (el.scenarioLesson) el.scenarioLesson.textContent = sc.meta.lesson;
-    if (el.scenarioCite) el.scenarioCite.textContent = sc.meta.citation || "";
+    if (el.scenarioCite) renderCitation(el.scenarioCite, sc.meta.citation || "");
     el.scenarioCard.classList.remove("hidden");
     if (el.defaultLede) el.defaultLede.classList.add("hidden");
     if (el.startBtn) el.startBtn.textContent = "Begin scenario";
