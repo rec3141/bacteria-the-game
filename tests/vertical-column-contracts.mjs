@@ -189,6 +189,35 @@ assert.equal(dhTorus({ y: 1000, eps: 0 }), 0, "no vertical drift in the classic 
     "terrain must collide unconditionally — skipParticles lets a cell crawl through FOOD, not through the sea floor");
   // and it must not be mistaken for food anywhere
   assert.ok(!/substrates\.push\(.*terrain/i.test(game), "terrain must never enter the substrate list");
+
+  // Solid means the movement step must actually RESOLVE collisions near terrain. `near` gates that
+  // entirely, and it was computed from food and EPS only — so a cell approaching the sea floor with
+  // nothing else around took the cheap straight-line path and swam clean through the ice.
+  const move = game.slice(game.indexOf("let near = false"), game.indexOf("const damp = columnEdgeDamp(c.y)"));
+  assert.match(move, /if \(!near\) for \(const p of terrain\)/,
+    "proximity to terrain must set `near`, or the step never resolves a collision against it");
+  // the food check is deliberately skipped while twitching (a cell crawls through the particle it
+  // grips); the terrain check must NOT inherit that exemption
+  const terrainTest = move.slice(move.indexOf("for (const p of terrain)"));
+  assert.ok(!/c\.twitching/.test(move.slice(move.indexOf("of terrain") - 120, move.indexOf("of terrain"))),
+    "the terrain proximity check must not be gated on twitching");
+
+  // Depth shading treats out-of-grid as open water, which is right for a particle and wrong for a
+  // chunk of a much larger slab: it lit a rim around every chunk and turned a sheet of ice into a
+  // visible grid of boxes.
+  const depth = grab("surfaceDepth");
+  assert.match(depth, /const outside = p\.terrainLayer \? INF : 0/,
+    "a terrain chunk's border continues into its neighbour and must shade as buried, not exposed");
+  assert.ok(!/\? d\[k-n\] : 0/.test(depth), "the hard-coded 0 for out-of-bounds must be gone");
+
+  // The camera follows a cell right up to the world edge, so terrain has to keep going past it.
+  const build = grab("buildTerrain");
+  assert.match(build, /const beyond = Math\.ceil\(VIEW_H \/ side\) \+ 1/,
+    "terrain must extend beyond the world edge by at least a viewport");
+  assert.match(build, /for \(let r = -beyond; r < rows; r\+\+\)/, "those outside rows must actually be built");
+  assert.match(build, /9973, r < 0\)/, "rows outside the world must be built as solid fill, not more pore network");
+  assert.match(grab("makeTerrainChunk"), /layer\.porosity > 0 && !solidFill/,
+    "solidFill must suppress the pore network");
 }
 
 console.log("Vertical-column contract OK: Y-mode plumbing, no seam wrap, save/restore, phase-2 depth fields, phase-3 buoyancy, and solid porous terrain.");

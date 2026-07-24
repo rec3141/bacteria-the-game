@@ -1178,7 +1178,7 @@
 
   // One square chunk of a layer. Square because the particle cache and its draw path assume it, which
   // is what lets terrain reuse the whole voxel renderer and pushCircleOut collision unchanged.
-  function makeTerrainChunk(layer, cxWorld, side, lut, seed) {
+  function makeTerrainChunk(layer, cxWorld, side, lut, seed, solidFill) {
     const cs = CFG.grid.cs;
     const n = Math.ceil(side / cs) + 2, half = n * cs / 2;
     const grid = new Float32Array(n * n);
@@ -1191,9 +1191,9 @@
       // WORLD x so the profile is continuous across chunk boundaries.
       const undulation = (terrainFbm1(wx / Math.max(40, layer.featureSize), seed) - 0.5) * 2 * layer.roughness * layer.thickness * 0.5;
       const face = fromTop ? layer.thickness + undulation : WORLD_H - layer.thickness + undulation;
-      const inside = fromTop ? wy <= face : wy >= face;
+      const inside = solidFill || (fromTop ? wy <= face : wy >= face);
       if (!inside) continue;
-      if (layer.porosity > 0) {
+      if (layer.porosity > 0 && !solidFill) {
         // Pores: voids threaded through the mass. Biased so the layer stays anchored at its outer
         // edge and opens up toward the water — brine channels widen downward through ice, burrows
         // riddle the top of sediment — which is what makes it somewhere to hide rather than a wall.
@@ -1230,11 +1230,18 @@
       const side = clamp(thickness, 64, 420);
       const lut = terrainLutFor(/^#[0-9a-fA-F]{6}$/.test(raw.color || "") ? raw.color : "#9fb6c4");
       const cols = Math.ceil(WORLD_W / side), rows = Math.ceil(thickness / side);
-      for (let r = 0; r < rows; r++) {
-        // outermost row sits flush against the world edge; deeper rows stack inward
+      // Keep building OUTWARD past the world edge, far enough to fill the view. The camera follows the
+      // cell right up to the boundary, so a slab that stopped exactly at y=0 left open water above the
+      // ice — the sea appearing to continue beyond its own ceiling. X needs no such treatment: the
+      // world is a horizontal torus and the draw transform already wraps.
+      const beyond = Math.ceil(VIEW_H / side) + 1;
+      for (let r = -beyond; r < rows; r++) {
+        // r < 0 is outside the world; r = 0 sits flush against the edge; deeper rows stack inward
         layer.cy = layer.at === "top" ? side / 2 + r * side : WORLD_H - side / 2 - r * side;
         for (let i = 0; i < cols; i++) {
-          const chunk = makeTerrainChunk(layer, (i + 0.5) * side, side, lut, (li + 1) * 9973);
+          // Outside the world the layer is solid: it is the mass the visible face is attached to, and
+          // pores out there would read as holes in a ceiling nobody can reach.
+          const chunk = makeTerrainChunk(layer, (i + 0.5) * side, side, lut, (li + 1) * 9973, r < 0);
           if (chunk) terrain.push(chunk);
         }
       }
@@ -2878,6 +2885,13 @@
     if (!c.twitching) for (const p of substrates) {
       if (Math.abs(dx(c.x, p.x)) < p.half + bpReach && Math.abs(dy(c.y, p.y)) < p.half + bpReach) { near = true; break; }
     }
+    // Terrain, and NOT gated on twitching. `near` decides whether this step resolves collisions at
+    // all, so a cell approaching the sea floor with no food beside it took the cheap straight-line
+    // path and swam clean through solid ice. Twitching lets a cell crawl through a food particle it
+    // is gripping; it must never let it crawl through the sea floor.
+    if (!near) for (const p of terrain) {
+      if (Math.abs(dx(c.x, p.x)) < p.half + bpReach && Math.abs(dy(c.y, p.y)) < p.half + bpReach) { near = true; break; }
+    }
     if (!near) for (const z of epsSpace.query(c.x, c.y, bpReach + CFG.eps.radius, epsCandidates)) {
       if (z.life > 0 && toroDist2(c.x, c.y, z.x, z.y) < (bpReach + z.r)**2) { near = true; break; }
     }
@@ -3552,16 +3566,21 @@
     let d = p.depthBuf;
     if (!d || d.length !== N) d = p.depthBuf = new Int16Array(N);
     const INF = 30000;
+    // What lies just outside the grid? For a particle drifting in water, water — so the edge is an
+    // exposed surface and shades bright. A terrain chunk is a tile of a much larger slab whose
+    // neighbour continues the mass, so treating its border as surface drew a lit rim around every
+    // chunk and turned a sheet of ice into a visible grid of boxes.
+    const outside = p.terrainLayer ? INF : 0;
     for (let k = 0; k < N; k++) d[k] = p.grid[k] > 0 ? INF : 0;
     for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {   // forward: up + left
       const k = j*n + i; if (d[k] === 0) continue;
-      const up = j > 0 ? d[k-n] : 0, left = i > 0 ? d[k-1] : 0;
+      const up = j > 0 ? d[k-n] : outside, left = i > 0 ? d[k-1] : outside;
       const m = (up < left ? up : left) + 1;
       if (m < d[k]) d[k] = m;
     }
     for (let j = n-1; j >= 0; j--) for (let i = n-1; i >= 0; i--) { // backward: down + right
       const k = j*n + i; if (d[k] === 0) continue;
-      const dn = j < n-1 ? d[k+n] : 0, rt = i < n-1 ? d[k+1] : 0;
+      const dn = j < n-1 ? d[k+n] : outside, rt = i < n-1 ? d[k+1] : outside;
       const m = (dn < rt ? dn : rt) + 1;
       if (m < d[k]) d[k] = m;
     }
