@@ -67,6 +67,15 @@ if (!preg_match('/^[\x21-\x7E]+$/', $doi) || !preg_match('#^10\.[0-9]{4,9}/\S+$#
   exit;
 }
 
+// ---- optional credit name -------------------------------------------------------------------------
+// Goes on a public page next to the level, so it is scrubbed here and again by the game's scenario
+// validator, and rendered with textContent. Strip anything that could be read as markup, collapse
+// whitespace, and cap it hard. Blank is the default and stays blank.
+$name = (string)($rec['name'] ?? '');
+$name = preg_replace('/[\x00-\x1F\x7F<>]/u', '', $name);   // control chars and angle brackets
+$name = trim(preg_replace('/\s+/u', ' ', $name));
+$name = mb_substr($name, 0, 40);
+
 // ---- derive the scenario id ----------------------------------------------------------------------
 // Must match doiScenarioId() in scripts/doi-id.mjs exactly, including the double slug (the outer one
 // re-applies the 60-char cap once the "doi-" prefix is on). The game polls for this id to tell the
@@ -139,7 +148,9 @@ if (!$already) {
     echo json_encode(['error' => "The level factory is at its limit for today — please try again tomorrow."]);
     exit;
   }
-  $requests[] = ['doi' => $doi, 'ts' => $now];
+  $entry = ['doi' => $doi, 'ts' => $now];
+  if ($name !== '') $entry['name'] = $name;   // omitted entirely when anonymous
+  $requests[] = $entry;
   if (count($requests) > $MAX_QUEUE) $requests = array_slice($requests, -$MAX_QUEUE);
 
   $out = ['schema' => 'bacteria-scenario-queue', 'version' => 1, 'requests' => array_values($requests)];

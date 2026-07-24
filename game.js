@@ -405,7 +405,7 @@
     submitDoiBtn: document.getElementById("submitDoiBtn"), doiSubmit: document.getElementById("doiSubmit"),
     doiInput: document.getElementById("doiInput"), doiStatus: document.getElementById("doiStatus"),
     doiSend: document.getElementById("doiSend"), doiCancel: document.getElementById("doiCancel"),
-    doiPlayBtn: document.getElementById("doiPlayBtn"),
+    doiPlayBtn: document.getElementById("doiPlayBtn"), doiName: document.getElementById("doiName"),
     savedContinueBtn: document.getElementById("savedContinueBtn"),
     savedContinueTitle: document.getElementById("savedContinueTitle"),
     savedContinueMeta: document.getElementById("savedContinueMeta"), saveStatus: document.getElementById("saveStatus"),
@@ -5025,7 +5025,7 @@
   function showDoiSubmit() {
     if (!el.doiSubmit) return;
     doiStatus("");
-    if (el.doiSend) el.doiSend.disabled = false;
+    if (el.doiSend) { el.doiSend.disabled = false; el.doiSend.classList.remove("hidden"); }
     if (el.doiPlayBtn) el.doiPlayBtn.classList.add("hidden");
     el.doiSubmit.classList.remove("hidden");
     if (el.doiInput) el.doiInput.focus();
@@ -5066,7 +5066,10 @@
     if (el.doiSend) el.doiSend.disabled = true;
     if (el.doiPlayBtn) el.doiPlayBtn.classList.add("hidden");
     doiStatus("Sending…", "");
-    fetch(SCENARIO_REQUEST_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ doi }) })
+    // Optional credit. Prefill from the leaderboard name if they've set one, but blank stays blank —
+    // nobody gets named on a public page because they once typed a name into a different form.
+    const name = (el.doiName && el.doiName.value || "").trim().slice(0, 40);
+    fetch(SCENARIO_REQUEST_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ doi, name }) })
       .then((r) => r.json().then((body) => ({ ok: r.ok, body })))
       .then(({ ok, body }) => {
         if (!ok || !body || !body.ok) {
@@ -5076,6 +5079,10 @@
           doiStatus((body && body.error) || "Couldn't queue that one — try again in a moment.", "warn");
           return;
         }
+        // Take the button away once the paper is accepted. It stays disabled either way, but a
+        // visible Submit invites a second press, and a second press spends one of the three daily
+        // tries to be told what the first press already said.
+        if (el.doiSend) el.doiSend.classList.add("hidden");
         doiStatus(body.queued
           ? "Queued! Your paper is being turned into a level — about twenty minutes. You can close this; it'll appear in Scenarios."
           : "That paper is already on its way — it'll appear in Scenarios shortly.", "ok");
@@ -5708,7 +5715,7 @@
   function scEnvAllowed(path) { return SCENARIO_ENV_WHITELIST.has(path) || /^diel\.water(?:Night|Day)\.[0-2]$/.test(path); }
   function scStr(v, max) {
     if (typeof v !== "string") return null;
-    const clean = v.replace(/[ -<>]/g, "");
+    const clean = v.replace(/[\u0000-\u001f<>]/g, "");
     return clean.length > max ? clean.slice(0, max) : clean;
   }
   const scColor = (v) => (typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v)) ? v : null;
@@ -5748,7 +5755,7 @@
     // ---- meta (required) ----
     const m = raw.meta;
     if (!m || typeof m !== "object") return scReject("missing meta");
-    const metaErr = scOnlyKeys(m, new Set(["title", "date", "lesson", "citation", "difficulty", "realWorldBasis", "authorNote"]), "meta");
+    const metaErr = scOnlyKeys(m, new Set(["title", "date", "lesson", "citation", "difficulty", "realWorldBasis", "authorNote", "submittedBy"]), "meta");
     if (metaErr) return scReject(metaErr);
     const title = scStr(m.title, 80), lesson = scStr(m.lesson, 1200);
     if (!title) return scReject("meta.title required");
@@ -5757,7 +5764,10 @@
     if (m.difficulty != null && !SCENARIO_DIFFICULTY.has(m.difficulty)) return scReject("meta.difficulty invalid");
     const meta = { title, date: m.date, lesson,
       citation: scStr(m.citation, 300) || "", difficulty: m.difficulty || "normal",
-      realWorldBasis: scStr(m.realWorldBasis, 120) || "", authorNote: scStr(m.authorNote, 300) || "" };
+      realWorldBasis: scStr(m.realWorldBasis, 120) || "", authorNote: scStr(m.authorNote, 300) || "",
+      // Credit for the player whose paper this was. A name typed by a stranger, so it goes through
+      // scStr like everything else — control characters and angle brackets stripped, length capped.
+      submittedBy: scStr(m.submittedBy, 40) || "" };
 
     // ---- env → CFG candidate (clamped, then validateTuningConfig has the final word) ----
     const cfg = scClone(defaults);
@@ -5980,18 +5990,60 @@
     el.scenarioList.innerHTML = "";
     if (!list.length) { el.scenarioList.innerHTML = "<p class='empty'>No scenarios available right now.</p>"; return; }
     const seen = new Set();
-    for (const s of list) {
+    // Newest first. index.json is built by walking scenarios/ in filename order, which buries a
+    // brand-new level in the middle of the alphabet — the opposite of what someone opening this
+    // page wants to see. Undated rows sort last rather than pretending to be ancient.
+    const rows = list.slice().sort((a, b) => String((b && b.date) || "").localeCompare(String((a && a.date) || "")));
+    for (const s of rows) {
       if (!s || !/^[a-z0-9-]{1,64}$/.test(String(s.id || ""))) continue; // ignore malformed index rows
       if (seen.has(s.id)) continue; seen.add(s.id); // a stale/duplicate index row never shows twice
       const b = document.createElement("button");
       b.className = "scenario-item";
+
+      const date = /^\d{4}-\d{2}-\d{2}$/.test(String(s.date || "")) ? String(s.date) : "";
+      const drow = document.createElement("span"); drow.className = "sd";
+      const dtxt = document.createElement("span"); dtxt.textContent = date ? fmtScenarioDate(date) : "—";
+      drow.appendChild(dtxt);
+      if (isRecentScenario(date)) {
+        const tag = document.createElement("span"); tag.className = "snew"; tag.textContent = "NEW";
+        drow.appendChild(tag);
+      }
+      b.appendChild(drow);
+
       const t = document.createElement("span"); t.className = "st"; t.textContent = String(s.title || s.id);
       const sub = document.createElement("span"); sub.className = "sb";
       sub.textContent = [s.realWorldBasis, s.difficulty].filter(Boolean).join(" · ");
       b.appendChild(t); b.appendChild(sub);
+
+      // Credit, when the player who submitted the paper asked for it. textContent, never innerHTML:
+      // this is a name a stranger typed into a form on the open internet.
+      const by = typeof s.submittedBy === "string" ? s.submittedBy.trim().slice(0, 40) : "";
+      if (by) {
+        const cr = document.createElement("span"); cr.className = "sby";
+        cr.textContent = "submitted by " + by;
+        b.appendChild(cr);
+      }
+
       b.addEventListener("click", () => { location.href = location.pathname + "?scenario=" + encodeURIComponent(s.id); });
       el.scenarioList.appendChild(b);
     }
+  }
+  // "2026-07-23" → "23 Jul 2026". Built from the parts, not new Date(), so it cannot slide a day
+  // backwards for anyone west of UTC the way parsing a bare date string does.
+  const SC_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  function fmtScenarioDate(d) {
+    const [y, m, day] = d.split("-").map(Number);
+    return `${day} ${SC_MONTHS[m - 1] || "?"} ${y}`;
+  }
+  // Fresh enough to flag. Compared as plain YYYY-MM-DD strings in local terms — no timezone maths,
+  // because "is this level new to me" is a human question, not an instant-in-time one.
+  const SC_NEW_DAYS = 3;
+  function isRecentScenario(d) {
+    if (!d) return false;
+    const t = new Date();
+    const cutoff = new Date(t.getFullYear(), t.getMonth(), t.getDate() - SC_NEW_DAYS);
+    const iso = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}-${String(cutoff.getDate()).padStart(2, "0")}`;
+    return d > iso;
   }
 
   // log mapping: pos 0…TUNE_STEPS ↔ value in [def/10, def*10], with the default at

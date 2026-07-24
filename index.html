@@ -335,16 +335,38 @@
   #scenarioCard .lede { max-width: 520px; opacity: .96; }
   .scenario-cite { margin: 12px 0 0; font-size: 12px; opacity: .6; font-style: italic; }
   /* Looks like the link it replaced, but it opens the in-game form rather than sending anyone to GitHub. */
-  #submitDoiBtn.linkish { margin-top: 4px; font-size: 12px; color: #57e0c0; opacity: .75; text-decoration: none;
+  #submitDoiBtn.linkish { margin: 6px 0 0; font-size: 12px; color: #57e0c0; opacity: .75; text-decoration: none;
     background: none; border: 0; padding: 0; font-family: inherit; cursor: pointer; }
   #submitDoiBtn.linkish:hover { opacity: 1; text-decoration: underline; }
-  #scenarioList { width: 100%; max-width: 560px; display: flex; flex-direction: column; gap: 10px; margin: 8px 0 18px; }
+  /* Two square-ish cards per row. The library gains one every day, so a single column of long
+     rectangles turned the page into a scroll with only a few entries visible at once. */
+  /* 500px keeps each square around 245px: wide enough for a two-line title, tight enough that a
+     short basis line doesn't leave the card looking half empty. */
+  #scenarioList { width: 100%; max-width: 500px; display: grid; grid-template-columns: 1fr 1fr;
+    gap: 10px; margin: 8px 0 18px; }
   .scenario-item { text-align: left; background: rgba(87,224,192,.06); border: 1px solid rgba(87,224,192,.25);
-    border-radius: 10px; padding: 12px 14px; cursor: pointer; color: inherit; font: inherit; transition: background .12s, border-color .12s; }
+    border-radius: 10px; padding: 12px 14px; cursor: pointer; color: inherit; font: inherit;
+    transition: background .12s, border-color .12s;
+    /* square-ish, and every card in a row matches regardless of how long its title runs */
+    aspect-ratio: 1 / 1; display: flex; flex-direction: column; overflow: hidden; }
   .scenario-item:hover { background: rgba(87,224,192,.14); border-color: rgba(87,224,192,.6); }
-  .scenario-item .st { display: block; font-size: 16px; color: #eafff8; font-weight: 600; }
-  .scenario-item .sb { display: block; font-size: 12px; opacity: .7; margin-top: 3px; }
-  #scenarioList .empty { opacity: .6; font-style: italic; }
+  .scenario-item .st { display: block; font-size: 15px; line-height: 1.25; color: #eafff8; font-weight: 600; }
+  .scenario-item .sb { display: block; font-size: 11px; opacity: .7; margin-top: 4px;
+    /* the basis can be a long sentence; let it fill the card and fade rather than blow the square out */
+    overflow: hidden; flex: 1 1 auto; }
+  /* Date row, on top and prominent — the point is to see at a glance which levels are new. */
+  .scenario-item .sd { display: flex; align-items: center; gap: 6px; margin-bottom: 6px;
+    font-size: 11px; letter-spacing: .5px; color: #57e0c0; opacity: .85; }
+  .scenario-item .snew { background: #57e0c0; color: #04141a; font-weight: 700; border-radius: 4px;
+    padding: 1px 5px; font-size: 10px; letter-spacing: .6px; opacity: 1; }
+  /* Credit for the player whose paper became the level. */
+  .scenario-item .sby { display: block; font-size: 11px; margin-top: 4px; color: #9fe8d6; opacity: .8;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #scenarioList .empty { opacity: .6; font-style: italic; grid-column: 1 / -1; }
+  @media (max-width: 520px) {
+    #scenarioList { grid-template-columns: 1fr; }
+    .scenario-item { aspect-ratio: auto; }   /* one narrow column: a forced square is absurdly tall */
+  }
   #savedContinueBtn {
     display: flex; flex-direction: column; align-items: center; gap: 3px;
     width: min(430px, 92%); padding: 11px 22px; border-radius: 15px;
@@ -412,6 +434,10 @@
   #doiInput:focus { border-color: var(--accent); }
   #doiExamples { width: min(560px, 92%); font-size: 12px; color: var(--muted); text-align: left; }
   #doiExamples code { background: rgba(0,0,0,.3); border-radius: 5px; padding: 1px 5px; font-size: 11px; }
+  #doiNameRow { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+  #doiName { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.18); color: #eafff8;
+    border-radius: 7px; padding: 5px 10px; font: inherit; font-size: 13px; width: 220px; outline: none; }
+  #doiName:focus { border-color: var(--accent); }
   #doiStatus { min-height: 18px; font-size: 13px; max-width: 560px; }
   #doiStatus.ok { color: var(--accent); }
   #doiStatus.warn { color: #ffd24a; }
@@ -752,7 +778,6 @@
         <button id="sciBtn" class="ghost">The science</button>
       </div>
       <button id="updateBtn" class="hidden">↻ Update to latest version</button>
-      <button id="submitDoiBtn" class="linkish">🔬 Turn a paper into a level →</button>
     </div>
     <div id="help" class="screen hidden">
       <h1 id="helpTitle">How to play</h1>
@@ -877,6 +902,11 @@
     <div id="scenarioPicker" class="screen hidden">
       <h1>Scenarios</h1>
       <p class="lede">Each scenario is a real microbial-ecology situation — a distinct ocean with its own lesson, environment, and enzymes. New ones are generated daily.</p>
+      <!-- Lives here rather than on the title screen: this is where you've just been reading the
+           library, so "add one of your own" is the obvious next thought. ABOVE the list, not below
+           it — the library gains a scenario every day and already overflows the viewport, so
+           anything after it is permanently below the fold. -->
+      <button id="submitDoiBtn" class="linkish">🔬 Turn a paper into a level →</button>
       <div id="scenarioList"></div>
       <button id="scenarioBack" class="ghost">Back</button>
     </div>
@@ -901,6 +931,8 @@
       <input id="doiInput" placeholder="10.1126/science.1261359" autocomplete="off" spellcheck="false" inputmode="text">
       <div id="doiExamples">A DOI starts with <code>10.</code> and is on the paper's first page or in its URL —
         <code>doi.org/10.1038/nature12352</code> works too.</div>
+      <div id="doiNameRow"><label for="doiName">Your name (optional — shown as the credit)</label>
+        <input id="doiName" maxlength="40" placeholder="leave blank to stay anonymous" autocomplete="off"></div>
       <div id="doiStatus" aria-live="polite"></div>
       <button id="doiPlayBtn" class="hidden">Play it now</button>
       <div class="btnrow">

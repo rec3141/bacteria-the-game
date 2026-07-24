@@ -25,9 +25,15 @@ const gitignore = read(".gitignore");
 assert.ok(!/github\.com\/[^"']*issues\/new/.test(html),
   "index.html must not hand players off to GitHub's new-issue form");
 assert.ok(!/submitDoiLink/.test(html + game), "the old GitHub link should be gone entirely");
-assert.match(html, /id="submitDoiBtn"/, "the title screen needs the in-game submit button");
 assert.match(html, /id="doiSubmit"/, "the submission screen must exist");
-for (const id of ["doiInput", "doiSend", "doiCancel", "doiStatus", "doiPlayBtn"]) {
+// The entry point belongs on the Scenarios page: that is where you have just been reading the
+// library, so offering to add one of your own is the obvious next thought.
+{
+  const picker = html.match(/<div id="scenarioPicker"[\s\S]*?\n    <\/div>/);
+  assert.ok(picker, "the scenario picker must exist");
+  assert.match(picker[0], /id="submitDoiBtn"/, "the submit entry point belongs inside the Scenarios page");
+}
+for (const id of ["doiInput", "doiSend", "doiCancel", "doiStatus", "doiPlayBtn", "doiName"]) {
   assert.ok(html.includes(`id="${id}"`), `the submission screen is missing #${id}`);
   assert.match(game, new RegExp(`${id}:\\s*document\\.getElementById`), `game.js never looks up #${id}`);
 }
@@ -46,6 +52,14 @@ assert.ok(!/api\.github\.com|repository_dispatch/.test(game + php),
 // the generator will never write.
 assert.match(game, /if \(body\.id\) pollForScenario\(body\.id/,
   "the poll must use the id the server returned, not one derived in the client");
+
+// ---- a queued paper must not be submittable twice -------------------------------------------------
+// A second press cannot create a duplicate (the endpoint dedups and returns queued:false), but it
+// would spend one of the visitor's three daily tries to learn what the first press already told them.
+assert.match(game, /if \(el\.doiSend\) el\.doiSend\.classList\.add\("hidden"\);[\s\S]{0,200}?doiStatus\(body\.queued/,
+  "Submit must be hidden once the paper is accepted");
+assert.match(game, /function showDoiSubmit\(\)[\s\S]*?el\.doiSend\.classList\.remove\("hidden"\)/,
+  "reopening the form must bring Submit back, or a second paper can never be sent");
 
 // ---- the endpoint's id derivation must mirror scripts/doi-id.mjs in the scenarios repo -----------
 // Same rule, three languages. If PHP's version drifts, the player's "is it ready?" poll silently
@@ -108,4 +122,42 @@ for (const f of ["scenario-queue.json", "scenario-ratelimit.json"]) {
   assert.ok(gitignore.includes(f), `${f} is runtime data and must be gitignored`);
 }
 
-console.log("✓ scenario-request contracts: account-free path, id agreement, queue reachability");
+// ---- the optional credit name is untrusted text shown on a public page ---------------------------
+// It travels: game form -> PHP -> queue.json -> generator -> scenario meta -> index.json -> this list.
+// Every hop scrubs it, and the last hop must render it as TEXT. innerHTML anywhere here would turn a
+// name typed by a stranger into markup in everyone else's game.
+{
+  assert.match(game, /const name = \(el\.doiName && el\.doiName\.value \|\| ""\)/,
+    "the form must read the optional credit name");
+  assert.match(game, /JSON\.stringify\(\{ doi, name \}\)/, "the credit name must be sent with the DOI");
+  assert.match(php, /\$name = preg_replace\(/, "the endpoint must scrub the name");
+  assert.match(php, /mb_substr\(\$name, 0, 40\)/, "the endpoint must cap the name");
+  // the game's validator must accept meta.submittedBy, or every credited scenario is rejected WHOLE
+  // and silently falls back to the stock ocean
+  assert.match(game, /scOnlyKeys\(m, new Set\(\[[^\]]*"submittedBy"/,
+    "meta.submittedBy must be whitelisted, or a credited scenario fails validation entirely");
+  assert.match(game, /submittedBy: scStr\(m\.submittedBy, 40\)/,
+    "meta.submittedBy must go through scStr like every other author-supplied string");
+  // and the list must render it with textContent
+  const render = game.match(/const by = typeof s\.submittedBy[\s\S]*?appendChild\(cr\);/);
+  assert.ok(render, "the picker must render the credit");
+  assert.ok(!/innerHTML/.test(render[0]), "the credit must never be written as HTML");
+  assert.match(render[0], /cr\.textContent/, "the credit must be set with textContent");
+}
+
+// ---- the scenario list must lead with dates ------------------------------------------------------
+// The library gains a level every day; index.json is built in filename order, which buries the newest
+// one mid-alphabet.
+{
+  assert.match(game, /localeCompare/, "the picker must sort by date so new levels surface");
+  assert.match(game, /className = "snew"/, "recent scenarios need a NEW marker");
+  assert.match(game, /function fmtScenarioDate/, "dates must be formatted for humans");
+  // built from the string parts, never new Date("2026-07-23"), which parses as UTC midnight and
+  // shows the previous day to everyone west of Greenwich
+  const fmt = game.match(/function fmtScenarioDate[\s\S]*?\n  \}/);
+  assert.ok(fmt && !/new Date\(/.test(fmt[0]),
+    "a bare YYYY-MM-DD must not go through new Date() — it would show the wrong day west of UTC");
+  assert.match(html, /#scenarioList \{[^}]*display: grid/, "the list must be a grid, not a single column");
+}
+
+console.log("✓ scenario-request contracts: account-free path, id agreement, queue reachability, credit safety");
