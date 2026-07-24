@@ -99,6 +99,15 @@ const html = `<meta charset="utf-8">
                 border-radius: 7px; padding: 6px 8px; font: inherit; font-size: 12.5px; cursor: pointer; }
   .seg button[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 18%, transparent);
                 border-color: var(--accent); color: var(--accent); }
+  /* A filled dot means that layer is part of the level; hollow means it is switched off. */
+  .seg .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px;
+              border: 1px solid currentColor; vertical-align: 1px; }
+  .seg button.on .dot { background: currentColor; }
+  .onoff { display: flex; align-items: center; gap: 7px; margin-top: 10px; font-size: 12.5px;
+           color: var(--muted); cursor: pointer; }
+  .onoff input { accent-color: var(--accent); margin: 0; }
+  /* When a layer is switched off its controls stay visible but read as inactive. */
+  .off-dim { opacity: .38; pointer-events: none; }
   .presets { display: flex; flex-wrap: wrap; gap: 6px; }
   .presets button { background: transparent; border: 1px dashed var(--line); color: var(--muted);
                     border-radius: 999px; padding: 4px 10px; font: inherit; font-size: 11.5px; cursor: pointer; }
@@ -108,8 +117,11 @@ const html = `<meta charset="utf-8">
   #random:hover { border-color: var(--accent); color: var(--accent); }
   button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-  canvas { display: block; width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--line);
-           background: #05131a; }
+  /* A ceiling and a floor together frame the whole 2000px column, which is far taller than it is wide.
+     max-height keeps the preview on screen; object-fit letterboxes rather than distorting (canvas is a
+     replaced element, so object-fit applies to it). */
+  canvas { display: block; width: 100%; height: auto; max-height: 66vh; object-fit: contain;
+           border-radius: 8px; border: 1px solid var(--line); background: #05131a; }
   .stats { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
   .stat { border: 1px solid var(--line); border-radius: 7px; padding: 6px 10px; min-width: 96px; }
   .stat b { display: block; font-family: var(--mono); font-size: 15px; font-variant-numeric: tabular-nums;
@@ -133,19 +145,23 @@ const html = `<meta charset="utf-8">
 </style>
 
 <h1>Terrain Lab</h1>
-<p class="sub">Design a sea floor or an ice ceiling for a Bacteria! scenario. The preview runs the game's
-  own generator, so what you see is what the level builds — including the pore network you can swim
-  into. Paste the JSON into a scenario's <code>terrain</code> array.</p>
+<p class="sub">Design the sea floor and ice ceiling for a Bacteria! scenario. The preview runs the game's
+  own generator, so the structure you see is the structure the level builds — including the pore network
+  you can swim into. The game re-rolls the arrangement every run, so this is <em>one</em> of the seabeds
+  your settings produce: hit Reshuffle to see others.</p>
 
 <div class="wrap">
   <div>
     <div class="card">
-      <h2>Anchor</h2>
-      <div class="seg" id="anchor">
-        <button data-at="bottom" aria-pressed="true">Floor</button>
-        <button data-at="top" aria-pressed="false">Ceiling</button>
+      <h2>Layers</h2>
+      <!-- A water column has at most one ceiling and one floor. Each can be on or off independently;
+           clicking a tab chooses which one the controls below edit. -->
+      <div class="seg" id="slots">
+        <button data-slot="top" aria-pressed="false"><span class="dot"></span>Ceiling</button>
+        <button data-slot="bottom" aria-pressed="true"><span class="dot"></span>Floor</button>
       </div>
-      <div class="row" style="margin-top:12px">
+      <label class="onoff"><input type="checkbox" id="slotOn"> <span id="slotOnLabel">Floor is in this level</span></label>
+      <div class="row" style="margin-top:10px">
         <label for="color">Material colour</label>
         <input type="color" id="color" value="#3f3a44">
       </div>
@@ -156,7 +172,7 @@ const html = `<meta charset="utf-8">
              border:1px solid var(--line);border-radius:7px;padding:6px 9px;font:inherit;font-size:12.5px">
     </div>
 
-    <div class="card">
+    <div class="card" data-layercard>
       <h2>Mass</h2>
       <div class="row"><label for="thickness">Thickness</label><output id="thickness-o"></output>
         <input type="range" id="thickness" min="20" max="800" step="5">
@@ -173,7 +189,7 @@ const html = `<meta charset="utf-8">
           up for coral, sponges, a reef.</p></div>
     </div>
 
-    <div class="card">
+    <div class="card" data-layercard>
       <h2>Pore network</h2>
       <div class="row"><label for="porosity">Porosity</label><output id="porosity-o"></output>
         <input type="range" id="porosity" min="0" max="1" step="0.01">
@@ -183,7 +199,7 @@ const html = `<meta charset="utf-8">
         <p class="hint">Fine channels or open caverns.</p></div>
     </div>
 
-    <div class="card">
+    <div class="card" data-layercard>
       <h2>Spires</h2>
       <div class="row"><label for="spires">Density</label><output id="spires-o"></output>
         <input type="range" id="spires" min="0" max="1" step="0.01">
@@ -206,6 +222,10 @@ const html = `<meta charset="utf-8">
     <div class="card">
       <h2>Cross-section · full world width (2600 px)</h2>
       <canvas id="view" width="1300" height="520"></canvas>
+      <div class="bar" style="margin-top:10px">
+        <button id="reshuffle" class="ghost">🔀 Reshuffle</button>
+        <span class="said" id="seedNote2">seed <span id="seedShown">9973</span> · the game draws a new one each run</span>
+      </div>
       <div class="stats" id="stats"></div>
       <p class="legend">Dark gaps inside the mass are pore space — a cell can swim in there. The dotted
         line marks the world boundary. <b title="A canvas holds every pixel as RGBA in RAM, so this is
@@ -242,29 +262,44 @@ ${ENGINE}
 
 const PRESETS = ${JSON.stringify(PRESETS, null, 2)};
 const KEYS = ["thickness","roughness","featureSize","porosity","poreSize","spires","spireHeight","spireWidth","warp"];
-const state = { ...PRESETS["vent chimneys"] };
+
+// A water column has at most one ceiling and one floor, so the lab holds exactly those two slots.
+// Each is independently on or off; "editing" says which one the sliders drive.
+const state = {
+  editing: "bottom",
+  seed: 9973,
+  top:    Object.assign({ on: false }, PRESETS["sea ice"]),
+  bottom: Object.assign({ on: true },  PRESETS["vent chimneys"]),
+};
+const cur = () => state[state.editing];
+const liveSlots = () => ["top", "bottom"].filter((k) => state[k].on);
 
 const $ = (id) => document.getElementById(id);
 const fmt = { thickness: (v) => v + " px", featureSize: (v) => v + " px", poreSize: (v) => v + " px",
               spireHeight: (v) => v + " px", spireWidth: (v) => v + " px",
               roughness: (v) => (+v).toFixed(2), porosity: (v) => (+v).toFixed(2), spires: (v) => (+v).toFixed(2), warp: (v) => (+v).toFixed(2) };
 
-function buildChunks(porosityOverride) {
-  const thickness = clamp(state.thickness, 20, WORLD_H * 0.4);
-  const porosity = porosityOverride == null ? state.porosity : porosityOverride;
-  const layer = { at: state.at, thickness,
-    roughness: state.roughness, porosity, poreSize: state.poreSize,
-    featureSize: state.featureSize, spires: state.spires, spireHeight: state.spireHeight,
-    spireWidth: state.spireWidth, warp: state.warp, seed: 9973, label: state.label, cy: 0 };
+// Build one slot's chunks. Mirrors buildTerrain() in game.js, including how the per-layer seed is
+// derived, so the preview is a faithful instance of what that scenario would generate.
+function buildSlot(slotKey, porosityOverride) {
+  const L = state[slotKey];
+  const thickness = clamp(L.thickness, 20, WORLD_H * 0.4);
+  const porosity = porosityOverride == null ? L.porosity : porosityOverride;
+  const li = liveSlots().indexOf(slotKey);       // layer index within the emitted terrain array
+  const layer = { at: slotKey, thickness,
+    roughness: L.roughness, porosity, poreSize: L.poreSize,
+    featureSize: L.featureSize, spires: L.spires, spireHeight: L.spireHeight,
+    spireWidth: L.spireWidth, warp: L.warp,
+    seed: (state.seed + (li + 1) * 9973) >>> 0, label: L.label, cy: 0 };
   const side = clamp(thickness, 64, 420);
-  const lut = terrainLutFor(state.color);
+  const lut = terrainLutFor(L.color);
   const reach = thickness + layer.spireHeight;
   const cols = Math.ceil(WORLD_W / side), rows = Math.ceil(reach / side);
   const out = [];
   for (let r = 0; r < rows; r++) {   // matches buildTerrain in game.js — no off-world seam row
-    layer.cy = layer.at === "top" ? side / 2 + r * side : WORLD_H - side / 2 - r * side;
+    layer.cy = slotKey === "top" ? side / 2 + r * side : WORLD_H - side / 2 - r * side;
     for (let i = 0; i < cols; i++) {
-      const c = makeTerrainChunk(layer, (i + 0.5) * side, side, lut, 9973, false);
+      const c = makeTerrainChunk(layer, (i + 0.5) * side, side, lut, layer.seed, false);
       if (c) out.push(c);
     }
   }
@@ -272,93 +307,146 @@ function buildChunks(porosityOverride) {
 }
 
 function render() {
-  const { chunks, reach, side } = buildChunks();
+  const live = liveSlots();
+  const built = live.map((k) => Object.assign({ key: k }, buildSlot(k)));
   const cv = $("view"), ctx = cv.getContext("2d");
-  const fromTop = state.at === "top";
-  // frame the layer plus a strip of water, so you can judge how far it reaches into the sea
-  const band = Math.min(WORLD_H, reach + 220);
-  const top = fromTop ? -60 : WORLD_H - band + 60;
+
+  // Frame what exists. One layer: that layer plus a strip of water, so you can judge how far it
+  // reaches into the sea. Both: the whole column, because the water left between them is the level.
+  let top, band;
+  if (live.length === 2) { top = 0; band = WORLD_H; }
+  else if (live.length === 1) {
+    const only = built[0];
+    band = Math.min(WORLD_H, only.reach + 220);
+    top = only.key === "top" ? -60 : WORLD_H - band + 60;
+  } else { top = 0; band = WORLD_H; }               // nothing on: an empty column
   const scale = cv.width / WORLD_W;
   cv.height = Math.round(band * scale);
 
   ctx.fillStyle = "#05131a";
   ctx.fillRect(0, 0, cv.width, cv.height);
 
-  let solid = 0, bytes = 0;
-  for (const p of chunks) {
-    bytes += (p.n * p.cs) ** 2 * 4;
-    const depth = surfaceDepth(p);
-    for (let gj = 0; gj < p.n; gj++) for (let gi = 0; gi < p.n; gi++) {
-      const idx = gj * p.n + gi;
-      if (p.y >= 0 && p.y <= WORLD_H && p.grid[idx] > 0) solid++;
-      if (p.grid[idx] <= 0) continue;
-      const wx = p.x + (gi + 0.5) * p.cs - p.half;
-      const wy = p.y + (gj + 0.5) * p.cs - p.half;
-      ctx.fillStyle = p.terrainLut[Math.min(depth[idx], GRAIN_MAXD)];
-      ctx.fillRect((wx - p.cs / 2) * scale, (wy - top - p.cs / 2) * scale,
-                   p.cs * scale + 0.6, p.cs * scale + 0.6);
+  let bytes = 0, chunkCount = 0;
+  const solidBySlot = {};
+  for (const b of built) {
+    let solid = 0;
+    for (const p of b.chunks) {
+      bytes += (p.n * p.cs) ** 2 * 4; chunkCount++;
+      const depth = surfaceDepth(p);
+      for (let gj = 0; gj < p.n; gj++) for (let gi = 0; gi < p.n; gi++) {
+        const idx = gj * p.n + gi;
+        if (p.grid[idx] <= 0) continue;
+        if (p.y >= 0 && p.y <= WORLD_H) solid++;
+        const wx = p.x + (gi + 0.5) * p.cs - p.half;
+        const wy = p.y + (gj + 0.5) * p.cs - p.half;
+        ctx.fillStyle = p.terrainLut[Math.min(depth[idx], GRAIN_MAXD)];
+        ctx.fillRect((wx - p.cs / 2) * scale, (wy - top - p.cs / 2) * scale,
+                     p.cs * scale + 0.6, p.cs * scale + 0.6);
+      }
     }
+    solidBySlot[b.key] = solid;
   }
 
-  // the world boundary
+  // world boundaries, and the swimmable gap between a ceiling and a floor
   ctx.save();
   ctx.strokeStyle = "rgba(87,224,192,.5)"; ctx.setLineDash([6, 5]); ctx.lineWidth = 1;
-  const edgeY = (fromTop ? 0 : WORLD_H) - top;
-  ctx.beginPath(); ctx.moveTo(0, edgeY * scale); ctx.lineTo(cv.width, edgeY * scale); ctx.stroke();
+  for (const edge of [0, WORLD_H]) {
+    const y = (edge - top) * scale;
+    if (y < -2 || y > cv.height + 2) continue;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(cv.width, y); ctx.stroke();
+  }
   ctx.restore();
 
   // Pore space means voids threaded through the MASS, so measure against the same layer with the pores
   // switched off. Comparing against the chunk area instead would mostly be counting the open water
   // above the spires, which tells you nothing about whether there is anywhere to shelter.
-  let poreless = 0;
-  for (const p of buildChunks(0).chunks) {
-    if (p.y < 0 || p.y > WORLD_H) continue;
-    for (let k = 0; k < p.grid.length; k++) if (p.grid[k] > 0) poreless++;
+  const editing = state.editing, ed = cur();
+  let pore = 0;
+  if (ed.on) {
+    let poreless = 0;
+    for (const p of buildSlot(editing, 0).chunks) {
+      if (p.y < 0 || p.y > WORLD_H) continue;
+      for (let k = 0; k < p.grid.length; k++) if (p.grid[k] > 0) poreless++;
+    }
+    pore = poreless ? clamp(1 - (solidBySlot[editing] || 0) / poreless, 0, 1) : 0;
   }
-  const pore = poreless ? clamp(1 - solid / poreless, 0, 1) : 0;
   let tallest = 0;
-  for (let x = 0; x < WORLD_W; x += 4) {
-    const h = terrainSpireLift({ spires: state.spires, spireHeight: state.spireHeight,
-                                 spireWidth: state.spireWidth, seed: 9973 }, x);
-    if (h > tallest) tallest = h;
+  if (ed.on) {
+    const li = liveSlots().indexOf(editing);
+    const sd = (state.seed + (li + 1) * 9973) >>> 0;
+    for (let x = 0; x < WORLD_W; x += 4) {
+      const h = terrainSpireLift({ spires: ed.spires, spireHeight: ed.spireHeight,
+                                   spireWidth: ed.spireWidth, seed: sd }, x);
+      if (h > tallest) tallest = h;
+    }
   }
+  // How much open water is left between the ceiling and the floor — the room the player actually has.
+  let gap = WORLD_H;
+  for (const b of built) gap -= b.reach;
   const mb = bytes / 1048576;
   $("stats").innerHTML =
-    stat(Math.round(pore * 100) + "%", "of mass is pore", pore < 0.05 && state.porosity > 0) +
-    stat(Math.round(reach) + " px", "total reach") +
+    stat(Math.round(pore * 100) + "%", (editing === "top" ? "ceiling" : "floor") + " is pore",
+         ed.on && pore < 0.05 && ed.porosity > 0) +
+    stat(Math.max(0, Math.round(gap)) + " px", "open water", gap < 400) +
     stat(Math.round(tallest) + " px", "tallest spire") +
-    stat(chunks.length, "chunks") +
-    stat(mb.toFixed(1) + " MB", "canvas", mb > 14);
+    stat(chunkCount, "chunks") +
+    stat(mb.toFixed(1) + " MB", "canvas", mb > 20);
+  $("seedShown").textContent = String(state.seed);
 
-  const json = { at: state.at, thickness: Math.round(state.thickness), color: state.color, label: state.label,
-                 roughness: +(+state.roughness).toFixed(2), porosity: +(+state.porosity).toFixed(2),
-                 poreSize: Math.round(state.poreSize), featureSize: Math.round(state.featureSize) };
-  if (state.spires > 0 && state.spireHeight > 0) {
-    json.spires = +(+state.spires).toFixed(2);
-    json.spireHeight = Math.round(state.spireHeight);
-    json.spireWidth = Math.round(state.spireWidth);
+  const arr = live.map((k) => layerJson(state[k], k));
+  $("json").value = arr.length
+    ? '"terrain": ' + JSON.stringify(arr, null, 2).split("\\n").join("\\n")
+    : "// no layers — switch on a ceiling or a floor";
+}
+
+// One slot as the object a scenario's terrain array holds. Optional fields are omitted when unused so
+// the emitted JSON stays the minimum that describes the design.
+function layerJson(L, slotKey) {
+  const json = { at: slotKey, thickness: Math.round(L.thickness), color: L.color, label: L.label,
+                 roughness: +(+L.roughness).toFixed(2), porosity: +(+L.porosity).toFixed(2),
+                 poreSize: Math.round(L.poreSize), featureSize: Math.round(L.featureSize) };
+  if (L.spires > 0 && L.spireHeight > 0) {
+    json.spires = +(+L.spires).toFixed(2);
+    json.spireHeight = Math.round(L.spireHeight);
+    json.spireWidth = Math.round(L.spireWidth);
   }
-  if (state.warp > 0) json.warp = +(+state.warp).toFixed(2);
-  $("json").value = '"terrain": [\\n  ' + JSON.stringify(json, null, 2).split("\\n").join("\\n  ") + "\\n]";
+  if (L.warp > 0) json.warp = +(+L.warp).toFixed(2);
+  return json;
 }
 const stat = (v, l, warn) =>
   '<div class="stat' + (warn ? " warn" : "") + '"><b>' + v + "</b><span>" + l + "</span></div>";
 
 function syncInputs() {
-  for (const k of KEYS) { $(k).value = state[k]; $(k + "-o").textContent = fmt[k](state[k]); }
-  $("color").value = state.color;
-  $("label").value = state.label;
-  for (const b of $("anchor").children) b.setAttribute("aria-pressed", String(b.dataset.at === state.at));
+  const L = cur();
+  for (const k of KEYS) { $(k).value = L[k]; $(k + "-o").textContent = fmt[k](L[k]); }
+  $("color").value = L.color;
+  $("label").value = L.label;
+  for (const b of $("slots").children) {
+    b.setAttribute("aria-pressed", String(b.dataset.slot === state.editing));
+    b.classList.toggle("on", state[b.dataset.slot].on);
+  }
+  $("slotOn").checked = L.on;
+  $("slotOnLabel").textContent = (state.editing === "top" ? "Ceiling" : "Floor") + " is in this level";
+  // Switched-off layers keep their controls visible but inert, so you can see the design you set aside.
+  for (const card of document.querySelectorAll("[data-layercard]")) card.classList.toggle("off-dim", !L.on);
 }
 
 for (const k of KEYS) $(k).addEventListener("input", (e) => {
-  state[k] = Number(e.target.value); $(k + "-o").textContent = fmt[k](state[k]); render();
+  cur()[k] = Number(e.target.value); $(k + "-o").textContent = fmt[k](cur()[k]); render();
 });
-$("color").addEventListener("input", (e) => { state.color = e.target.value; render(); });
-$("label").addEventListener("input", (e) => { state.label = e.target.value; render(); });
-$("anchor").addEventListener("click", (e) => {
+$("color").addEventListener("input", (e) => { cur().color = e.target.value; render(); });
+$("label").addEventListener("input", (e) => { cur().label = e.target.value; render(); });
+$("slots").addEventListener("click", (e) => {
   const b = e.target.closest("button"); if (!b) return;
-  state.at = b.dataset.at; syncInputs(); render();
+  state.editing = b.dataset.slot; syncInputs(); render();
+});
+$("slotOn").addEventListener("change", (e) => {
+  cur().on = e.target.checked; syncInputs(); render();
+});
+// Reshuffle: a different instance of the SAME design. The game re-rolls the seed every run, so this is
+// what the player will actually experience — the settings fix the character, not the exact layout.
+$("reshuffle").addEventListener("click", () => {
+  state.seed = (Math.random() * 0x7fffffff) >>> 0; render();
 });
 // Your own saved presets live in localStorage, shown after the built-ins with a delete affremove.
 const MINE_KEY = "bacteria_terrain_presets";
@@ -371,13 +459,22 @@ function renderPresets() {
   $("presets").innerHTML = built + mine;
 }
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+// Applying a preset targets the slot the preset BELONGS to — clicking "sea ice" gives you sea ice as a
+// ceiling, whichever tab you were on — switches on that slot, and moves you there to keep editing.
+function applyPreset(p) {
+  if (!p) return;
+  const slot = p.at === "top" ? "top" : "bottom";
+  Object.assign(state[slot], p, { on: true });
+  state.editing = slot;
+  syncInputs(); render();
+}
 $("presets").addEventListener("click", (e) => {
   const del = e.target.closest("[data-del]");
   if (del) { e.stopPropagation(); const all = myPresets(); delete all[del.dataset.del]; saveMine(all); renderPresets(); return; }
   const mineBtn = e.target.closest("[data-mine]");
-  if (mineBtn) { Object.assign(state, myPresets()[mineBtn.dataset.mine]); syncInputs(); render(); return; }
+  if (mineBtn) { applyPreset(myPresets()[mineBtn.dataset.mine]); return; }
   const b = e.target.closest("[data-p]"); if (!b) return;
-  Object.assign(state, PRESETS[b.dataset.p]); syncInputs(); render();
+  applyPreset(PRESETS[b.dataset.p]);
 });
 renderPresets();
 
@@ -391,12 +488,11 @@ const RND_MATERIALS = {
 };
 const rnd = (a, b) => a + Math.random() * (b - a);
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-$("random").addEventListener("click", () => {
-  const at = pick(["top", "bottom"]);
-  const [color, label] = pick(RND_MATERIALS[at]);
+function randomLayer(slotKey) {
+  const [color, label] = pick(RND_MATERIALS[slotKey]);
   const spiry = Math.random() < 0.5, warpy = Math.random() < 0.5;
-  Object.assign(state, {
-    at, color, label,
+  return {
+    on: true, color, label,
     thickness: Math.round(rnd(120, 420)),
     roughness: +rnd(0.2, 0.9).toFixed(2),
     porosity: +rnd(0.2, 0.6).toFixed(2),
@@ -406,37 +502,47 @@ $("random").addEventListener("click", () => {
     spireHeight: spiry ? Math.round(rnd(120, 340)) : 0,
     spireWidth: Math.round(rnd(40, 130)),
     warp: warpy ? +rnd(0.3, 0.8).toFixed(2) : 0,
-  });
+  };
+}
+$("random").addEventListener("click", () => {
+  // Sometimes a floor alone, sometimes a floor under a ceiling — a bare ceiling over open ocean is a
+  // rarer thing to want, so it only turns up as half of a pair.
+  const both = Math.random() < 0.4;
+  Object.assign(state.bottom, randomLayer("bottom"));
+  if (both) Object.assign(state.top, randomLayer("top")); else state.top.on = false;
+  state.editing = "bottom";
+  state.seed = (Math.random() * 0x7fffffff) >>> 0;
   syncInputs(); render();
 });
 
 $("save").addEventListener("click", () => {
-  const name = prompt("Save this terrain as:", state.label || "my terrain");
+  const name = prompt("Save this " + (state.editing === "top" ? "ceiling" : "floor") + " as:", cur().label || "my terrain");
   if (!name || !name.trim()) return;
   const all = myPresets();
-  // store a plain copy of the current knobs, so editing state later doesn't mutate the saved one
-  all[name.trim().slice(0, 40)] = JSON.parse(JSON.stringify(state));
+  // A preset is ONE layer, tagged with the slot it belongs to, so loading it later knows where it goes.
+  // Copied, so editing the live state afterwards doesn't mutate what was saved.
+  all[name.trim().slice(0, 40)] = Object.assign(JSON.parse(JSON.stringify(cur())), { at: state.editing });
   saveMine(all); renderPresets();
   $("said").textContent = "Saved to this browser"; setTimeout(() => { $("said").textContent = ""; }, 1800);
 });
 
-// The terrain array exactly as it goes on the wire — the same object the JSON panel shows.
-function currentTerrain() {
-  const json = { at: state.at, thickness: Math.round(state.thickness), color: state.color, label: state.label,
-                 roughness: +(+state.roughness).toFixed(2), porosity: +(+state.porosity).toFixed(2),
-                 poreSize: Math.round(state.poreSize), featureSize: Math.round(state.featureSize) };
-  if (state.spires > 0 && state.spireHeight > 0) {
-    json.spires = +(+state.spires).toFixed(2); json.spireHeight = Math.round(state.spireHeight); json.spireWidth = Math.round(state.spireWidth);
-  }
-  if (state.warp > 0) json.warp = +(+state.warp).toFixed(2);
-  return [json];
-}
+// The terrain array exactly as it goes on the wire — the same layers the JSON panel shows.
+function currentTerrain() { return liveSlots().map((k) => layerJson(state[k], k)); }
 
 // Seed a whole scenario built around this terrain. Posts to the game's own request endpoint, which
 // validates the terrain, queues it, and returns the id the generated level will have — then we watch
 // the library for it to land, exactly like the in-game paper form does.
 let seedPoll = null;
+// Both buttons need at least one layer: an empty terrain array is not a design, and the endpoint would
+// reject it anyway — better to say so here than to make a round trip to find out.
+const needLayers = () => {
+  if (currentTerrain().length) return true;
+  $("said").textContent = "Switch on a ceiling or a floor first.";
+  setTimeout(() => { $("said").textContent = ""; }, 2200);
+  return false;
+};
 $("seed").addEventListener("click", async () => {
+  if (!needLayers()) return;
   const name = prompt("Credit this level to a name? (optional — leave blank to stay anonymous)", "") || "";
   $("seed").disabled = true;
   $("said").textContent = "Sending…"; $("said").style.color = "";
@@ -471,6 +577,7 @@ function watchForScenario(id, startedAt) {
 // Fly the current terrain in the real game: a base64url'd terrain array on the game's own URL, which
 // the game validates exactly like any scenario before building it.
 $("launch").addEventListener("click", () => {
+  if (!needLayers()) return;
   const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(currentTerrain())))).replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/, "");
   window.open("../index.html?labterrain=" + b64, "_blank", "noopener");
 });
