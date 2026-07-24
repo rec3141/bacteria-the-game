@@ -79,4 +79,33 @@ const endGame = game.slice(game.indexOf("function endGame()"), game.indexOf("con
 assert.match(endGame, /deleteSavedGame\(\); gameOver\(\)/,
   "the player's explicit End Game action discards their saved run");
 
-console.log("Saved-game contracts OK: exact snapshots, retry fallback, and explicit End Game deletion checked.");
+// ---- a resumed run must come back to the SAME ocean ----------------------------------------------
+// A checkpoint stored the scenario's numbers (cfg) but not its world, so resuming a scenario run
+// silently dropped the sea floor and ice ceiling, the depth stratification and chemical plume, the
+// authored particle set, and the scenario id on the score. Everything still ran — it was just the
+// wrong ocean, which is exactly the kind of failure nobody reports as a bug.
+{
+  const record = game.slice(game.indexOf("schema: CHECKPOINT_SCHEMA"), game.indexOf("return structuredClone(raw)"));
+  assert.match(record, /scenario: activeScenario \? JSON\.parse\(JSON\.stringify\(activeScenario\)\) : null/,
+    "the checkpoint must record which scenario the run was played in");
+  assert.match(record, /terrainSeed: terrainRunSeed/,
+    "and its terrain seed, or the seabed re-rolls under a returning player's cells");
+
+  const restore = game.slice(game.indexOf("function restoreCheckpoint"), game.indexOf("function controlledCell"));
+  assert.match(restore, /applyScenarioWorld\(record\.scenario\)/, "restore must rebuild the scenario's world");
+  assert.match(restore, /buildTerrain\(record\.scenario \? record\.scenario\.terrain : null\)/,
+    "restore must rebuild the terrain");
+  assert.match(restore, /terrainRunSeed = Number\(record\.terrainSeed\) \|\| 0/,
+    "restore must reinstate the saved seed BEFORE building, or the layout changes");
+  // order matters: substrates resolve against partSet, which only holds the scenario's authored
+  // particle types once applyScenarioWorld has run
+  assert.ok(restore.indexOf("applyScenarioWorld") < restore.indexOf("E.substrates.map"),
+    "the scenario's particle set must be installed before the substrates are restored against it");
+  // and the world half must not re-apply cfg, which commitCfg already restored WITH the player's tuning
+  const worldFn = game.slice(game.indexOf("function applyScenarioWorld"), game.indexOf("function applyScenario(sc)"));
+  assert.ok(!/commitCfg/.test(worldFn), "applyScenarioWorld must not touch CFG — restore already did");
+  assert.match(restore, /cfgBaseline = cloneCfg\(record\.scenario\.cfg/,
+    "a resumed scenario run must measure 'tuned' against the scenario, not the stock defaults");
+}
+
+console.log("Saved-game contracts OK: exact snapshots, retry fallback, explicit End Game deletion, and scenario/terrain restore checked.");

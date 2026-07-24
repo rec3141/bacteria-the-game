@@ -1592,6 +1592,12 @@
         tuned: cfgTuned(), savedAt,
       },
       world: { width: WORLD_W, height: WORLD_H, yWrap: worldYWrap }, cam: { x: cam.x, y: cam.y }, flagPhase,
+      // WHICH OCEAN this was. Without it a resumed run kept the scenario's numbers but lost its world:
+      // no sea floor or ice ceiling, no depth stratification or chemical plume, no authored particle
+      // set, and no scenario id on the score. The terrain seed rides along so the seabed a player
+      // saved is the one they come back to, rather than a fresh roll under their settled cells.
+      scenario: activeScenario ? JSON.parse(JSON.stringify(activeScenario)) : null,
+      terrainSeed: terrainRunSeed,
       cfg: JSON.parse(JSON.stringify(CFG)), state,
       entities: {
         cells, substrates: substrates.map(checkpointSubstrate), enzymes, toxins, eps: epsBlocks,
@@ -1791,7 +1797,16 @@
     commitCfg(restoredCfg);
     if (adminRows.length) syncAdmin();
     setWorld(record.world.width, record.world.height);
+    // Rebuild the scenario's WORLD before anything reads it: the substrate restore below resolves each
+    // saved particle against partSet, which only holds the scenario's authored types once this has run.
+    // applyScenarioWorld deliberately leaves CFG alone — commitCfg above already restored it, the
+    // player's tuning included — but the baseline moves to the scenario's own env, so a resumed
+    // scenario run is not mistaken for a hand-tuned one and withheld from the leaderboard.
+    terrainRunSeed = Number(record.terrainSeed) || 0;
+    if (record.scenario) { applyScenarioWorld(record.scenario); cfgBaseline = cloneCfg(record.scenario.cfg || CFG); }
+    else { activeScenario = null; columnState = null; cfgBaseline = CFG_DEFAULTS; }
     setWorldYMode(record.world.yWrap !== false); // older checkpoints (no yWrap) restore as the classic torus
+    buildTerrain(record.scenario ? record.scenario.terrain : null);
     state = record.state; cells = E.cells;
     // EPS was a boolean in schema-1 checkpoints before expression became countable. Number(true)
     // migrates an old producer to level 1 without invalidating a player's saved day.
@@ -6361,11 +6376,10 @@
   }
   // Apply a validated scenario for the whole session: overlay its env onto CFG and re-skin the resources
   // (colour + enzyme name). The adaptation-pool re-weighting reads activeScenario directly at draw time.
-  function applyScenario(sc) {
-    if (!sc) return;
-    commitCfg(sc.cfg);
-    // The scenario's env is the baseline now, not the stock defaults — a scenario run is not "tuned".
-    cfgBaseline = cloneCfg(CFG);
+  // Everything a scenario does to the WORLD, with no opinion about CFG. Split out from applyScenario
+  // so restoring a checkpoint can rebuild the same ocean without overwriting the constants the save
+  // already restored — which may include the player's own tuning layered on top of the scenario.
+  function applyScenarioWorld(sc) {
     for (const r of sc.resources || []) {
       if (r.color) RESOURCES[r.index].color = r.color;
       if (r.enzymeLabel) RESOURCES[r.index].enzyme = r.enzymeLabel;
@@ -6376,6 +6390,13 @@
     if (sc.column && sc.column.enabled) { columnState = deriveColumn(sc.column); setWorldYMode(false); }
     else { columnState = null; setWorldYMode(true); }
     activeScenario = sc;
+  }
+  function applyScenario(sc) {
+    if (!sc) return;
+    commitCfg(sc.cfg);
+    // The scenario's env is the baseline now, not the stock defaults — a scenario run is not "tuned".
+    cfgBaseline = cloneCfg(CFG);
+    applyScenarioWorld(sc);
   }
   // Show a scenario's citation, with the DOI in it turned into a link to the paper. Built from DOM
   // nodes rather than innerHTML: the citation is authored by the generator from a stranger's DOI, so
