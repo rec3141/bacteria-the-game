@@ -28,7 +28,7 @@ SITE_URL="${SITE_URL:-https://bacteria.cryomics.org/}"
 # .htaccess ships too: without it DreamHost caches .js for 30 DAYS, which pins a phone to
 # whichever build it happened to download first. A new docroot must never inherit that.
 FILES=(index.html game.js scores.php score_schema.php feedback.php scenario-request.php README.md
-       Bacteria.swf assets manifest.webmanifest icon.svg .htaccess)
+       Bacteria.swf assets tools manifest.webmanifest icon.svg .htaccess)
 
 FORCE=0
 [ "${1:-}" = "--force" ] && FORCE=1
@@ -108,6 +108,11 @@ fi
 BUILD="$(git rev-parse --short HEAD 2>/dev/null || echo dev)-$(date +%y%m%d%H%M)"
 echo "==> deploy game files (build $BUILD) → $REMOTE"
 echo "    (anything replaced is preserved in $BACKUP_DIR)"
+# The terrain lab is GENERATED from game.js, so regenerate it before staging — otherwise a game.js
+# change ships alongside a lab built against the old one, and the preview quietly lies. Best-effort:
+# if node isn't around, fall back to whatever is committed rather than abort the whole deploy.
+if command -v node >/dev/null 2>&1; then node tools/build-terrain-lab.mjs >/dev/null || true; fi
+
 # Stamp in a copy, never in the working tree — deploying must not dirty the repo.
 STAGE="$(mktemp -d)"
 cp -R "${FILES[@]}" "$STAGE"/
