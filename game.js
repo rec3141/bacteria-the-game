@@ -225,7 +225,16 @@
       // and starves outside it — so the field is somewhere you must STAY, which is the whole mechanic.
       // It was 20, which is more than the best feeding in the game: a plume-dweller divided every 4s
       // and hit the 10k cell cap inside a minute. A scenario scales this with column.chemical.strength.
-      chemRate: 5 },
+      chemRate: 5,
+      // PHOTOSYNTHESIS: energy/s a phototroph gains in FULL light. Higher than chemRate on purpose,
+      // because light is the harder living: it attenuates with depth AND follows the diel cycle, so a
+      // phototroph earns nothing at night and must bank a reserve by day or cyst through the dark.
+      // At 8 a surface phototroph divides every ~9s at noon but nothing at midnight — about 19s
+      // averaged over a full day, which lands beside the chemolithotroph's 19s. It also has to carry
+      // an anoxygenic photolithotroph, which needs light AND its chemical: that pair peaks around 0.37
+      // in the Winogradsky columns, so 8 makes their overlap band a ~33s division — tight, which is
+      // the point of the band — where 5 made it 76s and the level stalled.
+      photoRate: 8 },
     // trophic role-swap: when your whole population dies you flip to the other trophic level
     // instead of a game-over — bacteria extinct → you become a protist (grazer); protists extinct → back to a bacterium.
     cycle: { reseedBacteria: 16, reseedProtists: 4, protistThrust: 240, protistEatScore: 30,
@@ -1063,7 +1072,7 @@
       tumbling: false, runTimer: rand(CFG.cell.runMin, CFG.cell.runMax), tumbleT: 0, tumbleTarget: angle,
       fed: 0, enzCd: rand(CFG.cell.enzymeCooldown[0], CFG.cell.enzymeCooldown[1]),
       infectedGreen: false, viralLoad: 0, lysisT: 0, chemotaxis: false, chemoLevel: 0, crispr: false, antibiotic: 0,
-      twitching: false, eps: 0, chemolithotroph: false, epsCd: rand(CFG.eps.cooldown[0], CFG.eps.cooldown[1]), toxT: 0,
+      twitching: false, eps: 0, chemolithotroph: false, phototroph: false, epsCd: rand(CFG.eps.cooldown[0], CFG.eps.cooldown[1]), toxT: 0,
       // This cell's OWN adaptation log, in the order it was acquired — inherited whole by its
       // daughters. The player's run-level log (state.upgrades) only ever knew about the cell you were
       // steering; this is what lets every lineage on the chart show its own genome. phylo preserves
@@ -1553,7 +1562,7 @@
       predRespawn: CFG.predator.immigrateEvery, predExtinct: false, // respawn interval halves each time protists go fully extinct
       predResist: 0, // protist antibiotic resistance (0-1 damage reduction); ratchets up on each extinction — a co-evolutionary arms race
       mortLive: [0, 0, 0, 0], mortFull: [0, 0, 0, 0], // cause-of-death tallies (grazing/viral/starvation/antibiotic) per sample interval
-      calLive: [0, 0, 0, 0, 0], calFull: [0, 0, 0, 0, 0], // calorie intake by source (lipid/protein/carb/protist-biomass/phage-CRISPR) per sample interval
+      calLive: [0, 0, 0, 0, 0, 0], calFull: [0, 0, 0, 0, 0, 0], // calorie intake by source (lipid/protein/carb/protist-biomass/phage-CRISPR/autotrophy) per sample interval
       lifeLive: new Array(LIFE_BINS).fill(0), lifeFull: new Array(LIFE_BINS).fill(0), // age-at-death histogram (log2 lifespan bins) per sample interval
       tod: tod0, light: dielLight(tod0), foodTarget: seedFood, graze: 1, foodT: 0, // diel state (updateDiel refreshes each frame)
       chartT: 0, history: [], fullT: 0, fullHist: [], fullInterval: 1, upgrades: [],
@@ -2299,7 +2308,7 @@
                       crispr: !!c.crispr, antibiotic: c.antibiotic || 0, twitching: !!c.twitching, eps: c.eps || 0,
                       // the seed bank is what cysts revive from, so it has to carry the metabolism too —
                       // otherwise a vent community comes back from its own cysts unable to feed
-                      chemolithotroph: !!c.chemolithotroph,
+                      chemolithotroph: !!c.chemolithotroph, phototroph: !!c.phototroph,
                       ups: (c.ups || []).slice(0, 512),
                       phylo: (c.phylo || c.ups || []).slice(0, 512) });
     if (state.dead.length > 400) state.dead.shift();   // a rolling bank, not an ever-growing one
@@ -2331,7 +2340,10 @@
     c.enzLvl[0] = g.enzLvl[0]; c.enzLvl[1] = g.enzLvl[1]; c.enzLvl[2] = Math.max(1, g.enzLvl[2]);
     c.chemoLevel = g.chemoLevel | 0; c.chemotaxis = c.chemoLevel > 0;
     c.antibiotic = g.antibiotic | 0; c.eps = g.eps | 0; c.crispr = !!g.crispr; c.twitching = !!g.twitching;
-    c.chemolithotroph = !!g.chemolithotroph;   // #30: chemosynthesizer — feeds on the dissolved chemical field
+    // #30: the two autotrophies. Either alone feeds the cell from its gradient; both together is
+    // anoxygenic photosynthesis, which needs light AND the chemical (see the intake in updateCell).
+    c.chemolithotroph = !!g.chemolithotroph;
+    c.phototroph = !!g.phototroph;
   }
   function immigrateBacteria(n) { // a diversity of bacteria drift in from offscreen (varied genomes)
     for (let i = 0; i < n && cells.length < CFG.cell.maxCells; i++) {
@@ -2606,6 +2618,7 @@
     // both daughters reverted to heterotrophy — with the enzLvl [0,0,1] a chemolithotroph is authored
     // with, which is next to no digestive ability — and the whole lineage starved within the minute.
     d1.chemolithotroph = d2.chemolithotroph = !!c.chemolithotroph;
+    d1.phototroph = d2.phototroph = !!c.phototroph;
     d1.enzLvl = c.enzLvl.slice(); d2.enzLvl = c.enzLvl.slice();
     d1.ups = d2.ups = c.ups || [];   // the adaptation log is heritable too (shared until one of them adapts)
     d1.phylo = d2.phylo = c.phylo || c.ups || []; // event ancestry survives gain and gene loss alike
@@ -3036,7 +3049,23 @@
     c.energy -= CFG.respirationBase*env.metabolismMult*sizeF*metab*genomeF*dt;
     // CHEMOLITHOTROPHY: a chemosynthesizer fixes carbon from the dissolved chemical field at its depth,
     // gaining energy without eating a particle — this is its whole living. It has to STAY in the plume.
-    if (c.chemolithotroph && !c.cyst) c.energy += chemAt(c.y)*CFG.column.chemRate*dt;
+    // AUTOTROPHY: fixing carbon without eating anything. Light alone is oxygenic photosynthesis (a
+    // cyanobacterium splitting water); a reduced chemical alone is chemolithotrophy (Sulfurovum on
+    // vent H2S, a nitrifier on ammonia). BOTH together is anoxygenic photosynthesis — a purple sulfur
+    // bacterium needs light for the energy AND sulfide as its electron donor, and neither alone will
+    // do. So the supply is Liebig's law of the minimum: the scarcer of the two inputs sets the rate,
+    // which is why a Winogradsky organism has to find the band where the falling light gradient and
+    // the rising sulfide gradient overlap. An absent requirement is 1, so it never limits.
+    if (!c.cyst && (c.phototroph || c.chemolithotroph)) {
+      const light = c.phototroph ? clamp(columnLightAt(c.y), 0, 1) : 1;
+      const chem = c.chemolithotroph ? chemAt(c.y) : 1;
+      const rate = c.phototroph ? CFG.column.photoRate : CFG.column.chemRate;
+      const fixed = Math.min(light, chem) * rate * dt;
+      c.energy += fixed;
+      // logged like any other intake, so the calories chart shows a bloom being fed by the plume or
+      // the sunlit shallows rather than leaving its energy unaccounted for
+      state.calLive[CAL_AUTO] += fixed; state.calFull[CAL_AUTO] += fixed;
+    }
     if (c.invuln > 0) c.invuln -= dt;
     if (c.toxT > 0) c.toxT -= dt; // antibiotic-poisoned marker fades (so a death here still counts as antibiotic)
     if (c.energy <= 0) { c.energy = 0; killCell(c, false); return; }
@@ -3073,12 +3102,24 @@
     // runs, not curves — and the bias (run extension) strengthens with chemoLevel.
     let upGrad = false;
     if (c.chemotaxis) {
-      const range = CFG.cell.chemoRange0 + c.chemoLevel*CFG.cell.chemoRangePer;
-      const s = nearestOrganicSub(c, range);
-      if (s) { const d = Math.hypot(dx(s.x, c.x), dy(s.y, c.y));
-        if (c.prevFoodDist != null && d < c.prevFoodDist) upGrad = true; // concentration rising along this run
-        c.prevFoodDist = d;
-      } else c.prevFoodDist = null;
+      // A cell tracks WHAT IT EATS. An autotroph feeds on a depth gradient, not on particles, so
+      // sensing the nearest food was worse than useless for one: it steered a chemolithotroph out of
+      // its plume and toward debris it has no enzymes to digest. Same run-and-tumble either way —
+      // only the quantity being compared along the run changes.
+      if (c.phototroph || c.chemolithotroph) {
+        const light = c.phototroph ? clamp(columnLightAt(c.y), 0, 1) : 1;
+        const chem = c.chemolithotroph ? chemAt(c.y) : 1;
+        const supply = Math.min(light, chem);      // the same limiting factor that feeds it
+        if (c.prevSupply != null && supply > c.prevSupply) upGrad = true;
+        c.prevSupply = supply;
+      } else {
+        const range = CFG.cell.chemoRange0 + c.chemoLevel*CFG.cell.chemoRangePer;
+        const s = nearestOrganicSub(c, range);
+        if (s) { const d = Math.hypot(dx(s.x, c.x), dy(s.y, c.y));
+          if (c.prevFoodDist != null && d < c.prevFoodDist) upGrad = true; // concentration rising along this run
+          c.prevFoodDist = d;
+        } else c.prevFoodDist = null;
+      }
     }
     if (c.tumbling) {
       c.angle += clamp(angleTo(c.angle, c.tumbleTarget), -CFG.cell.tumbleTurn*dt, CFG.cell.tumbleTurn*dt);
@@ -4085,6 +4126,9 @@
   // Colors: dataviz skill's validated 8-hue categorical palette (dark, CVD-safe order).
   const CHART = { interval: 0.5, samples: 200, W: 800, H: 96, subH: 64, surface: "#06181d" };
   const TRAIT_COLOR = ["#3987e5", "#199e70", "#c98500", "#008300", "#9085e9", "#e66767", "#d55181", "#d95926"];
+  // Autotrophy's chart colour: a warm gold that reads as sunlight and as a sulfide plume alike, and
+  // sits apart from the three resource colours and the pink/green of protists and phage.
+  const AUTO_COLOR = "#ffd24a";
   const PROTIST_COLOR = "#ff9ec0", VIRUS_COLOR = "#8bf06a", CYST_COLOR = "#9aa6a0", CRISPR_COLOR = "#c39bff", TOXIN_COLOR = "#f05ad0",
         TWITCH_COLOR = "#4fe3ff", EPS_COLOR = "#d8b86a";
   // cause-of-mortality series (index order matches MORT_IDX: grazing / viral / starvation / antibiotic)
@@ -4093,9 +4137,9 @@
   // Calorie/energy intake by source, so you can see WHERE a boom is being fed from. Indices 0-2 are the
   // food resources (lipid/protein/carb); protist biomass and phage-harvest are the two "living" sources
   // worth watching for a runaway feedback. CAL_PROTIST/CAL_PHAGE index into state.calLive/calFull.
-  const CAL_PROTIST = 3, CAL_PHAGE = 4;
-  const CAL_COLORS = [RESOURCES[0].color, RESOURCES[1].color, RESOURCES[2].color, PROTIST_COLOR, VIRUS_COLOR];
-  const CAL_LABELS = ["lipid", "protein", "carb", "protists", "phage"];
+  const CAL_PROTIST = 3, CAL_PHAGE = 4, CAL_AUTO = 5;   // 5 = carbon fixed from light or a chemical, eaten from nothing
+  const CAL_COLORS = [RESOURCES[0].color, RESOURCES[1].color, RESOURCES[2].color, PROTIST_COLOR, VIRUS_COLOR, AUTO_COLOR];
+  const CAL_LABELS = ["lipid", "protein", "carb", "protists", "phage", "autotrophy"];
   // Cell-lifespan spectrogram: bin each cell's age-at-death into log2 buckets (0.5s at bin 0, doubling
   // up to ~1024s). A heatmap of these over time shows turnover — a bright low band means cells are
   // dying young and fast; mass creeping up the axis means they're living longer.
@@ -4104,7 +4148,7 @@
   const lifeBinLabel = (b) => { const s = LIFE_MIN * Math.pow(2, b); return s >= 1 ? Math.round(s) + "s" : s + "s"; };
   function subVals(s, mode = subMode) {
     if (mode === 1) return (s && s.mort) ? s.mort : [0,0,0,0];
-    if (mode === 3) return (s && s.cin) ? s.cin : [0,0,0,0,0];   // calories consumed by source
+    if (mode === 3) return (s && s.cin) ? s.cin : [0,0,0,0,0,0];   // calories consumed by source
     return (s && s.sub) ? s.sub : [0,0,0];
   }
   function subColors(mode = subMode) { return mode === 1 ? MORT_COLORS : mode === 3 ? CAL_COLORS : RESOURCES.map((r) => r.color); }
@@ -4492,7 +4536,10 @@
     const buckets = scoreClientBuckets(value.buckets); if (buckets) out.buckets = buckets;
     const sub = scoreClientVector(value.sub, 3, 1000000); if (sub) out.sub = sub;
     const mort = scoreClientVector(value.mort, 4, 1000000); if (mort) out.mort = mort;
-    const cin = scoreClientVector(value.cin, 5, 100000000); if (cin) out.cin = cin; // calories consumed by source (lipid/protein/carb/protist/phage)
+    // 6 sources now (autotrophy was added); 5-element records predate it and pad with a zero, so
+    // every run already on the board keeps its calorie breakdown instead of silently losing it.
+    const cin = scoreClientVector(value.cin, 6, 100000000) || scoreClientVector(value.cin, 5, 100000000);
+    if (cin) { while (cin.length < 6) cin.push(0); out.cin = cin; }
     const lsp = scoreClientVector(value.lsp, 12, 1000000); if (lsp) out.lsp = lsp; // age-at-death histogram (log2 lifespan bins) for the turnover spectrogram
     const lvl = scoreClientVector(value.lvl, 8, 511); if (lvl) out.lvl = lvl;
     return out;
@@ -6287,7 +6334,7 @@
         if (!id || ids.has(id)) return scReject("organism cell id missing or duplicated");
         ids.add(id);
         const g = c.genome || {};
-        const gErr = scOnlyKeys(g, new Set(["enzLvl", "chemoLevel", "antibiotic", "eps", "crispr", "twitching", "chemolithotroph"]), "genome");
+        const gErr = scOnlyKeys(g, new Set(["enzLvl", "chemoLevel", "antibiotic", "eps", "crispr", "twitching", "chemolithotroph", "phototroph"]), "genome");
         if (gErr) return scReject(gErr);
         const enz = g.enzLvl;
         if (!Array.isArray(enz) || enz.length !== 3) return scReject("genome.enzLvl must have length 3");
@@ -6300,7 +6347,7 @@
         if (c.color != null && !color) return scReject("organism cell color must be #rrggbb");
         organisms.cells.push({ id, label: scStr(c.label, 40) || "", color,
           genome: { enzLvl: [enz[0], enz[1], enz[2]], chemoLevel: g.chemoLevel|0, antibiotic: g.antibiotic|0,
-            eps: g.eps|0, crispr: g.crispr === true, twitching: g.twitching === true, chemolithotroph: g.chemolithotroph === true },
+            eps: g.eps|0, crispr: g.crispr === true, twitching: g.twitching === true, chemolithotroph: g.chemolithotroph === true, phototroph: g.phototroph === true },
           immigrateWeight: iw, bloom: c.bloom === true });
       }
     }

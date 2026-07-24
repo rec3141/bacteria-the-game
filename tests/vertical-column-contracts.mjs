@@ -84,8 +84,20 @@ assert.match(game, /column: \{ sink: \d[\d.]*, buoyEps: \d[\d.]*, deadSink: \d[\
   "column mode has tunable vertical-drift + soft-boundary + chemolithotrophy knobs");
 // chemolithotrophy: a dissolved chemical-energy field + a cell trait that feeds on it
 assert.match(game, /function chemAt\(y\)[\s\S]*?ch\.strength \* Math\.exp/, "the chemical field is a Gaussian plume at its peak depth");
-assert.match(game, /if \(c\.chemolithotroph && !c\.cyst\) c\.energy \+= chemAt\(c\.y\)\*CFG\.column\.chemRate\*dt;/,
-  "a chemolithotroph gains energy from the field at its depth (no particle needed)");
+// Autotrophy: light alone (oxygenic photosynthesis), a chemical alone (chemolithotrophy), or BOTH —
+// which is anoxygenic photosynthesis and needs light for energy AND the chemical as electron donor.
+// Liebig's law of the minimum makes "both" an intersection rather than a sum, so a purple sulfur
+// bacterium has to find where the falling light and rising sulfide gradients overlap.
+assert.match(game, /if \(!c\.cyst && \(c\.phototroph \|\| c\.chemolithotroph\)\)/,
+  "either autotrophy feeds a cell, and neither feeds a dormant cyst");
+assert.match(game, /const light = c\.phototroph \? clamp\(columnLightAt\(c\.y\), 0, 1\) : 1;/,
+  "light limits a phototroph; an absent requirement is 1 so it never limits");
+assert.match(game, /const chem = c\.chemolithotroph \? chemAt\(c\.y\) : 1;/, "and the chemical limits a chemolithotroph");
+assert.match(game, /Math\.min\(light, chem\) \* rate \* dt/,
+  "the SCARCER input sets the rate — a sum would let either gradient alone feed a photolithotroph");
+// it is logged like any other intake, or a plume-fed bloom appears to run on nothing
+assert.match(game, /state\.calLive\[CAL_AUTO\] \+= fixed; state\.calFull\[CAL_AUTO\] \+= fixed;/,
+  "fixed carbon must appear in the calories-consumed chart");
 assert.match(game, /c\.chemolithotroph = !!g\.chemolithotroph;/, "the trait is set from a scenario genome bundle");
 // the field math: peaks at peakFrac, falls off with depth distance, zero without a field
 const chemBlock = game.slice(game.indexOf("function chemAt"), game.indexOf("\n  }", game.indexOf("function chemAt")) + 4);
@@ -298,4 +310,29 @@ console.log("Vertical-column contract OK: Y-mode plumbing, no seam wrap, save/re
   const uptake = Number(game.match(/uptake: ([\d.]+)/)[1]);
   assert.ok(chemRate > 0, "chemosynthesis must actually pay");
   assert.ok(chemRate < uptake, `standing in a plume (${chemRate}/s) must not beat active feeding (${uptake}/s)`);
+}
+
+// ---- both autotrophies are heritable, and chemotaxis follows the gradient that feeds you ----------
+{
+  const divide = game.slice(game.indexOf("function divide(c)"), game.indexOf("function killCell"));
+  assert.match(divide, /d1\.phototroph = d2\.phototroph = !!c\.phototroph/, "phototrophy is heritable too");
+  const bank = game.slice(game.indexOf("state.dead.push({"), game.indexOf("if (state.dead.length > 400)"));
+  assert.match(bank, /phototroph: !!c\.phototroph/, "and survives in the seed bank a cyst revives from");
+  assert.match(game, /c\.phototroph = !!g\.phototroph;/, "a scenario genome can author it");
+  assert.match(game, /"chemolithotroph", "phototroph"\]\), "genome"\)/, "the validator accepts it as a genome key");
+
+  // Chemotaxis sensed the nearest FOOD PARTICLE, which for an autotroph is worse than no sense at
+  // all: it steered a chemolithotroph out of its plume toward debris it has no enzymes to digest.
+  const walk = game.slice(game.indexOf("let upGrad = false;"), game.indexOf("if (c.tumbling) {"));
+  assert.match(walk, /if \(c\.phototroph \|\| c\.chemolithotroph\)/, "an autotroph must track its own gradient");
+  assert.match(walk, /Math\.min\(light, chem\)/, "and track the SAME limiting factor that feeds it");
+  assert.match(walk, /nearestOrganicSub/, "a heterotroph still tracks food particles");
+  assert.ok(walk.indexOf("c.phototroph || c.chemolithotroph") < walk.indexOf("nearestOrganicSub"),
+    "the autotroph branch must come first, or a chemolithotroph falls through to the food sense");
+
+  // Balance: photosynthesis must not beat the best feeding in the game either.
+  const photoRate = Number(game.match(/photoRate: ([\d.]+)/)[1]);
+  const uptake = Number(game.match(/uptake: ([\d.]+)/)[1]);
+  assert.ok(photoRate > 0 && photoRate < uptake,
+    `full sunlight (${photoRate}/s) must pay, but not beat active feeding (${uptake}/s)`);
 }

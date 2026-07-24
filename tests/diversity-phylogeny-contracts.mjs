@@ -83,8 +83,28 @@ assert.match(game, /state\.calLive\[CAL_PHAGE\] \+= CFG\.cell\.crisprEnergy; sta
   "CRISPR-harvesting a phage credits the phage calorie bucket — the source to watch for a runaway");
 assert.match(game, /mort: state\.mortLive, cin: state\.calLive/,
   "each live sample records calorie intake by source");
-assert.match(game, /if \(mode === 3\) return \(s && s\.cin\) \? s\.cin : \[0,0,0,0,0\];/,
-  "the sub-chart reads the 5-source calorie vector in mode 3");
+assert.match(game, /if \(mode === 3\) return \(s && s\.cin\) \? s\.cin : \[0,0,0,0,0,0\];/,
+  "the sub-chart reads the 6-source calorie vector in mode 3 (autotrophy is the sixth)");
+// the vector, its colours and its labels must stay the same width, or the legend mislabels the chart
+{
+  // to end of line, not to the first "]" — CAL_COLORS contains RESOURCES[0] and friends
+  const items = (re) => game.match(re)[1].split(",").length;
+  const labels = items(/const CAL_LABELS = \[(.*)\];/);
+  const colors = items(/const CAL_COLORS = \[(.*)\];/);
+  const live = items(/calLive: \[(.*?)\], calFull/);
+  assert.equal(labels, colors, "every calorie source needs a colour");
+  assert.equal(labels, live, "every calorie source needs a slot in the per-interval vector");
+}
+// Records already on the leaderboard carry the old 5-source vector; both normalizers must still take
+// them and pad, or every existing run silently loses its calorie breakdown the day this ships.
+assert.match(game, /scoreClientVector\(value\.cin, 6, 100000000\) \|\| scoreClientVector\(value\.cin, 5, 100000000\)/,
+  "the client must accept a legacy 5-source calorie vector as well as the current 6");
+{
+  const php = readFileSync(new URL("../score_schema.php", import.meta.url), "utf8");
+  assert.match(php, /score_vector\(score_value\(\$value, 'cin'\), 6, 100000000\)/, "the server takes the 6-source vector");
+  assert.match(php, /score_vector\(score_value\(\$value, 'cin'\), 5, 100000000\)[\s\S]*?\$cin\[\] = 0;/,
+    "and falls back to the legacy 5, padding the missing source");
+}
 
 // The shared log/linear toggle (chartLog) drives EVERY companion chart, not just community-vs-time:
 // the stacked sub-charts use the same geometric-sum bandVal stacking, and richness follows too.

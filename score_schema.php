@@ -94,7 +94,13 @@ function score_history_sample($value) {
   if ($sub !== null) $out['sub'] = $sub;
   $mort = score_vector(score_value($value, 'mort'), 4, 1000000);
   if ($mort !== null) $out['mort'] = $mort;
-  $cin = score_vector(score_value($value, 'cin'), 5, 100000000); // calories consumed by source
+  // Calories consumed by source. Six now that autotrophy is tracked; a 5-element vector predates it
+  // and pads with a zero, so runs already on the board keep their breakdown instead of losing it.
+  $cin = score_vector(score_value($value, 'cin'), 6, 100000000);
+  if ($cin === null) {
+    $cin = score_vector(score_value($value, 'cin'), 5, 100000000);
+    if ($cin !== null) $cin[] = 0;
+  }
   if ($cin !== null) $out['cin'] = $cin;
   $lsp = score_vector(score_value($value, 'lsp'), 12, 1000000); // age-at-death histogram for the turnover spectrogram
   if ($lsp !== null) $out['lsp'] = $lsp;
