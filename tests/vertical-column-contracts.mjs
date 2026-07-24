@@ -148,7 +148,7 @@ assert.equal(dhTorus({ y: 1000, eps: 0 }), 0, "no vertical drift in the classic 
     }
     return game.slice(i, j);
   };
-  const src = ["terrainHash", "terrainNoise1", "terrainFbm1", "terrainNoise2", "makeTerrainChunk"].map(grab).join("\n");
+  const src = ["terrainHash", "terrainNoise1", "terrainFbm1", "terrainNoise2", "terrainSpireLift", "makeTerrainChunk"].map(grab).join("\n");
   const { makeTerrainChunk } = new Function(
     `const WORLD_H = 2000, WORLD_W = 2600; const CFG = { grid: { cs: 7 } };
      const clamp = (v,a,b) => v<a?a:v>b?b:v;\n${src}\nreturn { makeTerrainChunk };`)();
@@ -216,6 +216,31 @@ assert.equal(dhTorus({ y: 1000, eps: 0 }), 0, "no vertical drift in the classic 
   assert.match(build, /9973, r < 0\)/, "rows outside the world must be built as solid fill, not more pore network");
   assert.match(grab("makeTerrainChunk"), /layer\.porosity > 0 && !solidFill/,
     "solidFill must suppress the pore network");
+
+  // Spires: narrow towers standing off the layer. roughness is smooth noise and can only ever make
+  // rolling hills, so a vent field of chimneys needs its own term.
+  {
+    const spireSrc = ["terrainHash", "terrainNoise1", "terrainFbm1", "terrainSpireLift"].map(grab).join("\n");
+    const { terrainSpireLift } = new Function(
+      `const clamp=(v,a,b)=>v<a?a:v>b?b:v;\n${spireSrc}\nreturn { terrainSpireLift };`)();
+    const L = { spires: 0.55, spireHeight: 320, spireWidth: 55, seed: 9973 };
+    const profile = [];
+    for (let x = 0; x < 2600; x += 4) profile.push(terrainSpireLift(L, x));
+
+    assert.ok(Math.max(...profile) > 150, "spires must actually stand well off the layer");
+    const bare = profile.filter((h) => h < 5).length / profile.length;
+    assert.ok(bare > 0.4 && bare < 0.95,
+      `spires must be sparse towers with floor between them, not a raised slab (bare floor ${Math.round(bare*100)}%)`);
+    // off means off
+    assert.equal(terrainSpireLift({ ...L, spires: 0 }, 500), 0, "spires:0 must produce nothing");
+    assert.equal(terrainSpireLift({ ...L, spireHeight: 0 }, 500), 0, "spireHeight:0 must produce nothing");
+    // deterministic, and identical no matter which chunk asks — a spire straddling a chunk boundary
+    // must not step
+    assert.equal(terrainSpireLift(L, 1234.5), terrainSpireLift(L, 1234.5), "spires must be deterministic");
+    // rows have to reach the tops, or a chimney is sliced off where the slab ends
+    assert.match(grab("buildTerrain"), /const reach = thickness \+ layer\.spireHeight/,
+      "chunk rows must cover the spires, not just the slab");
+  }
 
   // The camera stops at the surface and the floor rather than centring on the cell all the way to the
   // edge. That removes the void beyond the world, and makes hitting the sea floor read as ARRIVING

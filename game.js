@@ -1161,6 +1161,31 @@
     return (a * (1 - sx) + b * sx) * (1 - sy) + (c * (1 - sx) + d * sx) * sy;
   }
 
+  // Chimneys. `roughness` is smooth noise: it makes a rolling surface and can never make anything
+  // narrow or tall, so a vent field came out as hills. Spires are placed instead of sampled — the x
+  // axis is cut into slots, each slot either grows one or does not, and each gets its own height,
+  // girth and offset from a hash of the slot index. Deterministic, and continuous across chunks
+  // because a slot's shape depends only on the slot, never on which chunk is asking.
+  function terrainSpireLift(layer, wx) {
+    if (!(layer.spires > 0) || !(layer.spireHeight > 0)) return 0;
+    const spacing = Math.max(20, layer.spireWidth * 2.2);
+    const slot = Math.floor(wx / spacing);
+    let lift = 0;
+    // neighbours too: a wide spire centred in the next slot still reaches into this one
+    for (let s = slot - 1; s <= slot + 1; s++) {
+      if (terrainHash(s, 101, layer.seed) >= layer.spires) continue;      // this slot stays bare
+      const centre = (s + 0.5) * spacing + (terrainHash(s, 202, layer.seed) - 0.5) * spacing * 0.55;
+      const height = layer.spireHeight * (0.45 + 0.55 * terrainHash(s, 303, layer.seed));
+      const halfW = Math.max(6, layer.spireWidth * (0.45 + 0.55 * terrainHash(s, 404, layer.seed)));
+      const d = Math.abs(wx - centre) / halfW;
+      if (d >= 1) continue;
+      // squared falloff, so it tapers to a point rather than ending in a cliff
+      const h = height * (1 - d * d);
+      if (h > lift) lift = h;
+    }
+    return lift;
+  }
+
   // Depth-shaded palette for one terrain colour, mirroring what grainLut() does per resource so a
   // slab reads as solid mass rather than a flat fill, and a freshly exposed face brightens by itself.
   function terrainLutFor(hex) {
@@ -1190,7 +1215,10 @@
       // Surface height at this x: the layer's face, displaced by the roughness profile. Sampled in
       // WORLD x so the profile is continuous across chunk boundaries.
       const undulation = (terrainFbm1(wx / Math.max(40, layer.featureSize), seed) - 0.5) * 2 * layer.roughness * layer.thickness * 0.5;
-      const face = fromTop ? layer.thickness + undulation : WORLD_H - layer.thickness + undulation;
+      // Spires push the face further into the water: chimneys up off a vent floor, keels and
+      // stalactites down off a ceiling. Same term either way, opposite sign.
+      const lift = terrainSpireLift(layer, wx);
+      const face = fromTop ? layer.thickness + undulation + lift : WORLD_H - layer.thickness + undulation - lift;
       const inside = solidFill || (fromTop ? wy <= face : wy >= face);
       if (!inside) continue;
       if (layer.porosity > 0 && !solidFill) {
@@ -1222,6 +1250,10 @@
         porosity: clamp(raw.porosity == null ? 0 : raw.porosity, 0, 1),
         poreSize: clamp(raw.poreSize == null ? 26 : raw.poreSize, 6, 200),
         featureSize: clamp(raw.featureSize == null ? 260 : raw.featureSize, 40, 2000),
+        spires: clamp(raw.spires == null ? 0 : raw.spires, 0, 1),
+        spireHeight: clamp(raw.spireHeight == null ? 0 : raw.spireHeight, 0, 800),
+        spireWidth: clamp(raw.spireWidth == null ? 60 : raw.spireWidth, 10, 400),
+        seed: (li + 1) * 9973,
         label: raw.label || (raw.at === "top" ? "ice" : "sediment"), cy: 0 };
       // Square chunks, tiled across the world AND down through the layer. Square because the particle
       // cache and its draw path assume it; capped because one canvas per chunk and a 2600-wide slab
@@ -1229,7 +1261,11 @@
       // meant a 700px seabed rendered its outer 420px and left the rest as a hole you could swim into.
       const side = clamp(thickness, 64, 420);
       const lut = terrainLutFor(/^#[0-9a-fA-F]{6}$/.test(raw.color || "") ? raw.color : "#9fb6c4");
-      const cols = Math.ceil(WORLD_W / side), rows = Math.ceil(thickness / side);
+      // Rows must reach as far as the tallest spire, not just the slab: a chimney standing 300px off
+      // the floor has no chunk to live in otherwise, and would simply be sliced off at the top of the
+      // layer — invisible, and not there to swim into either.
+      const reach = thickness + layer.spireHeight;
+      const cols = Math.ceil(WORLD_W / side), rows = Math.ceil(reach / side);
       // One row past the world edge, no more. camClampY() stops the camera at the boundary, so nothing
       // out there is ever really visible — this single row only covers the seam at the very edge, where
       // rounding could otherwise show a hairline of open water. It used to build a whole viewport's
@@ -6211,20 +6247,25 @@
       terrain = [];
       for (const t of raw.terrain) {
         if (!t || typeof t !== "object" || Array.isArray(t)) return scReject("terrain layer must be an object");
-        const tErr = scOnlyKeys(t, new Set(["at", "thickness", "color", "label", "roughness", "porosity", "poreSize", "featureSize"]), "terrain layer");
+        const tErr = scOnlyKeys(t, new Set(["at", "thickness", "color", "label", "roughness", "porosity", "poreSize", "featureSize", "spires", "spireHeight", "spireWidth"]), "terrain layer");
         if (tErr) return scReject(tErr);
         if (t.at !== "top" && t.at !== "bottom") return scReject('terrain layer "at" must be "top" or "bottom"');
         if (!Number.isFinite(t.thickness) || t.thickness < 20 || t.thickness > 800) return scReject("terrain thickness must be 20..800");
         if (t.color != null && !/^#[0-9a-fA-F]{6}$/.test(t.color)) return scReject("terrain color must be #rrggbb");
         const frac = (v, name) => v == null || (Number.isFinite(v) && v >= 0 && v <= 1) ? null : `terrain ${name} must be 0..1`;
-        for (const chk of [frac(t.roughness, "roughness"), frac(t.porosity, "porosity")]) if (chk) return scReject(chk);
+        for (const chk of [frac(t.roughness, "roughness"), frac(t.porosity, "porosity"), frac(t.spires, "spires")]) if (chk) return scReject(chk);
+        if (t.spireHeight != null && (!Number.isFinite(t.spireHeight) || t.spireHeight < 0 || t.spireHeight > 800)) return scReject("terrain spireHeight must be 0..800");
+        if (t.spireWidth != null && (!Number.isFinite(t.spireWidth) || t.spireWidth < 10 || t.spireWidth > 400)) return scReject("terrain spireWidth must be 10..400");
         if (t.poreSize != null && (!Number.isFinite(t.poreSize) || t.poreSize < 6 || t.poreSize > 200)) return scReject("terrain poreSize must be 6..200");
         if (t.featureSize != null && (!Number.isFinite(t.featureSize) || t.featureSize < 40 || t.featureSize > 2000)) return scReject("terrain featureSize must be 40..2000");
         terrain.push({ at: t.at, thickness: t.thickness, color: t.color || "#9fb6c4",
           label: scStr(t.label, 40) || "", roughness: t.roughness == null ? 0.35 : t.roughness,
           porosity: t.porosity == null ? 0 : t.porosity,
           poreSize: t.poreSize == null ? 26 : t.poreSize,
-          featureSize: t.featureSize == null ? 260 : t.featureSize });
+          featureSize: t.featureSize == null ? 260 : t.featureSize,
+          spires: t.spires == null ? 0 : t.spires,
+          spireHeight: t.spireHeight == null ? 0 : t.spireHeight,
+          spireWidth: t.spireWidth == null ? 60 : t.spireWidth });
       }
     }
 
