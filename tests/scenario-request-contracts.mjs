@@ -160,4 +160,32 @@ for (const f of ["scenario-queue.json", "scenario-ratelimit.json"]) {
   assert.match(html, /#scenarioList \{[^}]*display: grid/, "the list must be a grid, not a single column");
 }
 
-console.log("✓ scenario-request contracts: account-free path, id agreement, queue reachability, credit safety");
+// ---- seeding a scenario from a designed terrain --------------------------------------------------
+// The lab can queue a whole scenario built around a terrain, not only a DOI. The terrain is untrusted
+// (a POST body), so the endpoint cleans its shape and bounds before it ever reaches the queue — the
+// game's own scenario validator is still the authoritative gate at generation time.
+{
+  assert.match(php, /function sc_clean_terrain/, "the endpoint must validate a submitted terrain");
+  const fn = php.match(/function sc_clean_terrain\([\s\S]*?\n\}/)[0];
+  assert.match(fn, /count\(\$t\) < 1 \|\| count\(\$t\) > 4/, "1..4 layers, matching the game validator");
+  assert.match(fn, /array_keys\(\$t\) !== range\(0, count\(\$t\) - 1\)/, "reject an associative array posing as a list");
+  assert.match(fn, /!in_array\(\$k, \$allowed, true\)/, "reject unknown layer keys");
+  assert.match(fn, /#\[0-9a-fA-F\]\{6\}/, "colour must be #rrggbb, or dropped");
+  assert.match(fn, /\[\\x00-\\x1F\\x7F<>\]/, "labels get control chars and angle brackets stripped");
+  // a fresh id per submission — a designed terrain becomes a new scenario every time, so no dedup key
+  assert.match(php, /\$id = 'terrain-' \. substr\(hash\('sha256'/, "terrain gets a unique hashed id");
+  assert.match(php, /\$type === 'terrain'/, "the endpoint must branch on request type");
+  // the queue entry carries the terrain and its id; the DOI path is unchanged
+  assert.match(php, /\$entry\['terrain'\] = \$terrain; \$entry\['id'\] = \$id;/,
+    "a terrain request stores the terrain and its id in the queue");
+  // (the poller's handling of these entries is covered by the scenario repo's own selftest, which is
+  // where queue.mjs lives — this test only asserts what the game repo owns)
+
+  // the lab's Seed button posts the terrain to this endpoint
+  assert.match(game, /scenario-request\.php/, "the lab posts to the request endpoint");   // game.js already refs it; belt-and-braces
+  const lab = readFileSync(resolve(root, "tools/build-terrain-lab.mjs"), "utf8");
+  assert.match(lab, /body: JSON\.stringify\(\{ terrain: currentTerrain\(\), name/,
+    "the lab must send { terrain, name } to seed a scenario");
+}
+
+console.log("✓ scenario-request contracts: account-free path, id agreement, queue reachability, credit safety, terrain seeding");

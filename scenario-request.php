@@ -44,27 +44,99 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 }
 
 $raw = file_get_contents('php://input');
-if (strlen($raw) > 4000) { http_response_code(413); echo json_encode(['error' => 'too large']); exit; }
+// A designed terrain is bigger than a DOI (up to four layers with labels), but still small.
+if (strlen($raw) > 8000) { http_response_code(413); echo json_encode(['error' => 'too large']); exit; }
 $rec = json_decode($raw, true);
 if (!is_array($rec)) { http_response_code(400); echo json_encode(['error' => 'bad json']); exit; }
 
-// ---- normalise + validate the DOI ---------------------------------------------------------------
-// Mirrors cleanDoi()/DOI_RE in the scenarios repo's scripts/doi-id.mjs. Accept what people actually
-// paste: a bare DOI, a doi.org URL, with stray whitespace.
-$doi = trim((string)($rec['doi'] ?? ''));
-$doi = preg_replace('#^https?://(dx\.)?doi\.org/#i', '', $doi);
-if ($doi === '' || strlen($doi) > 300) {
-  http_response_code(400);
-  echo json_encode(['error' => 'Paste a DOI — it looks like 10.1126/science.1261359.']);
-  exit;
+// A scenario id: lowercase alphanumerics and dashes only. The game polls for this id to tell the
+// submitter when their level is ready, so it must be a valid slug and match nothing surprising.
+function sc_slug($s) {
+  $s = strtolower((string)$s);
+  $s = preg_replace('/[^a-z0-9]+/', '-', $s);
+  $s = preg_replace('/^-+|-+$/', '', $s);
+  $s = substr($s, 0, 60);
+  return $s === '' ? 'scenario' : $s;
 }
-// ASCII only, and not just for tidiness: the id below has to come out byte-identical to the one
-// JavaScript derives in the scenarios repo, and PHP's strtolower is byte-based where JS toLowerCase
-// is Unicode-aware. DOIs are ASCII by spec, so requiring it here removes the whole class of drift.
-if (!preg_match('/^[\x21-\x7E]+$/', $doi) || !preg_match('#^10\.[0-9]{4,9}/\S+$#', $doi)) {
-  http_response_code(400);
-  echo json_encode(['error' => "That does not look like a DOI. They start with 10. — for example 10.1126/science.1261359."]);
-  exit;
+
+// Clean an untrusted terrain payload, mirroring the terrain rules in game.js's SCENARIO_VALIDATOR.
+// Returns a normalised array (only known keys, values rounded and in range) or null if anything is
+// off — one bad layer rejects the whole thing, exactly like the game validator.
+function sc_clean_terrain($t) {
+  if (!is_array($t) || count($t) < 1 || count($t) > 4) return null;
+  // reject an associative array masquerading as a list (json_decode turns {} into an array in PHP)
+  if (array_keys($t) !== range(0, count($t) - 1)) return null;
+  $allowed = ['at', 'thickness', 'color', 'label', 'roughness', 'porosity', 'poreSize', 'featureSize', 'spires', 'spireHeight', 'spireWidth'];
+  $num = static function ($v, $lo, $hi) { return is_numeric($v) && $v >= $lo && $v <= $hi; };
+  $out = [];
+  foreach ($t as $layer) {
+    if (!is_array($layer)) return null;
+    foreach (array_keys($layer) as $k) { if (!in_array($k, $allowed, true)) return null; }
+    if (($layer['at'] ?? null) !== 'top' && ($layer['at'] ?? null) !== 'bottom') return null;
+    if (!$num($layer['thickness'] ?? null, 20, 800)) return null;
+    $clean = ['at' => $layer['at'], 'thickness' => (int)round($layer['thickness'])];
+    if (isset($layer['color'])) {
+      if (!preg_match('/^#[0-9a-fA-F]{6}$/', (string)$layer['color'])) return null;
+      $clean['color'] = strtolower((string)$layer['color']);
+    }
+    if (isset($layer['label'])) {
+      $lbl = preg_replace('/[\x00-\x1F\x7F<>]/u', '', (string)$layer['label']);
+      $clean['label'] = mb_substr(trim($lbl), 0, 40);
+    }
+    foreach (['roughness', 'porosity', 'spires'] as $f) {
+      if (isset($layer[$f])) { if (!$num($layer[$f], 0, 1)) return null; $clean[$f] = 0 + $layer[$f]; }
+    }
+    foreach ([['poreSize', 6, 200], ['featureSize', 40, 2000], ['spireHeight', 0, 800], ['spireWidth', 10, 400]] as $r) {
+      [$f, $lo, $hi] = $r;
+      if (isset($layer[$f])) { if (!$num($layer[$f], $lo, $hi)) return null; $clean[$f] = (int)round($layer[$f]); }
+    }
+    $out[] = $clean;
+  }
+  return $out;
+}
+
+// Two kinds of request reach here: a paper (a DOI to seed a level from) or a terrain designed in the
+// lab (a sea floor / ice ceiling for the generator to build a community around). Same queue, same
+// rate limits — they differ only in what the workflow does with them.
+$type = isset($rec['terrain']) ? 'terrain' : 'doi';
+$doi = '';
+$terrain = null;
+$id = '';
+
+if ($type === 'terrain') {
+  // Validate shape and bounds here so garbage never reaches the queue; the game's own scenario
+  // validator is still the authoritative gate when the level is generated. Mirrors the terrain rules
+  // in game.js's SCENARIO_VALIDATOR block.
+  $terrain = sc_clean_terrain($rec['terrain']);
+  if ($terrain === null) {
+    http_response_code(400);
+    echo json_encode(['error' => "That terrain isn't valid — design it in the lab and use its Seed button."]);
+    exit;
+  }
+  // A fresh id per submission: a designed terrain becomes a newly-invented scenario every time, so
+  // there is nothing to dedup against. Hash includes the clock and a random draw so a double-click
+  // can't collide.
+  $id = 'terrain-' . substr(hash('sha256', json_encode($terrain) . microtime(true) . random_int(0, PHP_INT_MAX)), 0, 12);
+} else {
+  // ---- normalise + validate the DOI -------------------------------------------------------------
+  // Mirrors cleanDoi()/DOI_RE in the scenarios repo's scripts/doi-id.mjs. Accept what people actually
+  // paste: a bare DOI, a doi.org URL, with stray whitespace.
+  $doi = trim((string)($rec['doi'] ?? ''));
+  $doi = preg_replace('#^https?://(dx\.)?doi\.org/#i', '', $doi);
+  if ($doi === '' || strlen($doi) > 300) {
+    http_response_code(400);
+    echo json_encode(['error' => 'Paste a DOI — it looks like 10.1126/science.1261359.']);
+    exit;
+  }
+  // ASCII only, and not just for tidiness: the id below has to come out byte-identical to the one
+  // JavaScript derives in the scenarios repo, and PHP's strtolower is byte-based where JS toLowerCase
+  // is Unicode-aware. DOIs are ASCII by spec, so requiring it here removes the whole class of drift.
+  if (!preg_match('/^[\x21-\x7E]+$/', $doi) || !preg_match('#^10\.[0-9]{4,9}/\S+$#', $doi)) {
+    http_response_code(400);
+    echo json_encode(['error' => "That does not look like a DOI. They start with 10. — for example 10.1126/science.1261359."]);
+    exit;
+  }
+  $id = sc_slug('doi-' . sc_slug($doi));
 }
 
 // ---- optional credit name -------------------------------------------------------------------------
@@ -75,19 +147,6 @@ $name = (string)($rec['name'] ?? '');
 $name = preg_replace('/[\x00-\x1F\x7F<>]/u', '', $name);   // control chars and angle brackets
 $name = trim(preg_replace('/\s+/u', ' ', $name));
 $name = mb_substr($name, 0, 40);
-
-// ---- derive the scenario id ----------------------------------------------------------------------
-// Must match doiScenarioId() in scripts/doi-id.mjs exactly, including the double slug (the outer one
-// re-applies the 60-char cap once the "doi-" prefix is on). The game polls for this id to tell the
-// player when their level is ready, so a mismatch here just means the poll never resolves.
-function sc_slug($s) {
-  $s = strtolower((string)$s);
-  $s = preg_replace('/[^a-z0-9]+/', '-', $s);
-  $s = preg_replace('/^-+|-+$/', '', $s);
-  $s = substr($s, 0, 60);
-  return $s === '' ? 'scenario' : $s;
-}
-$id = sc_slug('doi-' . sc_slug($doi));
 
 $now = (int)(microtime(true) * 1000);
 $cutoff = $now - $DAY * 1000;
@@ -134,9 +193,12 @@ $requests = (is_array($data) && isset($data['requests']) && is_array($data['requ
 
 // Already asked for? Say so plainly instead of queueing it twice — the poller would dedup it anyway,
 // but the player deserves to know their paper is already on its way rather than think nothing happened.
+// Only DOIs dedup: a designed terrain becomes a fresh scenario each time, so it is never "already" here.
 $already = false;
-foreach ($requests as $r) {
-  if (is_array($r) && strcasecmp((string)($r['doi'] ?? ''), $doi) === 0) { $already = true; break; }
+if ($type === 'doi') {
+  foreach ($requests as $r) {
+    if (is_array($r) && strcasecmp((string)($r['doi'] ?? ''), $doi) === 0) { $already = true; break; }
+  }
 }
 
 if (!$already) {
@@ -148,7 +210,9 @@ if (!$already) {
     echo json_encode(['error' => "The level factory is at its limit for today — please try again tomorrow."]);
     exit;
   }
-  $entry = ['doi' => $doi, 'ts' => $now];
+  $entry = ['ts' => $now];
+  if ($type === 'terrain') { $entry['terrain'] = $terrain; $entry['id'] = $id; }
+  else { $entry['doi'] = $doi; }
   if ($name !== '') $entry['name'] = $name;   // omitted entirely when anonymous
   $requests[] = $entry;
   if (count($requests) > $MAX_QUEUE) $requests = array_slice($requests, -$MAX_QUEUE);
@@ -184,4 +248,4 @@ if (!$already) {
   }
 }
 
-echo json_encode(['ok' => true, 'id' => $id, 'doi' => $doi, 'queued' => !$already]);
+echo json_encode(['ok' => true, 'id' => $id, 'type' => $type, 'doi' => $doi, 'queued' => !$already]);
