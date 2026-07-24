@@ -295,6 +295,12 @@
   // (` key) reads these for its slider ranges, its reset, and to tell whether a run
   // was played on modified numbers.
   const CFG_DEFAULTS = JSON.parse(JSON.stringify(CFG));
+  // What a run's constants are measured against to decide whether it is "tuned" (and so kept off the
+  // shared board). The stock ocean measures against the defaults; a SCENARIO legitimately changes the
+  // environment, so once one is applied its own CFG becomes the baseline — a scenario run is then
+  // compared to OTHER runs of that scenario, and only MANUAL tuning on top of it counts as tuned.
+  // Before this, every scenario run looked tuned and was silently withheld from the leaderboard.
+  let cfgBaseline = CFG_DEFAULTS;
 
   // Resource classes: each exoenzyme dissolves only its matching resource. Voxels
   // are color-coded by resource so a particle reads as its biochemical makeup.
@@ -2682,8 +2688,10 @@
     const scoreRecorded = recordGame(dayComplete); // survived the day → the run is continuable ("live" on the board)
     if (el.nameRow) el.nameRow.classList.toggle("hidden", !scoreRecorded);
     const cal = `<b>${Math.round(state.score).toLocaleString()}</b> calories`;
-    // a run played with the tuning panel open isn't comparable to anyone else's — say so
-    const tuned = cfgTuned() ? `<br><span style="font-size:12px;opacity:.7;color:#ffd24a">tuned run — kept local, not sent to the shared leaderboard</span>` : "";
+    // a run that can't be compared to anyone else's — hand-tuned, or a lab sandbox — says so
+    const localMsg = cfgTuned() ? "tuned run — kept local, not sent to the shared leaderboard"
+      : (activeScenario && activeScenario.sandbox) ? "sandbox terrain — kept local, not sent to the shared leaderboard" : "";
+    const tuned = localMsg ? `<br><span style="font-size:12px;opacity:.7;color:#ffd24a">${localMsg}</span>` : "";
     const dayN = state.day || 1;
     const days = dayN === 1 ? "A full day" : `${dayN} full days`;
     // If your bacteria died out, you did NOT spend the day as a bacterium — you spent it as the thing
@@ -4495,8 +4503,9 @@
                   // Which ocean this was. Two runs are not comparable across scenarios — one may have
                   // half the food and twice the grazers — so the board has to say which level a score
                   // came from. undefined on the stock ocean, so a default run is unchanged on the wire.
-                  scenario: (activeScenario && activeScenario.id) || undefined,
-                  tuned: cfgTuned() || undefined }; // undefined → omitted by JSON.stringify, so untuned runs are unchanged on the wire
+                  // a sandbox terrain lives only in a URL, so don't tag its score with an id nobody can open
+                  scenario: (activeScenario && !activeScenario.sandbox && activeScenario.id) || undefined,
+                  tuned: runKeptLocal() || undefined }; // undefined → omitted by JSON.stringify, so untuned runs are unchanged on the wire
     if (!scoreWorthSaving(rec)) { justFinishedTs = null; lastRec = null; return false; }
     justFinishedTs = id; lastRec = rec;
     try {
@@ -5826,7 +5835,11 @@
   const cfgGet = (o, p) => p.reduce((x, k) => (x == null ? undefined : x[k]), o);
   function cfgSet(root, p, v) { let o = root; for (let i = 0; i < p.length - 1; i++) o = o[p[i]]; o[p[p.length - 1]] = v; }
   const cfgDefault = (p) => cfgGet(CFG_DEFAULTS, p);
-  const cfgTuned = () => cfgLeaves().some((L) => cfgGet(CFG, L.path) !== cfgDefault(L.path));
+  // Manual tuning only: CFG moved away from the run's baseline (defaults, or the active scenario's env).
+  const cfgTuned = () => cfgLeaves().some((L) => cfgGet(CFG, L.path) !== cfgGet(cfgBaseline, L.path));
+  // A run is kept out of the shared leaderboard when it was hand-tuned, or when it is a lab sandbox
+  // (its terrain lives only in a URL, so nobody else could reproduce or open the level).
+  const runKeptLocal = () => cfgTuned() || !!(activeScenario && activeScenario.sandbox);
 
   // TUNE_VALIDATOR_START — pure production validator, executed directly by the Node fixture test.
   const TUNE_EXACT_RULES = {
@@ -6299,6 +6312,8 @@
   function applyScenario(sc) {
     if (!sc) return;
     commitCfg(sc.cfg);
+    // The scenario's env is the baseline now, not the stock defaults — a scenario run is not "tuned".
+    cfgBaseline = cloneCfg(CFG);
     for (const r of sc.resources || []) {
       if (r.color) RESOURCES[r.index].color = r.color;
       if (r.enzymeLabel) RESOURCES[r.index].enzyme = r.enzymeLabel;
@@ -6360,7 +6375,9 @@
           column: { enabled: true, layers: [ { depth: 0, tempC: 6, light: 1 }, { depth: 1, tempC: 4, light: 0 } ] },
           terrain: Array.isArray(terrain) ? terrain : [terrain] };
         const sc = validateScenario(probe, CFG_DEFAULTS);
-        if (sc.ok) { sc.scenario.id = "terrain-lab"; applyScenario(sc.scenario); showScenarioIntro(sc.scenario); }
+        // Mark it a sandbox: its terrain exists only in this URL, so its score must not reach the
+        // shared board (the id would resolve to no published level).
+        if (sc.ok) { sc.scenario.id = "terrain-lab"; sc.scenario.sandbox = true; applyScenario(sc.scenario); showScenarioIntro(sc.scenario); }
         else console.warn("[labterrain] rejected:", sc.reason);
       } catch (e) { console.warn("[labterrain] could not decode:", e && e.message); }
       return;

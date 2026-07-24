@@ -25,11 +25,11 @@ $QUEUE = __DIR__ . '/scenario-queue.json';
 $RATE  = __DIR__ . '/scenario-ratelimit.json';   // blocked from the web in .htaccess
 
 $MAX_QUEUE      = 200;  // entries kept; oldest dropped past this
-$MAX_PER_IP_DAY = 3;    // one enthusiast should not be able to spend the whole day's budget
+$MAX_PER_IP_DAY = 30;   // raised while the terrain-seed feature is being tested; drop back to ~3 later
 // The real budget control. Every accepted DOI costs one Anthropic API call over in the scenarios
 // repo, and that repo has no way to push back on us — the poller builds what it finds. So the
 // ceiling has to be enforced HERE, at the only point where a request can still be refused.
-$MAX_PER_DAY    = 20;
+$MAX_PER_DAY    = 80;   // raised for testing alongside MAX_PER_IP_DAY
 $DAY            = 86400;
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
