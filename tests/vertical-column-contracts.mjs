@@ -93,8 +93,13 @@ assert.match(game, /if \(!c\.cyst && \(c\.phototroph \|\| c\.chemolithotroph\)\)
 assert.match(game, /const light = c\.phototroph \? clamp\(columnLightAt\(c\.y\), 0, 1\) : 1;/,
   "light limits a phototroph; an absent requirement is 1 so it never limits");
 assert.match(game, /const chem = c\.chemolithotroph \? chemAt\(c\.y\) : 1;/, "and the chemical limits a chemolithotroph");
-assert.match(game, /Math\.min\(light, chem\) \* rate \* dt/,
+assert.match(game, /Math\.min\(light, chem\) \* rate \* \(cellHalfLen\(c\)\/CFG\.cell\.baseHalf\) \* dt/,
   "the SCARCER input sets the rate — a sum would let either gradient alone feed a photolithotroph");
+// ...and the intake scales with the cell, as every other income does. Respiration scales with size AND
+// genome tier, so a flat intake meant an autotroph stalled around tier 12 and starved above it —
+// adaptations made your cell strictly worse, in the one mode where you cannot go and eat instead.
+assert.match(game, /const gain = c\.cyst \? 0\s*\n\s*: supply \* \(c\.phototroph \? CFG\.column\.photoRate : CFG\.column\.chemRate\) \* \(cellHalfLen\(c\)\/CFG\.cell\.baseHalf\);/,
+  "the HUD readout must scale the same way, or it disagrees with the sim for any grown cell");
 // it is logged like any other intake, or a plume-fed bloom appears to run on nothing
 assert.match(game, /state\.calLive\[CAL_AUTO\] \+= fixed; state\.calFull\[CAL_AUTO\] \+= fixed;/,
   "fixed carbon must appear in the calories-consumed chart");
@@ -357,7 +362,7 @@ console.log("Vertical-column contract OK: Y-mode plumbing, no seam wrap, save/re
   // The HUD chip must report the SAME numbers the simulation applies, or it teaches the wrong lesson.
   const readout = game.slice(game.indexOf("function updateAutotrophyReadout"), game.indexOf("function clockStr"));
   assert.match(readout, /Math\.min\(light, chem\)/, "it reports the limiting factor, as the intake does");
-  assert.match(readout, /c\.cyst \? 0 :/, "a dormant cyst fixes nothing, and the chip must not claim otherwise");
+  assert.match(readout, /c\.cyst \? 0\s*:/, "a dormant cyst fixes nothing, and the chip must not claim otherwise");
   assert.match(readout, /respirationRate\(c\)/, "the burn comes from the shared helper, not a second copy of the formula");
   // and the simulation goes through that same helper
   assert.match(game, /c\.energy -= respirationRate\(c, sizeF, metab, genomeF\)\*dt;/,

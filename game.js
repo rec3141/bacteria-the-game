@@ -3061,7 +3061,13 @@
       const light = c.phototroph ? clamp(columnLightAt(c.y), 0, 1) : 1;
       const chem = c.chemolithotroph ? chemAt(c.y) : 1;
       const rate = c.phototroph ? CFG.column.photoRate : CFG.column.chemRate;
-      const fixed = Math.min(light, chem) * rate * dt;
+      // Scaled by cell size, like every other income in the game — a bigger cell carries more
+      // photosystems and more of the enzyme, so it fixes more carbon. Without this the intake was a
+      // flat constant while respiration scaled with BOTH size and genome tier, so an autotroph stalled
+      // around tier 12 and starved above it: adaptations made your cell strictly worse, in the one
+      // trophic mode where you cannot go and eat something instead. Genome upkeep still bites (that is
+      // the intended streamlining pressure) — being large no longer does.
+      const fixed = Math.min(light, chem) * rate * (cellHalfLen(c)/CFG.cell.baseHalf) * dt;
       c.energy += fixed;
       // logged like any other intake, so the calories chart shows a bloom being fed by the plume or
       // the sunlit shallows rather than leaving its energy unaccounted for
@@ -5291,7 +5297,8 @@
     const supply = Math.min(light, chem);
     // a dormant cyst fixes nothing (the intake is gated on !c.cyst) and burns at the cyst rate — which
     // is exactly the state a photolithotroph is in overnight, so the readout has to be honest about it
-    const gain = c.cyst ? 0 : supply * (c.phototroph ? CFG.column.photoRate : CFG.column.chemRate);
+    const gain = c.cyst ? 0
+      : supply * (c.phototroph ? CFG.column.photoRate : CFG.column.chemRate) * (cellHalfLen(c)/CFG.cell.baseHalf);
     const parts = [];
     if (c.phototroph) parts.push(`☀ ${Math.round(light*100)}%`);
     if (c.chemolithotroph) parts.push(`⚗ ${Math.round(chem*100)}%`);
@@ -5922,6 +5929,8 @@
     "diel.q10": "Q10: metabolic rate multiplies by this for every +10 degC. 2 = the textbook value (rate doubles). 1 = temperature has no effect. Applies to bacteria AND protists.",
     "diel.q10RefC": "Reference temperature for Q10 — metabolism runs at its base rate here.",
     "respirationBase": "Baseline energy per second every cell burns just staying alive. The single biggest lever on how punishing the game is.",
+    "column.chemRate": "How well chemosynthesis pays: energy per second a chemolithotroph fixes at FULL chemical concentration, scaled by cell size. Raise it for a rich vent, lower it for a marginal redox cline. Keep it under cell.uptake or standing still beats hunting.",
+    "column.photoRate": "How well photosynthesis pays: energy per second a phototroph fixes in FULL light, scaled by cell size. Light also falls off with depth and dies at night, so this is usually set higher than chemRate. Keep it under cell.uptake.",
     "touchSpeedScale": "TOUCH ONLY: how fast swimming things move — your cells AND the protists together, so predator/prey stays in proportion. The phone magnifies the world onto a small screen, which makes the same world-speed read as much faster. 1 = desktop speed. NOTE: energy costs are per SECOND, so slower swimming means a trip to food costs more energy.",
     "grid.cs": "Voxel size of destructible particles (px) — smaller = finer digging but more work per frame. Only affects NEWLY spawned particles.",
     "substrate.count": "How many food particles are kept drifting in the water. Applies as particles respawn.",
@@ -6213,9 +6222,12 @@
     /^touch/, /touchSpeedScale/, /Touch(\.|$)/, /^cell\.touch/,
     // the attract-mode dish, and the rendering grid — cosmetic/perf, not ecology
     /^demo\./, /^grid\./,
-    // the water column has its own authored block in the schema; setting it twice, two ways, would let
-    // a scenario contradict itself
-    /^column\./,
+    // The water column has its own authored block in the schema; setting its SHAPE twice, two ways,
+    // would let a scenario contradict itself. But chemRate and photoRate are not part of that block —
+    // they are rate constants that merely live under CFG.column, and how generous autotrophy is
+    // (a rich vent versus a marginal redox cline) is exactly a per-level design decision. Denying the
+    // whole namespace swept them up with the geometry.
+    /^column\.(?!chemRate$|photoRate$)/,
   ];
   function scEnvDenied(path) { return SCENARIO_ENV_DENY.some((re) => re.test(path)); }
   const SCENARIO_PRIMITIVES = new Set(["enzyme0", "enzyme1", "enzyme2", "chemotaxis", "antibiotic", "eps", "crispr", "twitching"]);
