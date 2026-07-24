@@ -1266,19 +1266,18 @@
       // layer — invisible, and not there to swim into either.
       const reach = thickness + layer.spireHeight;
       const cols = Math.ceil(WORLD_W / side), rows = Math.ceil(reach / side);
-      // One row past the world edge, no more. camClampY() stops the camera at the boundary, so nothing
-      // out there is ever really visible — this single row only covers the seam at the very edge, where
-      // rounding could otherwise show a hairline of open water. It used to build a whole viewport's
-      // worth, which for a 190px ice layer meant 84 extra chunks holding ~12 MB of canvases nobody
-      // could ever see.
-      const beyond = 1;
-      for (let r = -beyond; r < rows; r++) {
-        // r < 0 is outside the world; r = 0 sits flush against the edge; deeper rows stack inward
+      // No rows past the world edge. camClampY() stops the camera at the boundary, and the mass fills
+      // flush to y=0 / y=WORLD_H, so there is nothing out there to see — a seam row would be a full
+      // world-width strip of canvases (megabytes, for a thick layer) guarding a hairline that the
+      // clamp already prevents. Each chunk is drawn at cx - half, padded by a voxel on every side, so
+      // neighbours still OVERLAP and the surface has no gap between them.
+      for (let r = 0; r < rows; r++) {
+        // r = 0 sits flush against the world edge; deeper rows stack inward
         layer.cy = layer.at === "top" ? side / 2 + r * side : WORLD_H - side / 2 - r * side;
         for (let i = 0; i < cols; i++) {
           // Outside the world the layer is solid: it is the mass the visible face is attached to, and
           // pores out there would read as holes in a ceiling nobody can reach.
-          const chunk = makeTerrainChunk(layer, (i + 0.5) * side, side, lut, (li + 1) * 9973, r < 0);
+          const chunk = makeTerrainChunk(layer, (i + 0.5) * side, side, lut, (li + 1) * 9973, false);
           if (chunk) terrain.push(chunk);
         }
       }
@@ -6345,8 +6344,29 @@
   }
   // Boot hook: if the URL names a scenario, load + validate it and stage its intro. Applied at start().
   async function bootScenario() {
-    let id = null;
-    try { id = new URLSearchParams(location.search).get("scenario"); } catch (e) { return; }
+    let params;
+    try { params = new URLSearchParams(location.search); } catch (e) { return; }
+
+    // ?labterrain= — a sandbox level straight from the terrain lab, so a design can be flown in the
+    // real engine without publishing a scenario first. It is untrusted URL text, so it goes through
+    // exactly the same atomic validator every scenario does: a bad terrain block yields the stock
+    // ocean, never a broken run.
+    const labTerrain = params.get("labterrain");
+    if (labTerrain) {
+      try {
+        const terrain = JSON.parse(decodeURIComponent(escape(atob(labTerrain.replace(/-/g, "+").replace(/_/g, "/")))));
+        const probe = { schema: "bacteria-scenario", version: 1,
+          meta: { title: "Terrain Lab", date: "2000-01-01", lesson: "A sandbox level flown in from the terrain lab." },
+          column: { enabled: true, layers: [ { depth: 0, tempC: 6, light: 1 }, { depth: 1, tempC: 4, light: 0 } ] },
+          terrain: Array.isArray(terrain) ? terrain : [terrain] };
+        const sc = validateScenario(probe, CFG_DEFAULTS);
+        if (sc.ok) { sc.scenario.id = "terrain-lab"; applyScenario(sc.scenario); showScenarioIntro(sc.scenario); }
+        else console.warn("[labterrain] rejected:", sc.reason);
+      } catch (e) { console.warn("[labterrain] could not decode:", e && e.message); }
+      return;
+    }
+
+    const id = params.get("scenario");
     if (!id) return;
     const sc = await fetchScenario(id);
     if (sc) { applyScenario(sc); showScenarioIntro(sc); }  // apply now so the title-screen ocean previews it; newGame() re-seeds on Begin

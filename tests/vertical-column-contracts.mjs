@@ -210,10 +210,9 @@ assert.equal(dhTorus({ y: 1000, eps: 0 }), 0, "no vertical drift in the classic 
     "a terrain chunk's border continues into its neighbour and must shade as buried, not exposed");
   assert.ok(!/\? d\[k-n\] : 0/.test(depth), "the hard-coded 0 for out-of-bounds must be gone");
 
-  // The camera follows a cell right up to the world edge, so terrain has to keep going past it.
   const build = grab("buildTerrain");
-  assert.match(build, /for \(let r = -beyond; r < rows; r\+\+\)/, "an outside row must still cover the edge seam");
-  assert.match(build, /9973, r < 0\)/, "rows outside the world must be built as solid fill, not more pore network");
+  // solidFill still exists (it suppresses pores in fully-buried mass) and is exercised directly above;
+  // it is simply no longer fed by an out-of-world row.
   assert.match(grab("makeTerrainChunk"), /layer\.porosity > 0 && !solidFill/,
     "solidFill must suppress the pore network");
 
@@ -245,7 +244,10 @@ assert.equal(dhTorus({ y: 1000, eps: 0 }), 0, "no vertical drift in the classic 
   // The camera stops at the surface and the floor rather than centring on the cell all the way to the
   // edge. That removes the void beyond the world, and makes hitting the sea floor read as ARRIVING
   // somewhere — the view stops scrolling and the cell drifts off-centre — instead of the controls
-  // seeming to stop working.
+  // seeming to stop working. It also means terrain needs no rows past the world edge: nothing out
+  // there is reachable or visible, so a seam row would be megabytes of canvas guarding nothing.
+  assert.match(build, /for \(let r = 0; r < rows; r\+\+\)/, "terrain must not build rows outside the world");
+  assert.ok(!/const beyond/.test(build), "the seam row is dead weight once the camera is clamped — remove it");
   const clampFn = grab("camClampY");
   assert.match(clampFn, /if \(worldYWrap\) return wrapY\(y\)/, "a torus has no edges and must keep centring");
   assert.match(clampFn, /VIEW_H \/ \(2 \* \(ZOOM \|\| 1\)\)/, "ZOOM decides how much world a viewport covers");
@@ -255,9 +257,8 @@ assert.equal(dhTorus({ y: 1000, eps: 0 }), 0, "no vertical drift in the classic 
   const strays = game.split("\n").filter((l) => /\bcam\.y = /.test(l) && !/camClampY|WORLD_H\/2/.test(l));
   assert.equal(strays.length, 0, `these set cam.y without clamping:\n  ${strays.map((s) => s.trim()).join("\n  ")}`);
 
-  // and the exhaustive off-screen rows are gone: with the camera clamped nothing out there is visible,
-  // and a viewport's worth of chunks was megabytes of canvases nobody could ever see
-  assert.match(build, /const beyond = 1;/, "one seam row is enough once the camera is clamped");
+  // and the off-world rows are gone entirely: with the camera clamped nothing out there is visible,
+  // so terrain builds no seam row at all (that check lives with the terrain-build assertions above)
 }
 
 console.log("Vertical-column contract OK: Y-mode plumbing, no seam wrap, save/restore, phase-2 depth fields, phase-3 buoyancy, and solid porous terrain.");

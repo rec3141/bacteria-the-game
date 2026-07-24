@@ -1,0 +1,544 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terrain Lab · Bacteria!</title>
+<style>
+  /* A survey instrument: the readouts are the design. Ground and accent come from the game itself so
+     what you build here looks like where it will live. */
+  :root {
+    --abyss:   #071318;   --panel:  #0d1f26;   --line: #17323c;
+    --ink:     #dff5ee;   --muted:  #7fa3a0;
+    --accent:  #57e0c0;   --rock:   #c8b48a;   --warn: #ffd24a;
+    --bg: var(--abyss); --fg: var(--ink); --card: var(--panel);
+    --radius: 10px;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sans: "Trebuchet MS", "Segoe UI", system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #eef3f2; --fg: #0b2027; --card: #ffffff; --line: #cfdcd9; --muted: #4d6b6a; }
+  }
+  :root[data-theme="light"] { --bg: #eef3f2; --fg: #0b2027; --card: #ffffff; --line: #cfdcd9; --muted: #4d6b6a; }
+  :root[data-theme="dark"]  { --bg: #071318; --fg: #dff5ee; --card: #0d1f26; --line: #17323c; --muted: #7fa3a0; }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--sans);
+         line-height: 1.5; padding: 22px; }
+  h1 { font-size: 19px; margin: 0; letter-spacing: .3px; }
+  .sub { color: var(--muted); font-size: 13px; margin: 2px 0 18px; max-width: 68ch; }
+  .wrap { display: grid; grid-template-columns: 290px minmax(0, 1fr); gap: 18px; align-items: start; }
+  /* The preview stays put while the controls scroll, so a tweak is always visible against its result. */
+  .preview { position: sticky; top: 22px; }
+  @media (max-width: 820px) { .wrap { grid-template-columns: 1fr; } .preview { position: static; } }
+
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
+  .card + .card { margin-top: 14px; }
+  .card h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 1.4px; color: var(--muted);
+             margin: 0 0 10px; font-weight: 600; }
+
+  .row { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; align-items: center;
+         margin-bottom: 9px; }
+  .row label { font-size: 12.5px; }
+  .row output { font-family: var(--mono); font-size: 12px; color: var(--accent);
+                font-variant-numeric: tabular-nums; }
+  .row input[type=range] { grid-column: 1 / -1; width: 100%; accent-color: var(--accent); margin: 0; }
+  .hint { grid-column: 1 / -1; font-size: 11px; color: var(--muted); margin: -3px 0 0; }
+
+  .seg { display: flex; gap: 6px; }
+  .seg button { flex: 1; background: transparent; color: var(--fg); border: 1px solid var(--line);
+                border-radius: 7px; padding: 6px 8px; font: inherit; font-size: 12.5px; cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 18%, transparent);
+                border-color: var(--accent); color: var(--accent); }
+  .presets { display: flex; flex-wrap: wrap; gap: 6px; }
+  .presets button { background: transparent; border: 1px dashed var(--line); color: var(--muted);
+                    border-radius: 999px; padding: 4px 10px; font: inherit; font-size: 11.5px; cursor: pointer; }
+  .presets button:hover { border-style: solid; border-color: var(--accent); color: var(--accent); }
+  button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  canvas { display: block; width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--line);
+           background: #05131a; }
+  .stats { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .stat { border: 1px solid var(--line); border-radius: 7px; padding: 6px 10px; min-width: 96px; }
+  .stat b { display: block; font-family: var(--mono); font-size: 15px; font-variant-numeric: tabular-nums;
+            color: var(--accent); }
+  .stat span { font-size: 10.5px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); }
+  .stat.warn b { color: var(--warn); }
+
+  textarea { width: 100%; min-height: 190px; background: var(--bg); color: var(--fg); border: 1px solid var(--line);
+             border-radius: 8px; padding: 10px; font-family: var(--mono); font-size: 12px; resize: vertical; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+  .bar button { background: var(--accent); color: #052; border: 0; border-radius: 7px; padding: 7px 14px;
+                font: inherit; font-weight: 600; cursor: pointer; }
+  .bar button.ghost { background: transparent; color: var(--fg); border: 1px solid var(--line); font-weight: 500; }
+  .bar button.ghost:hover { border-color: var(--accent); color: var(--accent); }
+  .presets button.mine { border-style: solid; border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+                         color: var(--accent); }
+  .presets button.mine .x { margin-left: 6px; opacity: .6; }
+  .presets button.mine .x:hover { opacity: 1; }
+  .said { font-size: 12px; color: var(--accent); }
+  .legend { font-size: 11.5px; color: var(--muted); margin-top: 8px; }
+</style>
+
+<h1>Terrain Lab</h1>
+<p class="sub">Design a sea floor or an ice ceiling for a Bacteria! scenario. The preview runs the game's
+  own generator, so what you see is what the level builds — including the pore network you can swim
+  into. Paste the JSON into a scenario's <code>terrain</code> array.</p>
+
+<div class="wrap">
+  <div>
+    <div class="card">
+      <h2>Anchor</h2>
+      <div class="seg" id="anchor">
+        <button data-at="bottom" aria-pressed="true">Floor</button>
+        <button data-at="top" aria-pressed="false">Ceiling</button>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <label for="color">Material colour</label>
+        <input type="color" id="color" value="#3f3a44">
+      </div>
+      <div class="row">
+        <label for="label">Label</label>
+      </div>
+      <input id="label" value="sulfide chimneys" style="width:100%;background:var(--bg);color:var(--fg);
+             border:1px solid var(--line);border-radius:7px;padding:6px 9px;font:inherit;font-size:12.5px">
+    </div>
+
+    <div class="card">
+      <h2>Mass</h2>
+      <div class="row"><label for="thickness">Thickness</label><output id="thickness-o"></output>
+        <input type="range" id="thickness" min="20" max="800" step="5">
+        <p class="hint">How deep the layer runs, in pixels.</p></div>
+      <div class="row"><label for="roughness">Roughness</label><output id="roughness-o"></output>
+        <input type="range" id="roughness" min="0" max="1" step="0.01">
+        <p class="hint">Rolling relief. 0 is a dead-flat slab.</p></div>
+      <div class="row"><label for="featureSize">Relief scale</label><output id="featureSize-o"></output>
+        <input type="range" id="featureSize" min="40" max="2000" step="10">
+        <p class="hint">How wide those undulations are.</p></div>
+    </div>
+
+    <div class="card">
+      <h2>Pore network</h2>
+      <div class="row"><label for="porosity">Porosity</label><output id="porosity-o"></output>
+        <input type="range" id="porosity" min="0" max="1" step="0.01">
+        <p class="hint">Voids through the mass — brine channels, burrows. This is the part cells can live in.</p></div>
+      <div class="row"><label for="poreSize">Pore scale</label><output id="poreSize-o"></output>
+        <input type="range" id="poreSize" min="6" max="200" step="1">
+        <p class="hint">Fine channels or open caverns.</p></div>
+    </div>
+
+    <div class="card">
+      <h2>Spires</h2>
+      <div class="row"><label for="spires">Density</label><output id="spires-o"></output>
+        <input type="range" id="spires" min="0" max="1" step="0.01">
+        <p class="hint">How much of the width grows a tower. 0 for a flat sheet.</p></div>
+      <div class="row"><label for="spireHeight">Height</label><output id="spireHeight-o"></output>
+        <input type="range" id="spireHeight" min="0" max="800" step="10"></div>
+      <div class="row"><label for="spireWidth">Girth</label><output id="spireWidth-o"></output>
+        <input type="range" id="spireWidth" min="10" max="400" step="2">
+        <p class="hint">40–70 is a slender chimney; 200 a broad pinnacle.</p></div>
+    </div>
+
+    <div class="card">
+      <h2>Start from</h2>
+      <div class="presets" id="presets"></div>
+    </div>
+  </div>
+
+  <div class="preview">
+    <div class="card">
+      <h2>Cross-section · full world width (2600 px)</h2>
+      <canvas id="view" width="1300" height="520"></canvas>
+      <div class="stats" id="stats"></div>
+      <p class="legend">Dark gaps inside the mass are pore space — a cell can swim in there. The dotted
+        line marks the world boundary. <b title="A canvas holds every pixel as RGBA in RAM, so this is
+        roughly width×height×4 — what the layer costs live in the game, not its file size. A PNG on disk
+        would be far smaller, but it decompresses to this the moment it is drawn.">Canvas</b> is the
+        uncompressed RAM the layer takes in-game, not a download size.</p>
+    </div>
+    <div class="card">
+      <h2>Scenario JSON</h2>
+      <textarea id="json" readonly spellcheck="false"></textarea>
+      <div class="bar">
+        <button id="launch">▸ Launch test level</button>
+        <button id="save" class="ghost">Save preset…</button>
+        <button id="copy" class="ghost">Copy</button>
+        <span class="said" id="said"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---- the game's own generator, sliced out of game.js by tools/build-terrain-lab.mjs ----------------
+const WORLD_W = 2600, WORLD_H = 2000;
+const GRAIN_MAXD = 14;
+const CFG = { grid: { cs: 7 }, substrate: {"grainStrength":1,"grainRim":1.16,"grainFalloff":0.2,"grainFloor":0.1} };
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+
+function terrainHash(a, b, seed) {
+    let h = (a * 374761393 + b * 668265263 + seed * 2147483647) >>> 0;
+    h = ((h ^ (h >>> 13)) * 1274126177) >>> 0;
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;      // → [0,1)
+  }
+
+function terrainNoise1(x, seed) {
+    const i = Math.floor(x), f = x - i, s = f * f * (3 - 2 * f);
+    return terrainHash(i, 0, seed) * (1 - s) + terrainHash(i + 1, 0, seed) * s;
+  }
+
+function terrainFbm1(x, seed) {
+    return terrainNoise1(x, seed) * 0.6 + terrainNoise1(x * 2.3 + 11.7, seed + 1) * 0.3
+         + terrainNoise1(x * 4.7 + 23.1, seed + 2) * 0.1;
+  }
+
+function terrainNoise2(x, y, seed) {
+    const xi = Math.floor(x), yi = Math.floor(y), fx = x - xi, fy = y - yi;
+    const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+    const a = terrainHash(xi, yi, seed), b = terrainHash(xi + 1, yi, seed);
+    const c = terrainHash(xi, yi + 1, seed), d = terrainHash(xi + 1, yi + 1, seed);
+    return (a * (1 - sx) + b * sx) * (1 - sy) + (c * (1 - sx) + d * sx) * sy;
+  }
+
+function terrainSpireLift(layer, wx) {
+    if (!(layer.spires > 0) || !(layer.spireHeight > 0)) return 0;
+    const spacing = Math.max(20, layer.spireWidth * 2.2);
+    const slot = Math.floor(wx / spacing);
+    let lift = 0;
+    // neighbours too: a wide spire centred in the next slot still reaches into this one
+    for (let s = slot - 1; s <= slot + 1; s++) {
+      if (terrainHash(s, 101, layer.seed) >= layer.spires) continue;      // this slot stays bare
+      const centre = (s + 0.5) * spacing + (terrainHash(s, 202, layer.seed) - 0.5) * spacing * 0.55;
+      const height = layer.spireHeight * (0.45 + 0.55 * terrainHash(s, 303, layer.seed));
+      const halfW = Math.max(6, layer.spireWidth * (0.45 + 0.55 * terrainHash(s, 404, layer.seed)));
+      const d = Math.abs(wx - centre) / halfW;
+      if (d >= 1) continue;
+      // squared falloff, so it tapers to a point rather than ending in a cliff
+      const h = height * (1 - d * d);
+      if (h > lift) lift = h;
+    }
+    return lift;
+  }
+
+function terrainLutFor(hex) {
+    const G = CFG.substrate;
+    const rgb = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+    const byte = (x) => (x < 0 ? 0 : x > 255 ? 255 : Math.round(x));
+    const row = [];
+    for (let d = 0; d <= GRAIN_MAXD; d++) {
+      const lit = clamp(G.grainRim - G.grainFalloff * (Math.max(1, d) - 1), G.grainFloor, 6);
+      const f = 1 + (lit - 1) * G.grainStrength;
+      row.push(`rgb(${byte(rgb[0]*f)},${byte(rgb[1]*f)},${byte(rgb[2]*f)})`);
+    }
+    return row;
+  }
+
+function makeTerrainChunk(layer, cxWorld, side, lut, seed, solidFill) {
+    const cs = CFG.grid.cs;
+    const n = Math.ceil(side / cs) + 2, half = n * cs / 2;
+    const grid = new Float32Array(n * n);
+    const fromTop = layer.at === "top";
+    let solid = 0;
+    for (let gj = 0; gj < n; gj++) for (let gi = 0; gi < n; gi++) {
+      const wx = cxWorld + (gi + 0.5) * cs - half;
+      const wy = layer.cy + (gj + 0.5) * cs - half;
+      // Surface height at this x: the layer's face, displaced by the roughness profile. Sampled in
+      // WORLD x so the profile is continuous across chunk boundaries.
+      const undulation = (terrainFbm1(wx / Math.max(40, layer.featureSize), seed) - 0.5) * 2 * layer.roughness * layer.thickness * 0.5;
+      // Spires push the face further into the water: chimneys up off a vent floor, keels and
+      // stalactites down off a ceiling. Same term either way, opposite sign.
+      const lift = terrainSpireLift(layer, wx);
+      const face = fromTop ? layer.thickness + undulation + lift : WORLD_H - layer.thickness + undulation - lift;
+      const inside = solidFill || (fromTop ? wy <= face : wy >= face);
+      if (!inside) continue;
+      if (layer.porosity > 0 && !solidFill) {
+        // Pores: voids threaded through the mass. Biased so the layer stays anchored at its outer
+        // edge and opens up toward the water — brine channels widen downward through ice, burrows
+        // riddle the top of sediment — which is what makes it somewhere to hide rather than a wall.
+        const depthIn = fromTop ? face - wy : wy - face;            // 0 at the water face
+        const openness = clamp(1 - depthIn / Math.max(1, layer.thickness), 0, 1);
+        const pore = terrainNoise2(wx / Math.max(8, layer.poreSize), wy / Math.max(8, layer.poreSize), seed + 7);
+        if (pore < layer.porosity * (0.35 + 0.65 * openness)) continue;
+      }
+      grid[gj * n + gi] = 1; solid++;
+    }
+    if (!solid) return null;                                        // an all-pore chunk is just water
+    return { x: cxWorld, y: layer.cy, vx: 0, vy: 0, R: side / 2, rot: 0, seed, cs, n, half,
+      grid, gtype: new Uint8Array(n * n), terrainLut: lut, label: layer.label,
+      organic: solid, organic0: solid, dirty: true, cache: null, terrainLayer: true };
+  }
+
+function surfaceDepth(p) {
+    const n = p.n, N = n*n;
+    let d = p.depthBuf;
+    if (!d || d.length !== N) d = p.depthBuf = new Int16Array(N);
+    const INF = 30000;
+    // What lies just outside the grid? For a particle drifting in water, water — so the edge is an
+    // exposed surface and shades bright. A terrain chunk is a tile of a much larger slab whose
+    // neighbour continues the mass, so treating its border as surface drew a lit rim around every
+    // chunk and turned a sheet of ice into a visible grid of boxes.
+    const outside = p.terrainLayer ? INF : 0;
+    for (let k = 0; k < N; k++) d[k] = p.grid[k] > 0 ? INF : 0;
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {   // forward: up + left
+      const k = j*n + i; if (d[k] === 0) continue;
+      const up = j > 0 ? d[k-n] : outside, left = i > 0 ? d[k-1] : outside;
+      const m = (up < left ? up : left) + 1;
+      if (m < d[k]) d[k] = m;
+    }
+    for (let j = n-1; j >= 0; j--) for (let i = n-1; i >= 0; i--) { // backward: down + right
+      const k = j*n + i; if (d[k] === 0) continue;
+      const dn = j < n-1 ? d[k+n] : outside, rt = i < n-1 ? d[k+1] : outside;
+      const m = (dn < rt ? dn : rt) + 1;
+      if (m < d[k]) d[k] = m;
+    }
+    return d;
+  }
+// ---- end of the embedded generator ----------------------------------------------------------------
+
+const PRESETS = {
+  "sea ice": {
+    "at": "top",
+    "thickness": 175,
+    "color": "#cfe4f2",
+    "label": "sea ice",
+    "roughness": 0.5,
+    "porosity": 0.45,
+    "poreSize": 18,
+    "featureSize": 300,
+    "spires": 0,
+    "spireHeight": 0,
+    "spireWidth": 60
+  },
+  "vent chimneys": {
+    "at": "bottom",
+    "thickness": 200,
+    "color": "#3f3a44",
+    "label": "sulfide chimneys",
+    "roughness": 0.3,
+    "porosity": 0.3,
+    "poreSize": 22,
+    "featureSize": 220,
+    "spires": 0.55,
+    "spireHeight": 300,
+    "spireWidth": 52
+  },
+  "estuarine mud": {
+    "at": "bottom",
+    "thickness": 220,
+    "color": "#4f3d2a",
+    "label": "estuarine mud",
+    "roughness": 0.35,
+    "porosity": 0.45,
+    "poreSize": 30,
+    "featureSize": 400,
+    "spires": 0,
+    "spireHeight": 0,
+    "spireWidth": 60
+  },
+  "reef carbonate": {
+    "at": "bottom",
+    "thickness": 240,
+    "color": "#c9bda2",
+    "label": "reef carbonate",
+    "roughness": 0.7,
+    "porosity": 0.4,
+    "poreSize": 24,
+    "featureSize": 260,
+    "spires": 0.25,
+    "spireHeight": 140,
+    "spireWidth": 90
+  },
+  "streambed": {
+    "at": "bottom",
+    "thickness": 200,
+    "color": "#6a6152",
+    "label": "streambed gravel",
+    "roughness": 0.55,
+    "porosity": 0.5,
+    "poreSize": 32,
+    "featureSize": 320,
+    "spires": 0,
+    "spireHeight": 0,
+    "spireWidth": 60
+  },
+  "lake bed": {
+    "at": "bottom",
+    "thickness": 200,
+    "color": "#4a4530",
+    "label": "lake sediment",
+    "roughness": 0.3,
+    "porosity": 0.4,
+    "poreSize": 30,
+    "featureSize": 450,
+    "spires": 0,
+    "spireHeight": 0,
+    "spireWidth": 60
+  }
+};
+const KEYS = ["thickness","roughness","featureSize","porosity","poreSize","spires","spireHeight","spireWidth"];
+const state = { ...PRESETS["vent chimneys"] };
+
+const $ = (id) => document.getElementById(id);
+const fmt = { thickness: (v) => v + " px", featureSize: (v) => v + " px", poreSize: (v) => v + " px",
+              spireHeight: (v) => v + " px", spireWidth: (v) => v + " px",
+              roughness: (v) => (+v).toFixed(2), porosity: (v) => (+v).toFixed(2), spires: (v) => (+v).toFixed(2) };
+
+function buildChunks(porosityOverride) {
+  const thickness = clamp(state.thickness, 20, WORLD_H * 0.4);
+  const porosity = porosityOverride == null ? state.porosity : porosityOverride;
+  const layer = { at: state.at, thickness,
+    roughness: state.roughness, porosity, poreSize: state.poreSize,
+    featureSize: state.featureSize, spires: state.spires, spireHeight: state.spireHeight,
+    spireWidth: state.spireWidth, seed: 9973, label: state.label, cy: 0 };
+  const side = clamp(thickness, 64, 420);
+  const lut = terrainLutFor(state.color);
+  const reach = thickness + layer.spireHeight;
+  const cols = Math.ceil(WORLD_W / side), rows = Math.ceil(reach / side);
+  const out = [];
+  for (let r = 0; r < rows; r++) {   // matches buildTerrain in game.js — no off-world seam row
+    layer.cy = layer.at === "top" ? side / 2 + r * side : WORLD_H - side / 2 - r * side;
+    for (let i = 0; i < cols; i++) {
+      const c = makeTerrainChunk(layer, (i + 0.5) * side, side, lut, 9973, false);
+      if (c) out.push(c);
+    }
+  }
+  return { chunks: out, reach, side };
+}
+
+function render() {
+  const { chunks, reach, side } = buildChunks();
+  const cv = $("view"), ctx = cv.getContext("2d");
+  const fromTop = state.at === "top";
+  // frame the layer plus a strip of water, so you can judge how far it reaches into the sea
+  const band = Math.min(WORLD_H, reach + 220);
+  const top = fromTop ? -60 : WORLD_H - band + 60;
+  const scale = cv.width / WORLD_W;
+  cv.height = Math.round(band * scale);
+
+  ctx.fillStyle = "#05131a";
+  ctx.fillRect(0, 0, cv.width, cv.height);
+
+  let solid = 0, bytes = 0;
+  for (const p of chunks) {
+    bytes += (p.n * p.cs) ** 2 * 4;
+    const depth = surfaceDepth(p);
+    for (let gj = 0; gj < p.n; gj++) for (let gi = 0; gi < p.n; gi++) {
+      const idx = gj * p.n + gi;
+      if (p.y >= 0 && p.y <= WORLD_H && p.grid[idx] > 0) solid++;
+      if (p.grid[idx] <= 0) continue;
+      const wx = p.x + (gi + 0.5) * p.cs - p.half;
+      const wy = p.y + (gj + 0.5) * p.cs - p.half;
+      ctx.fillStyle = p.terrainLut[Math.min(depth[idx], GRAIN_MAXD)];
+      ctx.fillRect((wx - p.cs / 2) * scale, (wy - top - p.cs / 2) * scale,
+                   p.cs * scale + 0.6, p.cs * scale + 0.6);
+    }
+  }
+
+  // the world boundary
+  ctx.save();
+  ctx.strokeStyle = "rgba(87,224,192,.5)"; ctx.setLineDash([6, 5]); ctx.lineWidth = 1;
+  const edgeY = (fromTop ? 0 : WORLD_H) - top;
+  ctx.beginPath(); ctx.moveTo(0, edgeY * scale); ctx.lineTo(cv.width, edgeY * scale); ctx.stroke();
+  ctx.restore();
+
+  // Pore space means voids threaded through the MASS, so measure against the same layer with the pores
+  // switched off. Comparing against the chunk area instead would mostly be counting the open water
+  // above the spires, which tells you nothing about whether there is anywhere to shelter.
+  let poreless = 0;
+  for (const p of buildChunks(0).chunks) {
+    if (p.y < 0 || p.y > WORLD_H) continue;
+    for (let k = 0; k < p.grid.length; k++) if (p.grid[k] > 0) poreless++;
+  }
+  const pore = poreless ? clamp(1 - solid / poreless, 0, 1) : 0;
+  let tallest = 0;
+  for (let x = 0; x < WORLD_W; x += 4) {
+    const h = terrainSpireLift({ spires: state.spires, spireHeight: state.spireHeight,
+                                 spireWidth: state.spireWidth, seed: 9973 }, x);
+    if (h > tallest) tallest = h;
+  }
+  const mb = bytes / 1048576;
+  $("stats").innerHTML =
+    stat(Math.round(pore * 100) + "%", "of mass is pore", pore < 0.05 && state.porosity > 0) +
+    stat(Math.round(reach) + " px", "total reach") +
+    stat(Math.round(tallest) + " px", "tallest spire") +
+    stat(chunks.length, "chunks") +
+    stat(mb.toFixed(1) + " MB", "canvas", mb > 14);
+
+  const json = { at: state.at, thickness: Math.round(state.thickness), color: state.color, label: state.label,
+                 roughness: +(+state.roughness).toFixed(2), porosity: +(+state.porosity).toFixed(2),
+                 poreSize: Math.round(state.poreSize), featureSize: Math.round(state.featureSize) };
+  if (state.spires > 0 && state.spireHeight > 0) {
+    json.spires = +(+state.spires).toFixed(2);
+    json.spireHeight = Math.round(state.spireHeight);
+    json.spireWidth = Math.round(state.spireWidth);
+  }
+  $("json").value = '"terrain": [\n  ' + JSON.stringify(json, null, 2).split("\n").join("\n  ") + "\n]";
+}
+const stat = (v, l, warn) =>
+  '<div class="stat' + (warn ? " warn" : "") + '"><b>' + v + "</b><span>" + l + "</span></div>";
+
+function syncInputs() {
+  for (const k of KEYS) { $(k).value = state[k]; $(k + "-o").textContent = fmt[k](state[k]); }
+  $("color").value = state.color;
+  $("label").value = state.label;
+  for (const b of $("anchor").children) b.setAttribute("aria-pressed", String(b.dataset.at === state.at));
+}
+
+for (const k of KEYS) $(k).addEventListener("input", (e) => {
+  state[k] = Number(e.target.value); $(k + "-o").textContent = fmt[k](state[k]); render();
+});
+$("color").addEventListener("input", (e) => { state.color = e.target.value; render(); });
+$("label").addEventListener("input", (e) => { state.label = e.target.value; render(); });
+$("anchor").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  state.at = b.dataset.at; syncInputs(); render();
+});
+// Your own saved presets live in localStorage, shown after the built-ins with a delete affremove.
+const MINE_KEY = "bacteria_terrain_presets";
+function myPresets() { try { return JSON.parse(localStorage.getItem(MINE_KEY)) || {}; } catch { return {}; } }
+function saveMine(all) { try { localStorage.setItem(MINE_KEY, JSON.stringify(all)); } catch {} }
+function renderPresets() {
+  const built = Object.keys(PRESETS).map((n) => '<button data-p="' + n + '">' + esc(n) + "</button>").join("");
+  const mine = Object.keys(myPresets()).map((n) =>
+    '<button class="mine" data-mine="' + esc(n) + '">' + esc(n) + '<span class="x" data-del="' + esc(n) + '">×</span></button>').join("");
+  $("presets").innerHTML = built + mine;
+}
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+$("presets").addEventListener("click", (e) => {
+  const del = e.target.closest("[data-del]");
+  if (del) { e.stopPropagation(); const all = myPresets(); delete all[del.dataset.del]; saveMine(all); renderPresets(); return; }
+  const mineBtn = e.target.closest("[data-mine]");
+  if (mineBtn) { Object.assign(state, myPresets()[mineBtn.dataset.mine]); syncInputs(); render(); return; }
+  const b = e.target.closest("[data-p]"); if (!b) return;
+  Object.assign(state, PRESETS[b.dataset.p]); syncInputs(); render();
+});
+renderPresets();
+
+$("save").addEventListener("click", () => {
+  const name = prompt("Save this terrain as:", state.label || "my terrain");
+  if (!name || !name.trim()) return;
+  const all = myPresets();
+  // store a plain copy of the current knobs, so editing state later doesn't mutate the saved one
+  all[name.trim().slice(0, 40)] = JSON.parse(JSON.stringify(state));
+  saveMine(all); renderPresets();
+  $("said").textContent = "Saved to this browser"; setTimeout(() => { $("said").textContent = ""; }, 1800);
+});
+
+// Fly the current terrain in the real game: a base64url'd terrain array on the game's own URL, which
+// the game validates exactly like any scenario before building it.
+$("launch").addEventListener("click", () => {
+  const json = { at: state.at, thickness: Math.round(state.thickness), color: state.color, label: state.label,
+                 roughness: +(+state.roughness).toFixed(2), porosity: +(+state.porosity).toFixed(2),
+                 poreSize: Math.round(state.poreSize), featureSize: Math.round(state.featureSize) };
+  if (state.spires > 0 && state.spireHeight > 0) {
+    json.spires = +(+state.spires).toFixed(2); json.spireHeight = Math.round(state.spireHeight); json.spireWidth = Math.round(state.spireWidth);
+  }
+  const b64 = btoa(unescape(encodeURIComponent(JSON.stringify([json])))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  window.open("../index.html?labterrain=" + b64, "_blank", "noopener");
+});
+$("copy").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText($("json").value); $("said").textContent = "Copied"; }
+  catch { $("json").select(); $("said").textContent = "Press Cmd/Ctrl+C"; }
+  setTimeout(() => { $("said").textContent = ""; }, 1800);
+});
+
+syncInputs();
+render();
+</script>
