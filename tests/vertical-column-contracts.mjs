@@ -212,12 +212,27 @@ assert.equal(dhTorus({ y: 1000, eps: 0 }), 0, "no vertical drift in the classic 
 
   // The camera follows a cell right up to the world edge, so terrain has to keep going past it.
   const build = grab("buildTerrain");
-  assert.match(build, /const beyond = Math\.ceil\(VIEW_H \/ side\) \+ 1/,
-    "terrain must extend beyond the world edge by at least a viewport");
-  assert.match(build, /for \(let r = -beyond; r < rows; r\+\+\)/, "those outside rows must actually be built");
+  assert.match(build, /for \(let r = -beyond; r < rows; r\+\+\)/, "an outside row must still cover the edge seam");
   assert.match(build, /9973, r < 0\)/, "rows outside the world must be built as solid fill, not more pore network");
   assert.match(grab("makeTerrainChunk"), /layer\.porosity > 0 && !solidFill/,
     "solidFill must suppress the pore network");
+
+  // The camera stops at the surface and the floor rather than centring on the cell all the way to the
+  // edge. That removes the void beyond the world, and makes hitting the sea floor read as ARRIVING
+  // somewhere — the view stops scrolling and the cell drifts off-centre — instead of the controls
+  // seeming to stop working.
+  const clampFn = grab("camClampY");
+  assert.match(clampFn, /if \(worldYWrap\) return wrapY\(y\)/, "a torus has no edges and must keep centring");
+  assert.match(clampFn, /VIEW_H \/ \(2 \* \(ZOOM \|\| 1\)\)/, "ZOOM decides how much world a viewport covers");
+  assert.match(clampFn, /WORLD_H <= halfView \* 2/, "a world shorter than the view must be shown whole, not clamped");
+  assert.match(clampFn, /clamp\(y, halfView, WORLD_H - halfView\)/, "otherwise stop the camera at both boundaries");
+  // every camera assignment must go through it, or the void flashes back on a snap
+  const strays = game.split("\n").filter((l) => /\bcam\.y = /.test(l) && !/camClampY|WORLD_H\/2/.test(l));
+  assert.equal(strays.length, 0, `these set cam.y without clamping:\n  ${strays.map((s) => s.trim()).join("\n  ")}`);
+
+  // and the exhaustive off-screen rows are gone: with the camera clamped nothing out there is visible,
+  // and a viewport's worth of chunks was megabytes of canvases nobody could ever see
+  assert.match(build, /const beyond = 1;/, "one seam row is enough once the camera is clamped");
 }
 
 console.log("Vertical-column contract OK: Y-mode plumbing, no seam wrap, save/restore, phase-2 depth fields, phase-3 buoyancy, and solid porous terrain.");

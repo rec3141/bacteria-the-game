@@ -1230,11 +1230,12 @@
       const side = clamp(thickness, 64, 420);
       const lut = terrainLutFor(/^#[0-9a-fA-F]{6}$/.test(raw.color || "") ? raw.color : "#9fb6c4");
       const cols = Math.ceil(WORLD_W / side), rows = Math.ceil(thickness / side);
-      // Keep building OUTWARD past the world edge, far enough to fill the view. The camera follows the
-      // cell right up to the boundary, so a slab that stopped exactly at y=0 left open water above the
-      // ice — the sea appearing to continue beyond its own ceiling. X needs no such treatment: the
-      // world is a horizontal torus and the draw transform already wraps.
-      const beyond = Math.ceil(VIEW_H / side) + 1;
+      // One row past the world edge, no more. camClampY() stops the camera at the boundary, so nothing
+      // out there is ever really visible — this single row only covers the seam at the very edge, where
+      // rounding could otherwise show a hairline of open water. It used to build a whole viewport's
+      // worth, which for a 190px ice layer meant 84 extra chunks holding ~12 MB of canvases nobody
+      // could ever see.
+      const beyond = 1;
       for (let r = -beyond; r < rows; r++) {
         // r < 0 is outside the world; r = 0 sits flush against the edge; deeper rows stack inward
         layer.cy = layer.at === "top" ? side / 2 + r * side : WORLD_H - side / 2 - r * side;
@@ -1446,7 +1447,7 @@
       phages.push(makePhage("green", wrapX(first.x + Math.cos(a)*d), wrapY(first.y + Math.sin(a)*d)));
     }
     // first gold is spawned by the always-on-board respawn logic (same buried-in-particle rule)
-    cam.x = first.x; cam.y = first.y;
+    cam.x = first.x; cam.y = camClampY(first.y);
     state = { gen: 1, score: 0, running: true, elapsed: tod0*CFG.day.lengthSec, activeEnzyme: 2, role: "bacterium", // start with carbohydrase, as a bacterium
       day: 1, runId: Date.now(),   // runId is stable across days: continuing UPDATES the leaderboard entry, never adds a second one
       greenSeedT: rand(CFG.phage.greenSeed[0], CFG.phage.greenSeed[1]),
@@ -2059,7 +2060,7 @@
     const a = demo.watch ? axis() : { x: 0, y: 0 };
     if (a.x || a.y) {
       const sp = CFG.demo.panSpeed*dt;
-      cam.x = wrapX(cam.x + a.x*sp); cam.y = wrapY(cam.y + a.y*sp);
+      cam.x = wrapX(cam.x + a.x*sp); cam.y = camClampY(cam.y + a.y*sp);
       demo.manualT = CFG.demo.panHold; demo.focus = null;
       return;
     }
@@ -2084,7 +2085,7 @@
     if (f) {
       const k = 1 - Math.exp(-CFG.demo.driftRate*dt);
       cam.x = wrapX(cam.x + dx(f.x, cam.x)*k);
-      cam.y = wrapY(cam.y + dy(f.y, cam.y)*k);
+      cam.y = camClampY(cam.y + dy(f.y, cam.y)*k);
     }
   }
   // ---- the dish ------------------------------------------------------------
@@ -2251,7 +2252,7 @@
     if (!predators.length) for (let i = 0; i < CFG.cycle.reseedProtists; i++)
       predators.push(makePredator(cam.x + rand(-140, 140), cam.y + rand(-140, 140), CFG.predator.startEnergy, rand(0, 10)));
     const p = predators[0]; p.controlled = true; p.energy = Math.max(p.energy, CFG.predator.startEnergy); p.age = 0;
-    cam.x = p.x; cam.y = p.y;
+    cam.x = p.x; cam.y = camClampY(p.y);
     immigrateBacteria(CFG.cycle.reseedBacteria);
     // No promise of a way back: the grazers have their own immigration (minCount, respawnFloor) and
     // effectively never all die, so becomeBacterium() almost never fires. Tell the player what they
@@ -2266,7 +2267,7 @@
     state.role = "bacterium";
     predators.forEach((p) => (p.controlled = false));
     if (!cells.length) immigrateBacteria(CFG.cycle.reseedBacteria);
-    const c = cells[0]; if (c) { c.controlled = true; c.invuln = Math.max(c.invuln, 2); cam.x = c.x; cam.y = c.y; }
+    const c = cells[0]; if (c) { c.controlled = true; c.invuln = Math.max(c.invuln, 2); cam.x = c.x; cam.y = camClampY(c.y); }
     if (state.roleSwaps) state.roleSwaps.push({ t: +state.elapsed.toFixed(1), to: "bacterium" });
     flashRole("You are now a BACTERIUM", "the grazers died out — forage, evolve, divide");
     Audio.play("spawn", 0.6);
@@ -2465,7 +2466,7 @@
     }
     if (target && target !== cur) {
       cur.controlled = false; target.controlled = true;
-      cam.x = target.x; cam.y = target.y;   // snap the camera to the new cell
+      cam.x = target.x; cam.y = camClampY(target.y);   // snap the camera to the new cell
       announceLineage(target);
       Audio.play("eat", 0.5);
     }
@@ -2506,7 +2507,7 @@
     const revived = best.cyst;
     best.controlled = true; best.invuln = Math.max(best.invuln, 1.2);
     if (best.cyst) { best.cyst = false; best.energy = Math.max(best.energy, CFG.cell.cystReviveEnergy); } // resuscitate a cyst
-    cam.x = best.x; cam.y = best.y; // position the toast against the survivor immediately, even across the torus
+    cam.x = best.x; cam.y = camClampY(best.y); // position the toast against the survivor immediately, even across the torus
     const tier = upgradeTier(best), head = (CAUSE_WORD[cause] || "You died") + "!";
     showAnnouncement(head + (revived ? " · revived tier " : " · now tier ") + tier,
       lineageKeyColor(lineageKey(best)), "☠");
@@ -2790,7 +2791,7 @@
     for (const q of particles) { q.x += q.vx*dt; q.y += q.vy*dt; q.vx *= 0.9; q.vy *= 0.9; q.life -= dt; }
     particles = particles.filter((q) => q.life > 0);
     // camera follows whichever entity you're controlling (cell or protist)
-    const pc = controlledEntity(); if (pc) { cam.x = pc.x; cam.y = pc.y; }
+    const pc = controlledEntity(); if (pc) { cam.x = pc.x; cam.y = camClampY(pc.y); }
     updateDemo(dt);   // no player in the menu background — the camera drifts through the sim
     rebuildSpatialIndexes(); // final positions feed rendering and any input between animation frames
     // sample per-mask abundances for the time-series chart
@@ -3441,6 +3442,19 @@
   function sx(wx) { return VIEW_W/2 + dx(wx, cam.x); }
   function sy(wy) { return VIEW_H/2 + dy(wy, cam.y); }
   const onScreen = (x, y, m) => x > -m && x < VIEW_W + m && y > -m && y < VIEW_H + m;
+  // In a water column the camera STOPS at the surface and the floor instead of centring on the cell
+  // all the way to the edge. Two things come out of that: the view never shows the void beyond the
+  // world (a sea continuing past its own ceiling), and pressing on into the boundary visibly stops
+  // scrolling while the cell drifts off-centre — so "I have hit the sea floor" reads as arriving
+  // somewhere, rather than as the controls having quietly stopped working.
+  // The torus has no edges, so it keeps centring. ZOOM matters: it is what decides how much world a
+  // viewport actually covers.
+  function camClampY(y) {
+    if (worldYWrap) return wrapY(y);
+    const halfView = VIEW_H / (2 * (ZOOM || 1));
+    if (WORLD_H <= halfView * 2) return WORLD_H / 2;   // world shorter than the view: show all of it
+    return clamp(y, halfView, WORLD_H - halfView);
+  }
   function visibleSpatial(grid, scratch, margin) {
     const zoom = Math.max(0.05, Math.abs(ZOOM) || 1);
     const radius = Math.hypot(VIEW_W/(2*zoom), VIEW_H/(2*zoom)) + margin;
