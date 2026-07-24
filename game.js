@@ -872,6 +872,11 @@
   // --------------------------------------------------------------- game state
   let state = null, cells = [], substrates = [], enzymes = [], toxins = [], epsBlocks = [], nutrients = [],
       predators = [], phages = [], particles = [], flagPhase = 0, cam = { x: 0, y: 0 }, paused = false;
+  // #30: fixed, solid scenery for a water column — sea ice overhead, sediment underfoot. Its own list,
+  // deliberately not part of `substrates`: terrain is not food, and keeping it separate is what stops
+  // it appearing in the food accounting, the diel particle budget, the resource-balance floor, the
+  // sinking sweep and the lifecycle respawn, none of which mean anything for a slab of ice.
+  let terrain = [];
   let ZOOM = 1; // world magnification — bumped on touch devices so cells aren't tiny on a small screen
   let isTouch = false; // coarse-pointer device → mobile control + HUD layout (minimap top-left, etc.)
   let chartLog = false; // generation-history charts: log vs. linear y-axis (toggled by clicking a chart)
@@ -1123,6 +1128,119 @@
     if (need >= 0) return partResKinds[need][(Math.random()*partResKinds[need].length)|0];
     return dielKind(); // otherwise the composition follows the daily production→grazing→detritus succession
   }
+  // ---- #30 terrain: solid, fixed scenery bounding a water column -----------------------------------
+  // Sea ice above, sediment below. Two knobs shape it, because a flat slab is a wall and the real
+  // thing is a habitat:
+  //   roughness — how much the surface undulates instead of running dead flat across the world
+  //   porosity  — voids threaded THROUGH the layer: brine channels in ice, burrows in mud. This is
+  //               where the biology lives, so it is worth more than the surface relief.
+  //
+  // Everything is derived from a hash of the world position, never Math.random(): the same scenario
+  // must produce the same seabed for every player, or two people cannot compare a run in it.
+  function terrainHash(a, b, seed) {
+    let h = (a * 374761393 + b * 668265263 + seed * 2147483647) >>> 0;
+    h = ((h ^ (h >>> 13)) * 1274126177) >>> 0;
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;      // → [0,1)
+  }
+  // Smooth 1-D value noise across x, used for the surface profile. Interpolated so neighbouring chunks
+  // meet exactly — a seam in the seabed would read as a crack you could swim through.
+  function terrainNoise1(x, seed) {
+    const i = Math.floor(x), f = x - i, s = f * f * (3 - 2 * f);
+    return terrainHash(i, 0, seed) * (1 - s) + terrainHash(i + 1, 0, seed) * s;
+  }
+  function terrainFbm1(x, seed) {
+    return terrainNoise1(x, seed) * 0.6 + terrainNoise1(x * 2.3 + 11.7, seed + 1) * 0.3
+         + terrainNoise1(x * 4.7 + 23.1, seed + 2) * 0.1;
+  }
+  // 2-D value noise for the pore network.
+  function terrainNoise2(x, y, seed) {
+    const xi = Math.floor(x), yi = Math.floor(y), fx = x - xi, fy = y - yi;
+    const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+    const a = terrainHash(xi, yi, seed), b = terrainHash(xi + 1, yi, seed);
+    const c = terrainHash(xi, yi + 1, seed), d = terrainHash(xi + 1, yi + 1, seed);
+    return (a * (1 - sx) + b * sx) * (1 - sy) + (c * (1 - sx) + d * sx) * sy;
+  }
+
+  // Depth-shaded palette for one terrain colour, mirroring what grainLut() does per resource so a
+  // slab reads as solid mass rather than a flat fill, and a freshly exposed face brightens by itself.
+  function terrainLutFor(hex) {
+    const G = CFG.substrate;
+    const rgb = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+    const byte = (x) => (x < 0 ? 0 : x > 255 ? 255 : Math.round(x));
+    const row = [];
+    for (let d = 0; d <= GRAIN_MAXD; d++) {
+      const lit = clamp(G.grainRim - G.grainFalloff * (Math.max(1, d) - 1), G.grainFloor, 6);
+      const f = 1 + (lit - 1) * G.grainStrength;
+      row.push(`rgb(${byte(rgb[0]*f)},${byte(rgb[1]*f)},${byte(rgb[2]*f)})`);
+    }
+    return row;
+  }
+
+  // One square chunk of a layer. Square because the particle cache and its draw path assume it, which
+  // is what lets terrain reuse the whole voxel renderer and pushCircleOut collision unchanged.
+  function makeTerrainChunk(layer, cxWorld, side, lut, seed) {
+    const cs = CFG.grid.cs;
+    const n = Math.ceil(side / cs) + 2, half = n * cs / 2;
+    const grid = new Float32Array(n * n);
+    const fromTop = layer.at === "top";
+    let solid = 0;
+    for (let gj = 0; gj < n; gj++) for (let gi = 0; gi < n; gi++) {
+      const wx = cxWorld + (gi + 0.5) * cs - half;
+      const wy = layer.cy + (gj + 0.5) * cs - half;
+      // Surface height at this x: the layer's face, displaced by the roughness profile. Sampled in
+      // WORLD x so the profile is continuous across chunk boundaries.
+      const undulation = (terrainFbm1(wx / Math.max(40, layer.featureSize), seed) - 0.5) * 2 * layer.roughness * layer.thickness * 0.5;
+      const face = fromTop ? layer.thickness + undulation : WORLD_H - layer.thickness + undulation;
+      const inside = fromTop ? wy <= face : wy >= face;
+      if (!inside) continue;
+      if (layer.porosity > 0) {
+        // Pores: voids threaded through the mass. Biased so the layer stays anchored at its outer
+        // edge and opens up toward the water — brine channels widen downward through ice, burrows
+        // riddle the top of sediment — which is what makes it somewhere to hide rather than a wall.
+        const depthIn = fromTop ? face - wy : wy - face;            // 0 at the water face
+        const openness = clamp(1 - depthIn / Math.max(1, layer.thickness), 0, 1);
+        const pore = terrainNoise2(wx / Math.max(8, layer.poreSize), wy / Math.max(8, layer.poreSize), seed + 7);
+        if (pore < layer.porosity * (0.35 + 0.65 * openness)) continue;
+      }
+      grid[gj * n + gi] = 1; solid++;
+    }
+    if (!solid) return null;                                        // an all-pore chunk is just water
+    return { x: cxWorld, y: layer.cy, vx: 0, vy: 0, R: side / 2, rot: 0, seed, cs, n, half,
+      grid, gtype: new Uint8Array(n * n), terrainLut: lut, label: layer.label,
+      organic: solid, organic0: solid, dirty: true, cache: null, terrainLayer: true };
+  }
+
+  // Build every terrain layer a scenario asked for. Column only: terrain bounds a water column, and on
+  // a torus there is no surface or floor for it to attach to.
+  function buildTerrain(layers) {
+    terrain = [];
+    if (!columnState || !Array.isArray(layers)) return;
+    layers.forEach((raw, li) => {
+      const thickness = clamp(raw.thickness, 20, WORLD_H * 0.4);
+      const layer = { at: raw.at === "top" ? "top" : "bottom", thickness,
+        roughness: clamp(raw.roughness == null ? 0.35 : raw.roughness, 0, 1),
+        porosity: clamp(raw.porosity == null ? 0 : raw.porosity, 0, 1),
+        poreSize: clamp(raw.poreSize == null ? 26 : raw.poreSize, 6, 200),
+        featureSize: clamp(raw.featureSize == null ? 260 : raw.featureSize, 40, 2000),
+        label: raw.label || (raw.at === "top" ? "ice" : "sediment"), cy: 0 };
+      // Square chunks, tiled across the world AND down through the layer. Square because the particle
+      // cache and its draw path assume it; capped because one canvas per chunk and a 2600-wide slab
+      // would be an enormous texture. A thick layer therefore needs SEVERAL rows — tiling only across
+      // meant a 700px seabed rendered its outer 420px and left the rest as a hole you could swim into.
+      const side = clamp(thickness, 64, 420);
+      const lut = terrainLutFor(/^#[0-9a-fA-F]{6}$/.test(raw.color || "") ? raw.color : "#9fb6c4");
+      const cols = Math.ceil(WORLD_W / side), rows = Math.ceil(thickness / side);
+      for (let r = 0; r < rows; r++) {
+        // outermost row sits flush against the world edge; deeper rows stack inward
+        layer.cy = layer.at === "top" ? side / 2 + r * side : WORLD_H - side / 2 - r * side;
+        for (let i = 0; i < cols; i++) {
+          const chunk = makeTerrainChunk(layer, (i + 0.5) * side, side, lut, (li + 1) * 9973);
+          if (chunk) terrain.push(chunk);
+        }
+      }
+    });
+  }
+
   function makeSubstrate(kind) {
     const k = kind || pickBalancedKind();
     const spec = partSet[k] || PARTICLES[k];
@@ -1253,6 +1371,16 @@
   }
   // Resolve a moving circle against food particles and EPS. Twitching cells skip only the former.
   function collideCircle(obj, radius, skipParticles = false) {
+    // Terrain is solid unconditionally — skipParticles exists so a twitching cell can crawl THROUGH a
+    // food particle it is gripping, which must not also let it swim through the sea floor.
+    for (const p of terrain) {
+      const push = pushCircleOut(p, obj.x, obj.y, radius);
+      if (!push) continue;
+      const mag = Math.hypot(push.x, push.y) || 1;
+      obj.x = wrapX(obj.x + push.x); obj.y = wrapY(obj.y + push.y);
+      const nx = push.x/mag, ny = push.y/mag, vn = obj.vx*nx + obj.vy*ny;
+      if (vn < 0) { obj.vx -= vn*nx; obj.vy -= vn*ny; }
+    }
     if (!skipParticles) for (const p of substrates) {
       const push = pushCircleOut(p, obj.x, obj.y, radius);
       if (!push) continue;
@@ -1279,6 +1407,8 @@
     // run gets the whole ocean back.
     if (isDemo) setWorld(VIEW_W, VIEW_H); else setWorld(WORLD_DEF_W, WORLD_DEF_H);
     setWorldYMode(!columnState);               // #30: torus by default; a column scenario clamps Y into a water column
+    // Terrain before the founder: it is solid, so the cell must not be seeded inside the sea floor.
+    buildTerrain(activeScenario && !isDemo ? activeScenario.terrain : null);
     const first = makeCell(WORLD_W/2, WORLD_H/2, CFG.cell.startEnergy, -Math.PI/2, 1);
     // #28: in a scenario the founder carries the first authored archetype's genome (e.g. the alkB oil
     // degrader), so the run opens as the organism the lesson describes rather than a bare cell.
@@ -3331,6 +3461,7 @@
     ctx.save();
     if (ZOOM !== 1) { ctx.translate(VIEW_W/2, VIEW_H/2); ctx.scale(ZOOM, ZOOM); ctx.translate(-VIEW_W/2, -VIEW_H/2); }
     drawDish();                       // the glass, and the dark beyond it
+    for (const p of terrain) drawSubstrate(p);   // scenery first: food and organisms sit in front of it
     for (const p of substrates) drawSubstrate(p);
     for (const z of epsBlocks) drawEps(z);
     for (const z of enzymes) drawEnzyme(z);
@@ -3402,7 +3533,9 @@
       const idx = gj*p.n + gi, v = p.grid[idx]; if (v <= 0) continue;
       const res = p.gtype[idx];
       // color = resource class, shaded by how deeply buried the voxel is
-      g.fillStyle = grain ? lut[res][Math.min(depth[idx], GRAIN_MAXD)] : RESOURCES[res].color;
+      // terrain carries its own single-colour palette; food voxels colour by resource class
+      g.fillStyle = p.terrainLut ? p.terrainLut[grain ? Math.min(depth[idx], GRAIN_MAXD) : GRAIN_MAXD]
+                  : grain ? lut[res][Math.min(depth[idx], GRAIN_MAXD)] : RESOURCES[res].color;
       g.globalAlpha = 0.6 + 0.4*v;
       g.fillRect(gi*cs, gj*cs, cs+0.5, cs+0.5);
     }
@@ -5837,7 +5970,7 @@
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return scReject("scenario is not an object");
     if (raw.schema !== "bacteria-scenario") return scReject("wrong schema tag");
     if (raw.version !== 1) return scReject("unsupported schema version");
-    const topErr = scOnlyKeys(raw, new Set(["schema", "version", "meta", "env", "resources", "particles", "actions", "organisms", "column"]), "top-level");
+    const topErr = scOnlyKeys(raw, new Set(["schema", "version", "meta", "env", "resources", "particles", "actions", "organisms", "column", "terrain"]), "top-level");
     if (topErr) return scReject(topErr);
 
     // ---- meta (required) ----
@@ -6035,7 +6168,34 @@
       column = scClone(col); column.enabled = col.enabled === true;
     }
 
-    return { ok: true, scenario: { meta, cfg, resources, particles, actions, organisms, column } };
+    // ---- terrain: solid, fixed scenery bounding the column (sea ice above, sediment below) --------
+    // Data only, like everything else: a scenario describes a slab and the game builds it. Thickness
+    // is capped well short of the column height so terrain can never seal the water off entirely.
+    let terrain = null;
+    if (raw.terrain != null) {
+      if (!Array.isArray(raw.terrain)) return scReject("terrain must be an array");
+      if (raw.terrain.length > 4) return scReject("at most 4 terrain layers");
+      terrain = [];
+      for (const t of raw.terrain) {
+        if (!t || typeof t !== "object" || Array.isArray(t)) return scReject("terrain layer must be an object");
+        const tErr = scOnlyKeys(t, new Set(["at", "thickness", "color", "label", "roughness", "porosity", "poreSize", "featureSize"]), "terrain layer");
+        if (tErr) return scReject(tErr);
+        if (t.at !== "top" && t.at !== "bottom") return scReject('terrain layer "at" must be "top" or "bottom"');
+        if (!Number.isFinite(t.thickness) || t.thickness < 20 || t.thickness > 800) return scReject("terrain thickness must be 20..800");
+        if (t.color != null && !/^#[0-9a-fA-F]{6}$/.test(t.color)) return scReject("terrain color must be #rrggbb");
+        const frac = (v, name) => v == null || (Number.isFinite(v) && v >= 0 && v <= 1) ? null : `terrain ${name} must be 0..1`;
+        for (const chk of [frac(t.roughness, "roughness"), frac(t.porosity, "porosity")]) if (chk) return scReject(chk);
+        if (t.poreSize != null && (!Number.isFinite(t.poreSize) || t.poreSize < 6 || t.poreSize > 200)) return scReject("terrain poreSize must be 6..200");
+        if (t.featureSize != null && (!Number.isFinite(t.featureSize) || t.featureSize < 40 || t.featureSize > 2000)) return scReject("terrain featureSize must be 40..2000");
+        terrain.push({ at: t.at, thickness: t.thickness, color: t.color || "#9fb6c4",
+          label: scStr(t.label, 40) || "", roughness: t.roughness == null ? 0.35 : t.roughness,
+          porosity: t.porosity == null ? 0 : t.porosity,
+          poreSize: t.poreSize == null ? 26 : t.poreSize,
+          featureSize: t.featureSize == null ? 260 : t.featureSize });
+      }
+    }
+
+    return { ok: true, scenario: { meta, cfg, resources, particles, actions, organisms, column, terrain } };
   }
   // SCENARIO_VALIDATOR_END
 

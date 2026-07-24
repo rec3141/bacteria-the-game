@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+// (terrain contracts are appended at the end of this file)
 import { readFileSync } from "node:fs";
 
 // Guards #30 phase 1: the world Y-mode. "wrap" is the classic torus (Y wraps like X); "column" is a
@@ -133,4 +134,61 @@ assert.ok(drift({ y: 1, eps: 5 }) === 0 || drift({ y: 1, eps: 5 }) >= 0, "a buoy
 const dhTorus = new Function(`let WORLD_H = 2000, columnState = null; const CFG = { column: { sink: 9, buoyEps: 7, deadSink: 22, particleSink: 6 } }; ${driftBlock} return columnDriftVy;`)();
 assert.equal(dhTorus({ y: 1000, eps: 0 }), 0, "no vertical drift in the classic torus");
 
-console.log("Vertical-column contract OK: Y-mode plumbing, no seam wrap, save/restore, phase-2 depth fields, and phase-3 buoyancy (sink/float/dead, torus-neutral).");
+// ---- terrain: solid, fixed scenery bounding the column --------------------------------------------
+// Sea ice overhead, sediment underfoot, each with a roughness (surface relief) and a porosity (voids
+// threaded through the mass — brine channels, burrows). It is scenery, not food.
+{
+  const grab = (name) => {
+    const i = game.indexOf(`function ${name}(`);
+    assert.ok(i >= 0, `${name} must exist`);
+    let d = 0, j = game.indexOf("{", i), started = false;
+    for (; j < game.length; j++) {
+      if (game[j] === "{") { d++; started = true; }
+      else if (game[j] === "}") { d--; if (started && d === 0) { j++; break; } }
+    }
+    return game.slice(i, j);
+  };
+  const src = ["terrainHash", "terrainNoise1", "terrainFbm1", "terrainNoise2", "makeTerrainChunk"].map(grab).join("\n");
+  const { makeTerrainChunk } = new Function(
+    `const WORLD_H = 2000, WORLD_W = 2600; const CFG = { grid: { cs: 7 } };
+     const clamp = (v,a,b) => v<a?a:v>b?b:v;\n${src}\nreturn { makeTerrainChunk };`)();
+
+  const layer = (o) => ({ at: "bottom", thickness: 200, cy: 1850, roughness: 0, porosity: 0,
+                          poreSize: 26, featureSize: 260, label: "sediment", ...o });
+  const solidity = (c) => (c ? c.grid.reduce((a, v) => a + (v > 0 ? 1 : 0), 0) / c.grid.length : 0);
+
+  // roughness 0 is dead flat — every chunk identical; turning it up makes the face undulate ACROSS
+  // the world, so chunks stop matching each other
+  const flat = [0, 1, 2, 3].map((i) => solidity(makeTerrainChunk(layer({ roughness: 0 }), (i + 0.5) * 300, 300, [], 1)));
+  assert.ok(Math.max(...flat) - Math.min(...flat) < 1e-9, "roughness 0 must give a flat, uniform layer");
+  const rough = [0, 1, 2, 3].map((i) => solidity(makeTerrainChunk(layer({ roughness: 0.9 }), (i + 0.5) * 300, 300, [], 1)));
+  assert.ok(Math.max(...rough) - Math.min(...rough) > 0.05, "roughness must actually vary the surface across the world");
+
+  // porosity hollows the slab out, monotonically — this is the habitat, not decoration
+  let prev = Infinity;
+  for (const p of [0, 0.2, 0.4, 0.6, 0.8]) {
+    const s = solidity(makeTerrainChunk(layer({ porosity: p }), 450, 300, [], 1));
+    assert.ok(s <= prev + 1e-9, `porosity ${p} must not make the layer MORE solid`);
+    prev = s;
+  }
+  assert.ok(prev < solidity(makeTerrainChunk(layer({ porosity: 0 }), 450, 300, [], 1)) * 0.75,
+    "high porosity must open real voids, not just roughen the surface");
+
+  // identical for every player: a scenario is a shared level, and two runs on different seabeds are
+  // not comparable
+  const a = makeTerrainChunk(layer({ roughness: 0.6, porosity: 0.4 }), 450, 300, [], 1);
+  const b = makeTerrainChunk(layer({ roughness: 0.6, porosity: 0.4 }), 450, 300, [], 1);
+  assert.ok(a.grid.every((v, i) => v === b.grid[i]), "terrain must be deterministic, never Math.random()");
+  assert.ok(!/Math\.random\(\)/.test(grab("makeTerrainChunk")), "terrain generation must not use Math.random()");
+
+  // it is scenery: no resource content, and it collides even for a twitching cell that may crawl
+  // through food particles
+  assert.ok(a.terrainLayer === true, "a terrain body must be flagged as terrain");
+  const collide = grab("collideCircle");   // collideRod is defined ABOVE it, so slicing between them is empty
+  assert.match(collide, /for \(const p of terrain\)[\s\S]*?if \(!skipParticles\) for \(const p of substrates\)/,
+    "terrain must collide unconditionally — skipParticles lets a cell crawl through FOOD, not through the sea floor");
+  // and it must not be mistaken for food anywhere
+  assert.ok(!/substrates\.push\(.*terrain/i.test(game), "terrain must never enter the substrate list");
+}
+
+console.log("Vertical-column contract OK: Y-mode plumbing, no seam wrap, save/restore, phase-2 depth fields, phase-3 buoyancy, and solid porous terrain.");
