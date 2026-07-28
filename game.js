@@ -3612,37 +3612,61 @@
     const goldMin = isTouch ? CFG.phage.goldMinDistTouch : CFG.phage.goldMinDist;
     const goldHave = phages.reduce((n, p) => n + (p.type === "gold" && !p.dead ? 1 : 0), 0);
     if (goldHave < goldWant && phages.length < CFG.phage.maxCount) {
-      const pc = controlledCell();
-      const owned = pc ? ownedEnzymes(pc) : [2]; // resources this cell can dig through
-      let gx, gy, host = null, placed = false;
-      if (Math.random() < 0.75 && substrates.length) {
-        // embed it in a distant particle, in a voxel of a resource the cell can actually eat
-        for (let k = 0; k < 14 && !placed; k++) {
-          const p = substrates[(Math.random()*substrates.length)|0];
-          if (p.phase !== "live") continue;
-          if (pc && toroDist2(p.x, p.y, pc.x, pc.y) <= goldMin*goldMin) continue;
-          if (!owned.some((r) => p.orgByType[r] > 0)) continue;
-          const cs = p.cs, half = p.half, inner = [], outer = [];
-          for (let gj = 0; gj < p.n; gj++) for (let gi = 0; gi < p.n; gi++) {
-            const idx = gj*p.n + gi;
-            if (p.grid[idx] <= 0 || owned.indexOf(p.gtype[idx]) < 0) continue;
-            const lx = (gi+0.5)*cs - half, ly = (gj+0.5)*cs - half;
-            (lx*lx + ly*ly > (0.45*p.R)**2 ? outer : inner).push([lx, ly]); // prefer reachable outer voxels
-          }
-          const pool = outer.length ? outer : inner; if (!pool.length) continue;
-          const v = pool[(Math.random()*pool.length)|0];
-          gx = wrapX(p.x + v[0]); gy = wrapY(p.y + v[1]); host = p; placed = true;
-        }
-      }
-      if (!placed) {                                          // open water, well away
-        const a = rand(0, 6.28), d = rand(700, 1200);
-        gx = pc ? pc.x + Math.cos(a)*d : rand(0, WORLD_W);
-        gy = pc ? pc.y + Math.sin(a)*d : rand(0, WORLD_H);
-      }
-      const goldPh = makePhage("gold", gx, gy);
-      if (host) { goldPh.vx = host.vx; goldPh.vy = host.vy; } // drift along with its host particle
+      const spot = goldSpawnPoint(controlledCell(), goldMin);
+      const goldPh = makePhage("gold", spot.x, spot.y);
+      if (spot.host) { goldPh.vx = spot.host.vx; goldPh.vy = spot.host.vy; } // drift along with its host particle
       phages.push(goldPh);
     }
+  }
+
+  // Where the next gold phage goes. Its own function because it is the one piece of spawn logic that
+  // can silently ruin a run -- gold is the ONLY source of adaptations, so a gold phage you cannot
+  // reach is worth less than no gold phage at all, and it still shows on the minimap as a promise.
+  //
+  // Two ways it used to become unreachable, both only in COLUMN scenarios:
+  //   * y=0 / y=WORLD_H. Y does not wrap in a column -- wrapY CLAMPS (see its definition) -- so the
+  //     old "pick one angle, walk 700-1200px" pinned a large share of gold exactly onto the ceiling
+  //     and the floor, which is also where the terrain is.
+  //   * inside terrain. Being buried in a PARTICLE is the intended puzzle; you dig it out. Terrain
+  //     cannot be digested at all, so a phage inside it is simply gone.
+  // In a wrapping world this behaves exactly as it always did: every candidate passes on the first try.
+  function goldSpawnPoint(pc, goldMin) {
+    const owned = pc ? ownedEnzymes(pc) : [2];   // resources this cell can dig through
+    const r = CFG.cell.radius + 8;
+    if (Math.random() < 0.75 && substrates.length) {
+      // embed it in a distant particle, in a voxel of a resource the cell can actually eat
+      for (let k = 0; k < 14; k++) {
+        const p = substrates[(Math.random()*substrates.length)|0];
+        if (p.phase !== "live") continue;
+        if (pc && toroDist2(p.x, p.y, pc.x, pc.y) <= goldMin*goldMin) continue;
+        if (!owned.some((res) => p.orgByType[res] > 0)) continue;
+        const cs = p.cs, half = p.half, inner = [], outer = [];
+        for (let gj = 0; gj < p.n; gj++) for (let gi = 0; gi < p.n; gi++) {
+          const idx = gj*p.n + gi;
+          if (p.grid[idx] <= 0 || owned.indexOf(p.gtype[idx]) < 0) continue;
+          const lx = (gi+0.5)*cs - half, ly = (gj+0.5)*cs - half;
+          (lx*lx + ly*ly > (0.45*p.R)**2 ? outer : inner).push([lx, ly]); // prefer reachable outer voxels
+        }
+        const pool = outer.length ? outer : inner; if (!pool.length) continue;
+        const v = pool[(Math.random()*pool.length)|0];
+        // A particle resting on the seabed can have half its voxels inside the sediment.
+        const cx = wrapX(p.x + v[0]), cy = wrapY(p.y + v[1]);
+        if (!clearOfTerrain(cx, cy, r)) continue;
+        return { x: cx, y: cy, host: p };
+      }
+    }
+    const a0 = rand(0, 6.28), d = rand(700, 1200);
+    for (let k = 0; k < 12; k++) {
+      const a = a0 + k * 0.5236;                              // 30 degrees per try, all the way round
+      const gx = wrapX(pc ? pc.x + Math.cos(a)*d : rand(0, WORLD_W));
+      const yy = pc ? pc.y + Math.sin(a)*d : rand(0, WORLD_H);
+      if (worldYWrap) return { x: gx, y: wrapY(yy), host: null };
+      if (yy < r || yy > WORLD_H - r) continue;               // would clamp onto an edge
+      if (!clearOfTerrain(gx, yy, r)) continue;               // would be buried in ice or sediment
+      return { x: gx, y: yy, host: null };
+    }
+    const s = founderSpawn(pc ? pc.y : WORLD_H/2);            // the water is tight: reuse the founder search
+    return { x: s.x, y: s.y, host: null };
   }
 
   // ------------------------------------------------------------------- render
@@ -6517,7 +6541,15 @@
           if (!Number.isFinite(L.depth) || L.depth < 0 || L.depth <= prevDepth) return scReject("column layer depths must be ascending and >= 0");
           prevDepth = L.depth;
           const band = (v, lo, hi, name) => v == null || (Number.isFinite(v) && v >= lo && v <= hi) ? null : `column layer ${name} out of range`;
-          for (const chk of [band(L.tempC, -10, 50, "tempC"), band(L.salinity, 0, 60, "salinity"), band(L.light, 0, 1, "light"), band(L.nutrient, 0, 1, "nutrient")]) if (chk) return scReject(chk);
+          // tempC floor is -30, not -10: sea-ice brine runs -10 to -20 through a polar winter and the
+          // ice surface goes below -30, so the old floor rejected the honest temperature for an entire
+          // class of real habitat. It cost us a paper -- an Arctic winter sea-ice study failed
+          // generation twice on "tempC out of range" and was written off. NOTE the water model flattens
+          // out well before this: diffusivity is (tempC+5)/25 clamped at 0.3, so everything below about
+          // -2.5C behaves identically. A -25C layer validates and plays, it just does not feel colder
+          // than -5C. Widening the bound is honest about the habitat; making the cold MEAN something
+          // further down is a separate change to that curve.
+          for (const chk of [band(L.tempC, -30, 50, "tempC"), band(L.salinity, 0, 60, "salinity"), band(L.light, 0, 1, "light"), band(L.nutrient, 0, 1, "nutrient")]) if (chk) return scReject(chk);
         }
       }
       column = scClone(col); column.enabled = col.enabled === true;
