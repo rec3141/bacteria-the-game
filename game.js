@@ -6143,7 +6143,10 @@
     "day.startHour": { min: 0, max: 23 },
     "day.latitude": { min: -90, max: 90 },
     "day.dayOfYear": { min: 1, max: 365, integer: true },
-    "diel.tempBase": { min: -10, max: 50 },
+    // -30 for the same reason as the column layer floor below: a polar level must be able to state
+    // its real mean water temperature. Leaving this at -10 while the layers went to -30 produced an
+    // Arctic sea-ice level whose column read -12/-15/-18 and whose ambient mean read -10.
+    "diel.tempBase": { min: -30, max: 50 },
     "diel.tempLag": { min: 0, max: 1 },
     "diel.foodFloor": { min: 0, max: 1 },
     "diel.twilight": { min: 0, max: 1 },
