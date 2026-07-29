@@ -123,4 +123,66 @@ const N = 4000;
   }
 }
 
-console.log("Gold reachability contracts OK: never on an edge, never in terrain, still spread, wrap untouched.");
+// ---- and it must still be reachable a MINUTE LATER, not just at spawn ------------------------------
+// Gold holds a constant velocity for its whole 90-140s life; there is no drag on it. In a column Y
+// clamps rather than wraps, so a correctly-placed phage still drifts into an edge and sticks there.
+// Measured on the old motion: 25% pinned to an edge, 36% ended inside the ice or sediment. Fixing the
+// spawn point fixed only where they start, which is why they were still piling up on the edges.
+{
+  const src = [grab("driftGoldPhage")].join("\n");
+  const drift = (worldYWrap, bands) => new Function(`
+    const WORLD_W = ${WORLD_W}, WORLD_H = ${WORLD_H};
+    const worldYWrap = ${worldYWrap};
+    const terrain = ${JSON.stringify(bands)};
+    const wrapX = (v) => ((v % WORLD_W) + WORLD_W) % WORLD_W;
+    const wrapY = (v) => worldYWrap ? ((v % WORLD_H) + WORLD_H) % WORLD_H
+                                    : (v < 0 ? 0 : v > WORLD_H ? WORLD_H : v);
+    const dx = (a,b) => { let d = a-b; if (d > WORLD_W/2) d -= WORLD_W; else if (d < -WORLD_W/2) d += WORLD_W; return d; };
+    const dy = (a,b) => a-b;
+    // terrain bands as solid slabs, in the shape pushCircleOut returns
+    const pushCircleOut = (b, wx, wy, r) => {
+      if (!(wy + r > b.y0 && wy - r < b.y1)) return null;
+      return (wy < (b.y0 + b.y1)/2) ? { x: 0, y: -(wy + r - b.y0) } : { x: 0, y: (b.y1 - (wy - r)) };
+    };
+    ${src}
+    return driftGoldPhage;`)();
+
+  const run = (worldYWrap, bands) => {
+    const move = drift(worldYWrap, bands);
+    let onEdge = 0, inTerrain = 0;
+    const N = 2000;
+    for (let i = 0; i < N; i++) {
+      const a = Math.random()*6.28, sp = 4 + Math.random()*8;
+      const ph = { x: 1300, y: 200 + Math.random()*1500, vx: Math.cos(a)*sp, vy: Math.sin(a)*sp, r: 4.5 };
+      for (let t = 0; t < 120; t += 0.1) move(ph, 0.1);      // a full gold lifetime
+      if (ph.y <= 1e-9 || ph.y >= WORLD_H - 1e-9) onEdge++;
+      if (bands.some((b) => ph.y > b.y0 && ph.y < b.y1)) inTerrain++;
+    }
+    return { onEdge, inTerrain, N };
+  };
+
+  const col = run(false, [ICE, SEABED]);
+  assert.equal(col.onEdge, 0,
+    `after a full lifetime gold must not be pinned to an edge (got ${col.onEdge}/${col.N})`);
+  assert.equal(col.inTerrain, 0,
+    `after a full lifetime gold must not be inside terrain (got ${col.inTerrain}/${col.N})`);
+
+  // the control: the OLD motion, to prove the harness reproduces what was reported
+  let oldEdge = 0;
+  for (let i = 0; i < col.N; i++) {
+    const a = Math.random()*6.28, sp = 4 + Math.random()*8;
+    let y = 200 + Math.random()*1500;
+    const vy = Math.sin(a)*sp;
+    for (let t = 0; t < 120; t += 0.1) y = y + vy*0.1 < 0 ? 0 : (y + vy*0.1 > WORLD_H ? WORLD_H : y + vy*0.1);
+    if (y <= 1e-9 || y >= WORLD_H - 1e-9) oldEdge++;
+  }
+  assert.ok(oldEdge / col.N > 0.1,
+    `the old motion must demonstrably pin gold to the edges, else this proves nothing (${(100*oldEdge/col.N).toFixed(1)}%)`);
+  console.log(`  (old motion pinned ${(100*oldEdge/col.N).toFixed(1)}% of gold to an edge within one lifetime)`);
+
+  // a wrapping world must be untouched: no edge to hit, no terrain, so it drifts as it always did
+  const wrapWorld = run(true, []);
+  assert.equal(wrapWorld.inTerrain, 0, "a wrapping world has no terrain to be stuck in");
+}
+
+console.log("Gold reachability contracts OK: never on an edge, never in terrain, at spawn AND a lifetime later.");

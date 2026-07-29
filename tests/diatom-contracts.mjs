@@ -21,8 +21,9 @@ const grab = (name) => {
 
 const FNS = ["diatomUnit", "diatomHalfW", "diatomHalfLen", "diatomArea",
              "diatomCap", "diatomDivideAt", "diatomStartEnergy", "diatomNodes",
-             "makeDiatom", "diatomSpecs", "diatomWant", "immigrateDiatoms", "releaseDiatom",
-             "updateDiatoms", "collideDiatom", "particleUnderDiatom"];
+             "makeDiatom", "diatomSpecs", "diatomWant", "immigrateDiatoms",
+             "diatomMotes", "killDiatomCell", "releaseDiatom",
+             "updateDiatoms", "diatomDivide", "diatomTouchingSurface", "collideDiatom", "particleUnderDiatom"];
 
 // A stub ocean. `light` is a fixed value so photosynthesis is testable without the diel cycle, and
 // `terrainBands` are horizontal slabs so "is it touching a surface" is decidable in the test.
@@ -51,8 +52,9 @@ function world({ specs = null, light = 1, terrainBands = [], substrates = [] } =
       (wy + r > b.y0 && wy - r < b.y1) ? { x: 0, y: (wy < (b.y0+b.y1)/2 ? -1 : 1) * 4 } : null;
     const clearOfTerrain = (wx, wy, r) => !terrain.some((b) => wy + r > b.y0 && wy - r < b.y1);
     ${src}
-    return { makeDiatom, updateDiatoms, diatomNodes, diatomHalfLen, diatomHalfW, diatomArea,
-             diatomCap, diatomStartEnergy,
+    return { makeDiatom, updateDiatoms, diatomDivide, killDiatomCell, diatomMotes,
+             diatomNodes, diatomHalfLen, diatomHalfW, diatomArea,
+             diatomCap, diatomStartEnergy, diatomUnit,
              diatomWant, immigrateDiatoms, releaseDiatom,
              get diatoms() { return diatoms; }, set diatoms(v) { diatoms = v; },
              get nutrients() { return nutrients; }, get toxins() { return toxins; }, state };`)();
@@ -147,24 +149,61 @@ const CENTRIC = { id: "cn", form: "centric", sizeUm: 40, chain: 1, count: 5, col
     `only a pennate has a raphe — a centric on the same floor must not glide (${centricOnFloor.toFixed(0)}px)`);
 }
 
-// ---- division never changes the drawn size ---------------------------------------------------------
-// A frustule is a rigid box: a diatom cannot expand sideways, it thickens, so growth goes into z and
-// the 2D footprint is fixed for life. If energy ever bought SIZE this assertion is what catches it.
+// ---- division: a chain grows ONE CELL at a time, at the end, and nothing else moves ---------------
+// A chain IS the record of past divisions that stayed attached, so it has to lengthen cell by cell.
+// The first version incremented n, and since the chain is drawn centred on d.x that slid every existing
+// frustule half a unit sideways -- the whole chain jumped each time one cell divided. Worse, the other
+// branch budded a COMPLETE copy of the chain at a random offset, so a six-cell chain appeared out of
+// nowhere beside its parent. Both are what "the diatoms are jumping around" and "a whole new chain
+// appears" were.
+{
+  const w = world({ light: 1 });
+  const d = w.makeDiatom({ ...CENTRIC, chain: 4 }, 500, 300);
+  d.angle = 0;                                  // along +x, so the arithmetic is checkable by hand
+  d.n = 2;                                      // room to grow before it reaches chainMax
+  const before = w.diatomNodes(d).map(([x, y]) => [Math.round(x), Math.round(y)]);
+  d.energy = w.diatomCap(d);
+  w.diatomDivide(d, []);
+  assert.equal(d.n, 3, "division must add exactly one frustule");
+  const after = w.diatomNodes(d).map(([x, y]) => [Math.round(x), Math.round(y)]);
+  for (let i = 0; i < before.length; i++) {
+    assert.deepEqual(after[i], before[i],
+      `existing frustule ${i} must not move when the chain grows (was ${before[i]}, now ${after[i]})`);
+  }
+  const u = w.diatomUnit(d);
+  assert.ok(Math.abs((after[2][0] - before[1][0]) - u) < 1.5,
+    "the new cell must appear at the END of the chain, one unit along");
+}
+
+// ---- at full length the chain BREAKS, and the halves start exactly on the parent -------------------
+{
+  const w = world({ light: 1 });
+  const d = w.makeDiatom({ ...CENTRIC, chain: 4 }, 500, 300);
+  d.angle = 0.7;
+  const px = d.x, py = d.y, pang = d.angle;
+  d.energy = w.diatomCap(d);
+  const born = [];
+  w.diatomDivide(d, born);
+  assert.equal(born.length, 1, "a chain at its authored length must split in two");
+  const kid = born[0];
+  assert.equal(kid.x, px, "the daughter starts at the parent's exact position");
+  assert.equal(kid.y, py, "...both coordinates");
+  assert.equal(kid.angle, pang, "...and its exact orientation");
+  assert.equal(d.n + kid.n, 4, "the frustules are divided between them, not duplicated");
+  assert.ok(kid.dvx !== 0 || kid.dvy !== 0, "and they must then drift apart");
+  assert.ok(Math.abs(kid.dvx + d.dvx) < 1e-9 && Math.abs(kid.dvy + d.dvy) < 1e-9,
+    "they part FROM EACH OTHER — equal and opposite, not one flung off on its own");
+  assert.equal(kid.um, d.um, "splitting must not change cell size");
+}
+
+// ---- and the separation decays, so it is a parting rather than a swimming speed --------------------
 {
   const w = world({ light: 1 });
   const d = w.makeDiatom(CENTRIC, 500, 300);
-  // the threshold scales with the cell, like the store and the burn rate
-  const threshold = CFG.diatom.divideEnergy * w.diatomArea(d);
-  d.energy = threshold + 1;
-  const um0 = d.um, hw0 = w.diatomHalfW(d);
+  d.dvx = 20; d.dvy = 0; d.energy = w.diatomCap(d) * 0.5;
   w.diatoms = [d];
-  w.updateDiatoms(0.1);
-  assert.ok(w.diatoms.length > 1, "a diatom at the division threshold must divide");
-  for (const x of w.diatoms) {
-    assert.equal(x.um, um0, "division must not change a diatom's size");
-    assert.equal(w.diatomHalfW(x), hw0, "...nor its drawn footprint");
-    assert.ok(x.energy < threshold, "each daughter takes half the energy");
-  }
+  for (let i = 0; i < 30; i++) w.updateDiatoms(0.1);
+  assert.equal(w.diatoms[0].dvx, 0, "the post-division drift must decay to nothing");
 }
 
 // ---- a big diatom must not starve faster than a small one -----------------------------------------
@@ -188,18 +227,74 @@ const CENTRIC = { id: "cn", form: "centric", sizeUm: 40, chain: 1, count: 5, col
   assert.ok(small > 120, `a diatom must survive a full night on a full tank (${small.toFixed(0)}s)`);
 }
 
-// ---- death releases biomass, and an authored toxin ------------------------------------------------
+// ---- death is cell by cell, and biomass scales with the cell ---------------------------------------
+// A chain starved below the photic zone comes apart one frustule at a time, which is what happens and
+// is far more legible than a six-cell chain blinking out of existence.
 {
   const w = world({ light: 1 });
-  const d = w.makeDiatom(CENTRIC, 500, 300); w.diatoms = [d];
-  w.releaseDiatom(d);
-  assert.equal(w.nutrients.length, CFG.diatom.killMotes, "a dead diatom is a parcel of food");
-  assert.equal(w.toxins.length, 0, "a diatom with no authored toxin releases none");
+  const d = w.makeDiatom({ ...CENTRIC, chain: 5 }, 500, 300);
+  d.angle = 0;
+  w.diatoms = [d];
+  const before = w.diatomNodes(d).map(([x]) => Math.round(x));
+  w.killDiatomCell(d);
+  assert.equal(d.n, 4, "starvation takes ONE frustule, not the whole chain");
+  assert.ok(!d.dead, "a chain with cells left is not dead");
+  const after = w.diatomNodes(d).map(([x]) => Math.round(x));
+  for (let i = 0; i < after.length; i++) {
+    assert.ok(Math.abs(after[i] - before[i]) <= 1,
+      "the surviving cells must stay put when the chain shortens");
+  }
+  assert.ok(d.energy > 0, "the rest of the chain gets a reprieve rather than unravelling in one frame");
+  // ...and only the last cell ends it
+  for (let i = 0; i < 8 && !d.dead; i++) w.killDiatomCell(d);
+  assert.ok(d.dead, "the chain dies when its last cell does");
+}
+{
+  // biomass follows the cell: a 90um frustule is not the same parcel of food as a 15um one
+  const w = world({ light: 1 });
+  const big = w.makeDiatom({ ...CENTRIC, sizeUm: 90 }, 500, 300);
+  const small = w.makeDiatom({ ...CENTRIC, sizeUm: 15 }, 500, 300);
+  assert.ok(w.diatomMotes(big) > w.diatomMotes(small) * 3,
+    `a big frustule must release far more biomass (${w.diatomMotes(big)} vs ${w.diatomMotes(small)})`);
+  assert.ok(w.diatomMotes(big) <= 60, "but never enough to empty the global mote budget on one chain");
 
+  const ww = world({ light: 1 });
+  const d = ww.makeDiatom({ ...CENTRIC, sizeUm: 90 }, 500, 300);
+  ww.diatoms = [d];
+  ww.killDiatomCell(d);
+  assert.equal(ww.nutrients.length, ww.diatomMotes(d), "a dead frustule is a parcel of food");
+  assert.equal(ww.toxins.length, 0, "a diatom with no authored toxin releases none");
+}
+{
+  // an authored toxin is inside the CELL, so it comes out with the cell that died
   const t = world({ light: 1 });
-  const toxic = t.makeDiatom({ ...CENTRIC, toxin: { potency: 30, radius: 90, life: 12 } }, 500, 300);
-  t.releaseDiatom(toxic);
-  assert.equal(t.toxins.length, 1, "an authored toxin is released where the producer died");
+  const toxic = t.makeDiatom({ ...CENTRIC, chain: 3, toxin: { potency: 30, radius: 90, life: 12 } }, 500, 300);
+  t.diatoms = [toxic];
+  t.killDiatomCell(toxic);
+  assert.equal(t.toxins.length, 1, "one cell dying releases one dose");
+  t.killDiatomCell(toxic);
+  assert.equal(t.toxins.length, 2, "a chain coming apart poisons the water steadily, not all at once");
+}
+
+// ---- exudates: a LIVING diatom feeds the water it is in --------------------------------------------
+// A healthy diatom leaks a large share of what it fixes, and that leak is why a phycosphere exists at
+// all — the bacteria around a chain are living off what it gives off now, not waiting for it to die.
+{
+  const lit = world({ light: 1 });
+  const d = lit.makeDiatom({ ...CENTRIC, sizeUm: 60 }, 500, 300);
+  lit.diatoms = [d];
+  for (let i = 0; i < 40; i++) lit.updateDiatoms(0.1);
+  assert.ok(lit.nutrients.length > 0, "a photosynthesising diatom must leak dissolved carbon");
+  assert.ok(lit.nutrients.every((n) => n.res === 2), "diatom exudate is polysaccharide — the carbohydrate class");
+
+  const dark = world({ light: 0 });
+  const d2 = dark.makeDiatom({ ...CENTRIC, sizeUm: 60 }, 500, 300);
+  d2.energy = dark.diatomCap(d2);
+  dark.diatoms = [d2];
+  const before = dark.nutrients.length;
+  for (let i = 0; i < 20; i++) dark.updateDiatoms(0.1);
+  assert.equal(dark.nutrients.length, before,
+    "a diatom in the dark fixes nothing, so it leaks nothing — the exudate is the fixing, not the cell");
 }
 
 // ---- starvation actually kills, and the bloom refills ---------------------------------------------

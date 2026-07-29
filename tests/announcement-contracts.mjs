@@ -17,7 +17,7 @@ assert.match(enzymeActions, /state\.activeEnzyme = owned\[[^;]+;\s*announceDeplo
 assert.match(enzymeActions, /state\.activeEnzyme = id; announceDeployable\(id\)/,
   "selecting a gene chip must use the same announcement");
 
-const lineageActions = game.slice(game.indexOf("const lineageKey ="), game.indexOf("function divide"));
+const lineageActions = game.slice(game.indexOf("const lineageKey ="), game.indexOf("function divide("));
 assert.match(lineageActions, /population = cells\.reduce\([\s\S]*?lineageKey\(x\) === key/,
   "lineage announcements must count the currently living population of the selected color");
 assert.match(lineageActions, /showAnnouncement\(`Lineage · tier \$\{tier\} · \$\{population\.toLocaleString\(\)\}[\s\S]*?lineageKeyColor\(key\), "●"\)/,

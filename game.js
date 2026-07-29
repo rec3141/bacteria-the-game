@@ -304,6 +304,14 @@
       glideSpeed: 16,          // pennates only, and only against a surface -- the raphe needs something to grip
       glideTurn: 1.1,          // how sharply a gliding pennate can change direction
       chainDrift: 0.5,         // how much a chain sways about its long axis as it sinks
+      // EXUDATES. A healthy diatom leaks a large share of what it fixes as dissolved organic carbon --
+      // in the real ocean often a quarter of primary production -- and that leak is why a phycosphere
+      // exists at all. exudateMote is how much leaked carbon makes one edible mote.
+      exudateFrac: 0.22,
+      exudateMote: 26,
+      // How much of a toxic frustule's potency a grazer takes on as a one-off dose when it eats one.
+      // Below 1 because the lingering cloud left by the same cell hits it as well.
+      grazeToxinDose: 0.8,
       killMotes: 10,           // nutrient motes released when one dies -- a diatom is a big parcel of food
       immigrateEvery: 14,      // seconds between diatoms drifting in, while below the authored count
     },
@@ -1547,6 +1555,30 @@
       if (vn < 0) { obj.vx -= vn*nx; obj.vy -= vn*ny; }
     }
   }
+  // Diatoms are solid bodies in the water, so they get in the way exactly as an EPS block does: a
+  // flagellum cannot push a cell through a frustule, and a twitching cell crawling over one is slowed
+  // by it. That is not decoration -- in a dense bloom the chains ARE the terrain, and a level whose
+  // subject is a bloom should feel like moving through one. Each frustule of a chain is its own body.
+  function collideDiatomCircle(obj, radius) {
+    if (!diatoms.length) return;
+    for (const d of diatoms) {
+      if (d.dead) continue;
+      const dr = diatomHalfW(d);
+      // cheap chain-level reject before touching the per-frustule maths
+      const far = diatomHalfLen(d) + dr + radius;
+      if (toroDist2(obj.x, obj.y, d.x, d.y) > far*far) continue;
+      for (const nd of diatomNodes(d)) {
+        let ex = dx(obj.x, nd[0]), ey = dy(obj.y, nd[1]), dist = Math.hypot(ex, ey);
+        const overlap = dr + radius - dist;
+        if (overlap <= 0) continue;
+        if (dist < 0.001) { ex = Math.cos(d.angle); ey = Math.sin(d.angle); dist = 1; }
+        const nx = ex/dist, ny = ey/dist;
+        obj.x = wrapX(obj.x + nx*overlap); obj.y = wrapY(obj.y + ny*overlap);
+        const vn = obj.vx*nx + obj.vy*ny;
+        if (vn < 0) { obj.vx -= vn*nx; obj.vy -= vn*ny; }
+      }
+    }
+  }
   // Resolve a moving circle against food particles and EPS. Twitching cells skip only the former.
   function collideCircle(obj, radius, skipParticles = false) {
     // Terrain is solid unconditionally — skipParticles exists so a twitching cell can crawl THROUGH a
@@ -1568,6 +1600,7 @@
       if (vn < 0) { obj.vx -= vn*nx; obj.vy -= vn*ny; }
     }
     collideEpsCircle(obj, radius);
+    collideDiatomCircle(obj, radius);
   }
 
   function makePredator(x, y, energy, age) {
@@ -1617,7 +1650,11 @@
       id: spec.id, label: spec.label || "", color: spec.color || "#8fd6a8",
       form: spec.form === "pennate" ? "pennate" : "centric",
       um: clamp(spec.sizeUm || 20, 5, 100),
+      // n is how many frustules it has NOW; chainMax is how long the authored chain grows before it
+      // breaks in two. A chain is the record of past divisions, so it has to be able to lengthen.
       n: Math.max(1, Math.round(spec.chain || 1)),
+      chainMax: Math.max(1, Math.round(spec.chain || 1)),
+      dvx: 0, dvy: 0, grip: 0, leak: 0,
       toxin: spec.toxin || null,                 // authored toxin, released on death (see releaseDiatom)
       angle: rand(0, 6.28), glideT: 0, sway: rand(0, 6.28),
       energy: 0, age: 0, dead: false };
@@ -1647,19 +1684,44 @@
     if (columnState && terrain.length && !clearOfTerrain(d.x, d.y, diatomHalfW(d) + 4)) return;  // try again next tick
     diatoms.push(d);
   }
-  function releaseDiatom(d) {  // a dying diatom is a big parcel of food, like an antibiotic-killed protist
-    burst(d.x, d.y, d.color, 12);
-    const nodes = diatomNodes(d), spread = diatomHalfW(d) + 4;
-    for (let i = 0; i < CFG.diatom.killMotes && nutrients.length < CFG.nutrient.maxCount; i++) {
-      const nd = nodes[(Math.random() * nodes.length) | 0];
+  // Biomass released when ONE frustule dies, scaled to that cell's size. A dying diatom is a large
+  // parcel of food and a 90um Coscinodiscus is not the same parcel as a 15um Chaetoceros, so the mote
+  // count follows the cell. Scaled LINEARLY in um rather than by area: biomass really goes as volume,
+  // but at 90um that is 20x and would empty the global mote budget on a single chain.
+  function diatomMotes(d) { return clamp(Math.round(CFG.diatom.killMotes * (d.um / 20)), 2, 60); }
+  // Kill one frustule off the end of the chain. Diatoms do not die all at once: a chain starved below
+  // the photic zone comes apart cell by cell, which is both what happens and far more legible than a
+  // six-cell chain blinking out of existence. The chain is only truly dead when the last cell goes.
+  function killDiatomCell(d) {
+    const nodes = diatomNodes(d), at = nodes[nodes.length - 1];
+    burst(at[0], at[1], d.color, 8);
+    const spread = diatomHalfW(d) + 4, want = diatomMotes(d);
+    for (let i = 0; i < want && nutrients.length < CFG.nutrient.maxCount; i++) {
       const a = rand(0, 6.28), sp = rand(10, 30);
-      nutrients.push({ x: wrapX(nd[0] + Math.cos(a) * rand(2, spread)), y: wrapY(nd[1] + Math.sin(a) * rand(2, spread)),
+      nutrients.push({ x: wrapX(at[0] + Math.cos(a) * rand(2, spread)), y: wrapY(at[1] + Math.sin(a) * rand(2, spread)),
         vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: CFG.nutrient.life, dead: false, res: null });
     }
-    // An authored toxin is released where the cell died -- this is the domoic-acid mechanic: the alga
-    // is harmless until something kills it, and then the water where it died is the dangerous part.
-    if (d.toxin) spawnToxinCloud(d.x, d.y, d.toxin);
+    // The toxin is INSIDE the cell, so it is released by the cell that died -- which is why a chain
+    // coming apart poisons the water steadily rather than all at once.
+    if (d.toxin) spawnToxinCloud(at[0], at[1], d.toxin);
+    if (d.n <= 1) { d.dead = true; return; }
+    // Keep the surviving cells where they are: the chain is drawn centred, so shortening it would
+    // otherwise slide every remaining frustule sideways.
+    const u = diatomUnit(d), ax = Math.cos(d.angle), ay = Math.sin(d.angle);
+    d.x = wrapX(d.x - ax * u * 0.5);
+    d.y = wrapY(d.y - ay * u * 0.5);
+    d.n -= 1;
+    // The rest of the chain gets a small reprieve rather than instantly failing the same test again --
+    // otherwise the whole chain unravels within one frame, which is the thing this is meant to avoid.
+    d.energy = diatomCap(d) * 0.06;
   }
+  // The whole organism at once: grazed to nothing, or cleared away.
+  function releaseDiatom(d) {
+    let guard = 16;
+    while (!d.dead && guard-- > 0) killDiatomCell(d);
+    d.dead = true;
+  }
+
   function updateDiatoms(dt) {
     if (!diatoms.length && !diatomSpecs()) return;
     const D = CFG.diatom, born = [];
@@ -1675,22 +1737,54 @@
       const area = diatomArea(d);
       // STRICT PHOTOTROPHY. No enzymes, no particles, no chemistry -- light is the only income, so a
       // diatom carried below the photic zone is on a countdown whatever else is in the water.
-      const gain = clamp(columnLightAt(d.y), 0, 1) * D.photoRate * area * dt;
+      const light = clamp(columnLightAt(d.y), 0, 1);
+      const gain = light * D.photoRate * area * dt;
       d.energy += gain;
       if (state) { state.calLive[CAL_AUTO] += gain; state.calFull[CAL_AUTO] += gain; }
       d.energy -= D.metabolism * area * env.metabolismMult * dt;
       const cap = diatomCap(d); if (d.energy > cap) d.energy = cap;
+
+      // EXUDATES. A photosynthesising diatom leaks a substantial share of what it fixes as dissolved
+      // organic carbon, and that leak is the entire reason a phycosphere exists -- the bacteria around
+      // a healthy chain are not waiting for it to die, they are living off what it is giving off right
+      // now. So the bloom feeds the water while it is ALIVE, not only when it collapses. Mostly
+      // polysaccharide, hence the carbohydrate class.
+      if (gain > 0 && nutrients.length < CFG.nutrient.maxCount) {
+        d.leak = (d.leak || 0) + gain * D.exudateFrac;
+        if (d.leak >= D.exudateMote) {
+          d.leak -= D.exudateMote;
+          const nd = diatomNodes(d)[(Math.random()*d.n)|0];
+          const a = rand(0, 6.28), sp = rand(3, 11), off = diatomHalfW(d) + 3;
+          nutrients.push({ x: wrapX(nd[0] + Math.cos(a)*off), y: wrapY(nd[1] + Math.sin(a)*off),
+            vx: Math.cos(a)*sp, vy: Math.sin(a)*sp, life: CFG.nutrient.life, dead: false, res: 2 });
+        }
+      }
 
       // SINKING. Stokes: a bigger frustule falls faster. Chains sink faster still but sway as they go.
       const sink = D.sinkSpeed * (d.um / 20) * Math.sqrt(d.n);
       d.sway += dt * 0.7;
       let vx = Math.sin(d.sway) * D.chainDrift * sink, vy = sink;
 
+      // Post-division separation: the daughter starts exactly where the parent was, then the two drift
+      // apart. Decays away, so it is a parting and not a permanent swimming speed.
+      if (d.dvx || d.dvy) {
+        vx += d.dvx; vy += d.dvy;
+        const k = Math.pow(0.12, dt);
+        d.dvx *= k; d.dvy *= k;
+        if (Math.abs(d.dvx) < 0.05 && Math.abs(d.dvy) < 0.05) { d.dvx = 0; d.dvy = 0; }
+      }
+
       // GLIDING -- pennates only. A raphe needs a surface to grip, so a pennate adrift in open water
       // has no more motility than a centric; it is only on a particle or the sediment that it moves.
+      //
+      // Hysteresis on the contact test, and the test samples the whole CHAIN rather than just the
+      // centre. Without both, a chain lying along a surface flickered in and out of contact from frame
+      // to frame, switching a 16px/s glide on and off -- which is a good part of why they looked like
+      // they were jumping about.
       if (d.form === "pennate") {
-        const touching = !clearOfTerrain(d.x, d.y, diatomHalfW(d) + 6) || particleUnderDiatom(d);
-        if (touching) {
+        const touching = diatomTouchingSurface(d);
+        d.grip = touching ? 0.35 : Math.max(0, (d.grip || 0) - dt);
+        if (touching || d.grip > 0) {
           d.glideT -= dt;
           if (d.glideT <= 0) { d.glideT = rand(1.5, 4); d.angle += rand(-1, 1) * D.glideTurn; }
           vx += Math.cos(d.angle) * D.glideSpeed;
@@ -1704,34 +1798,77 @@
       d.y = wrapY(d.y + vy * dt);
       collideDiatom(d);
 
-      if (d.energy <= 0) { d.dead = true; releaseDiatom(d); continue; }
+      // Starvation takes the chain apart one cell at a time, from the end.
+      if (d.energy <= 0) { killDiatomCell(d); if (d.dead) continue; }
       if (d.energy >= diatomDivideAt(d) && diatoms.length + born.length < CFG.diatom.maxCount) {
-        // Division splits the chain's energy and adds a frustule to the chain if it is a chain-former,
-        // otherwise buds a separate cell alongside. Size never changes: growth went into z.
-        d.energy /= 2;
-        if (d.n > 1 && Math.random() < 0.6) { d.n = Math.min(d.n + 1, 12); }
-        else {
-          const nd = makeDiatom({ id: d.id, label: d.label, color: d.color, form: d.form,
-                                  sizeUm: d.um, chain: d.n, toxin: d.toxin },
-                                d.x + rand(-1, 1) * diatomHalfW(d) * 2, d.y + rand(-1, 1) * diatomHalfW(d) * 2);
-          nd.energy = d.energy; nd.angle = d.angle + rand(-0.5, 0.5);
-          born.push(nd);
-        }
+        diatomDivide(d, born);
       }
     }
     for (const b of born) diatoms.push(b);
     diatoms = diatoms.filter((d) => !d.dead);
   }
+
+  // How a diatom actually reproduces, which is not how anything else in this game does.
+  //
+  // A chain grows ONE FRUSTULE AT A TIME, at the end, because that is literally what a chain is: the
+  // daughters of repeated divisions that stayed attached to each other. The first version added a
+  // frustule by incrementing n, and since the chain is drawn centred on d.x that silently shifted every
+  // existing cell half a unit sideways -- the whole chain jumped each time one cell divided. Extending
+  // the anchor by the same half unit keeps the existing cells exactly where they were and puts the new
+  // one on the end, which is both correct and calm to watch.
+  //
+  // Only when the chain reaches its authored length does it break, and then the two halves start in the
+  // parent's exact position and orientation and drift apart. The old code instead budded a COMPLETE
+  // copy of the chain at a random offset, so a six-cell chain appeared out of nowhere beside its parent.
+  function diatomDivide(d, born) {
+    d.energy /= 2;
+    const u = diatomUnit(d), ax = Math.cos(d.angle), ay = Math.sin(d.angle);
+    const want = Math.max(1, Math.round(d.chainMax || d.n));
+    if (d.n < want) {                       // grow the chain by one cell, at the far end
+      d.x = wrapX(d.x + ax * u * 0.5);
+      d.y = wrapY(d.y + ay * u * 0.5);
+      d.n += 1;
+      return;
+    }
+    // the chain breaks in two; both halves are the parent, so both start where it was
+    const half = Math.max(1, Math.floor(d.n / 2));
+    const nd = makeDiatom({ id: d.id, label: d.label, color: d.color, form: d.form,
+                            sizeUm: d.um, chain: d.n - half, toxin: d.toxin }, d.x, d.y);
+    nd.chainMax = want;
+    nd.angle = d.angle;                     // exactly the parent's orientation
+    nd.energy = d.energy;
+    nd.age = 0;
+    const a = rand(0, 6.28), sp = rand(4, 9);
+    nd.dvx = Math.cos(a) * sp; nd.dvy = Math.sin(a) * sp;
+    d.dvx = -nd.dvx; d.dvy = -nd.dvy;       // they part from each other, not from nowhere
+    d.n = half;
+    born.push(nd);
+  }
+  // Is any part of the chain against something it can grip? The centre alone is not enough: a long
+  // chain lying along the seabed usually has its ENDS on the sediment and its middle in the water.
+  function diatomTouchingSurface(d) {
+    const r = diatomHalfW(d) + 6;
+    for (const nd of diatomNodes(d)) if (!clearOfTerrain(nd[0], nd[1], r)) return true;
+    return particleUnderDiatom(d);
+  }
   // Diatoms are alive and solid: they collide with terrain and with particles like a cell does, rather
   // than drifting through the scenery. Resolve each node of the chain.
   function collideDiatom(d) {
     const r = diatomHalfW(d) + 2;
+    // Accumulate and apply ONCE, capped. Applying every node's push separately meant a long chain
+    // resting along the seabed took six or eight corrections in a single frame and was flung clear --
+    // a large part of what looked like diatoms jumping around.
+    let px = 0, py = 0;
     for (const nd of diatomNodes(d)) {
       for (const t of terrain) {
         const push = pushCircleOut(t, nd[0], nd[1], r);
-        if (push) { d.x = wrapX(d.x + push.x); d.y = wrapY(d.y + push.y); }
+        if (push) { px += push.x; py += push.y; }
       }
     }
+    if (!px && !py) return;
+    const mag = Math.hypot(px, py), capPush = r;
+    if (mag > capPush) { px = px / mag * capPush; py = py / mag * capPush; }
+    d.x = wrapX(d.x + px); d.y = wrapY(d.y + py);
   }
   function particleUnderDiatom(d) {
     for (const nd of diatomNodes(d)) {
@@ -3633,6 +3770,17 @@
         const sensed = hunting ? cellSpace.query(pr.x, pr.y, P.senseRange, cellCandidates) : [];
         // only ACTIVE cells are hunted — cysts are ignored by the chase (still eaten if bumped into, below)
         if (hunting) for (const c of sensed) { if (!c.alive || c.cyst) continue; const d = toroDist2(pr.x, pr.y, c.x, c.y); if (d < td) { td = d; target = c; } }
+        // Diatoms are prey too, and in a bloom they are the LARGEST thing a grazer can eat. Leaving
+        // them out made the level's whole primary producer invisible to its consumers: protists swam
+        // through a dense bloom hunting bacteria and ignoring the food beside them. It is also the
+        // route domoic acid actually travels -- the grazer is poisoned by eating the alga.
+        if (hunting) for (const dt2 of diatoms) {
+          if (dt2.dead) continue;
+          for (const nd of diatomNodes(dt2)) {
+            const d = toroDist2(pr.x, pr.y, nd[0], nd[1]);
+            if (d < td) { td = d; target = { x: nd[0], y: nd[1] }; }
+          }
+        }
         if (target) pr.heading = Math.atan2(dy(target.y, pr.y), dx(target.x, pr.x));
         else { pr.wobble += dt; pr.heading += Math.sin(pr.wobble*1.7)*dt*2; }
         const base = (target ? P.chaseSpeed : P.wanderSpeed)*swimScale();
@@ -3653,6 +3801,28 @@
           if (c.controlled) tutDid("eaten");
           killCell(c, true); pr.satiated = P.satiatedTime; break;
         }
+      }
+      // GRAZING A DIATOM. One frustule per bite, off the end of the chain, because a grazer does not
+      // swallow an eight-cell chain whole. The meal scales with the cell -- a 90um frustule is a real
+      // meal and a 15um one is a snack -- and if the alga is toxic the grazer takes the dose that was
+      // inside the cell it just ate. That is the whole domoic-acid story in one place: the toxin does
+      // not attack anything, it is eaten.
+      if (hunting && diatoms.length) for (const dm of diatoms) {
+        if (dm.dead) continue;
+        const reach = pr.r + diatomHalfW(dm);
+        let hit = false;
+        for (const nd of diatomNodes(dm)) if (toroDist2(pr.x, pr.y, nd[0], nd[1]) < reach*reach) { hit = true; break; }
+        if (!hit) continue;
+        pr.energy += P.mealEnergy * clamp(dm.um / 20, 0.4, 4);
+        if (pr.controlled) state.score += CFG.cycle.protistEatScore;
+        if (dm.toxin) {                       // the dose is in the cell, so eating it is the exposure
+          const pot = dm.toxin.potency != null ? dm.toxin.potency : CFG.toxin.potency;
+          pr.energy -= pot * CFG.diatom.grazeToxinDose * (1 - (state.predResist || 0));
+          pr.toxT = 0.6;                      // marks a death here as a toxin KILL, like an antibiotic
+        }
+        killDiatomCell(dm);
+        pr.satiated = P.satiatedTime;
+        break;
       }
       // protists also graze free-floating viruses on contact — a small meal and a
       // top-down brake on phage blooms (helps with the viral crisis)
@@ -3718,6 +3888,36 @@
     }
     return false;
   }
+  // Gold drifts at a CONSTANT velocity for its whole 90-140s life -- there is no drag on gold, which
+  // is deliberate: it holds station with the particle it was buried in. In a COLUMN that turns into a
+  // trap, because Y does not wrap there, it clamps. Any gold with a downward component eventually
+  // reaches the floor and stays; any with an upward one glues itself to the ceiling. Measured over a
+  // full lifetime from a correctly-placed spawn: 25% pinned to an edge and 36% ended inside the ice or
+  // sediment. Fixing goldSpawnPoint only fixed where they START.
+  //
+  // So gold bounces off the water's boundary and off terrain instead of burying itself in either. A
+  // wrapping world is untouched -- there is no edge to hit and no terrain to hit it with.
+  function driftGoldPhage(ph, dt) {
+    let nx = ph.x + ph.vx*dt, ny = ph.y + ph.vy*dt;
+    if (!worldYWrap) {
+      const r = ph.r + 6;
+      if (ny < r) { ny = r; ph.vy = Math.abs(ph.vy); }
+      else if (ny > WORLD_H - r) { ny = WORLD_H - r; ph.vy = -Math.abs(ph.vy); }
+    }
+    ph.x = wrapX(nx); ph.y = wrapY(ny);
+    if (!terrain.length) return;
+    // Being buried in a PARTICLE is the intended puzzle -- you dig it out. Terrain cannot be digested,
+    // so a gold phage inside it is simply gone, and it still draws a star on the minimap promising
+    // otherwise. Push it back out and turn it away from the wall.
+    for (const t of terrain) {
+      const push = pushCircleOut(t, ph.x, ph.y, ph.r + 4);
+      if (!push) continue;
+      const mag = Math.hypot(push.x, push.y) || 1;
+      ph.x = wrapX(ph.x + push.x); ph.y = wrapY(ph.y + push.y);
+      const nxn = push.x/mag, nyn = push.y/mag, vn = ph.vx*nxn + ph.vy*nyn;
+      if (vn < 0) { ph.vx -= 2*vn*nxn; ph.vy -= 2*vn*nyn; }   // reflect, so it leaves rather than grinds
+    }
+  }
   function updatePhages(dt) {
     const D = env.diffusivity*CFG.phage.diffuse;
     for (const ph of phages) {
@@ -3729,7 +3929,7 @@
           ph.x = wrapX(ph.x + ph.vx*dt); ph.y = wrapY(ph.y + ph.vy*dt); }
         else { ph.vx = ph.vy = 0; }
       } else {                                          // gold holds its drift (stays with its host particle)
-        ph.x = wrapX(ph.x + ph.vx*dt); ph.y = wrapY(ph.y + ph.vy*dt);
+        driftGoldPhage(ph, dt);
         ph.life -= dt; if (ph.life <= 0) { ph.dead = true; continue; }
       }
       collideEpsCircle(ph, ph.r);                       // EPS excludes green and gold phages alike
@@ -5642,7 +5842,20 @@
   function updateAutotrophyReadout(c) {
     const box = el.autoTrophy;
     if (!box) return;
-    if (!c || !columnState || !(c.phototroph || c.chemolithotroph)) { box.classList.add("hidden"); return; }
+    if (!c || !columnState) { box.classList.add("hidden"); return; }
+    // In a column the LIGHT REGIME is the level's structure, and until now it was only ever shown to a
+    // cell that could photosynthesise. In a level built around a bloom the player is usually a
+    // heterotroph, so the one number that explains where the diatoms live, why they die when they sink
+    // and when the night is coming was displayed to nobody. Show the gradient to everyone; the net
+    // energy line still belongs only to a cell that actually earns from it.
+    if (!(c.phototroph || c.chemolithotroph)) {
+      const lit = clamp(columnLightAt(c.y), 0, 1);
+      const surface = clamp(state && state.light != null ? state.light : 0, 0, 1);
+      box.textContent = `☀ ${Math.round(lit*100)}% light` + (surface <= 0.05 ? " · night" : "");
+      box.classList.toggle("starving", false);
+      box.classList.remove("hidden");
+      return;
+    }
     const light = c.phototroph ? clamp(columnLightAt(c.y), 0, 1) : 1;
     const chem = c.chemolithotroph ? chemAt(c.y) : 1;
     const supply = Math.min(light, chem);
@@ -6367,7 +6580,10 @@
     "diatom.glideSpeed": "How fast a PENNATE glides along a surface. Centrics have no raphe and never move under their own power.",
     "diatom.glideTurn": "How sharply a gliding pennate can change direction.",
     "diatom.chainDrift": "How much a sinking chain sways about its long axis.",
-    "diatom.killMotes": "Food motes released when a diatom dies — a big parcel of biomass.",
+    "diatom.killMotes": "Food motes released per frustule when a diatom cell dies, at 20um — scales with the cell's size.",
+    "diatom.exudateFrac": "Share of what a diatom fixes that leaks out as dissolved carbon. This is what feeds the phycosphere while the bloom is ALIVE.",
+    "diatom.exudateMote": "How much leaked carbon makes one edible mote. Lower = a finer, steadier drizzle of food around every chain.",
+    "diatom.grazeToxinDose": "Fraction of a toxic frustule's potency a grazer takes as a one-off dose when it eats one. This is how domoic acid actually travels: it is eaten, not fired.",
     "diatom.immigrateEvery": "Seconds between diatoms drifting in while the bloom is below its authored count.",
     "toxin.maxCount": "Frame-time ceiling on lingering toxin clouds.",
     "predator.cystMealFactor": "Fraction of a normal meal's energy a protist gets from eating a cyst.",
