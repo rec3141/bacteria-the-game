@@ -207,3 +207,27 @@ assert.match(game, /pr\.energy -= z\.potency\*dt \* \(1 - \(state\.predResist \|
   "the lingering antibiotic drain on protists is scaled down by evolved resistance");
 
 console.log(`Static contracts OK: ${sounds.size} sounds and ${controls.length} control${controls.length === 1 ? "" : "s"} checked.`);
+
+// ---- a scenario's re-skinned resource colours must reach the chart LEGEND too ----------------------
+// The stacked sub-chart reads RESOURCES at draw time, so its bands wore the scenario's palette. The
+// legend beside them was built once during boot -- and bootScenario is async, so it ran BEFORE the
+// scenario's re-skin had landed and was never rebuilt. The key and the chart it explains disagreed for
+// the whole run, and nothing errored.
+{
+  // Sliced to the FUNCTION BODY, not matched across the whole file: `[\s\S]*?updateSubLegend()` will
+  // happily run past the end of applyScenarioWorld and match the boot-time call 700 lines later, so
+  // deleting the call from the function walked straight through the first version of this assertion.
+  const skinBody = game.slice(game.indexOf("function applyScenarioWorld"), game.indexOf("function applyScenario("));
+  assert.match(skinBody, /updateSubLegend\(\);/,
+    "applying a scenario must rebuild the sub-chart legend, or the key keeps the stock palette");
+  // ...and the re-skin must be UNDONE first. RESOURCES is a module-level singleton written in place,
+  // so without a reset a scenario that recolours two classes leaves the previous scenario's colours on
+  // the third: the second level quietly wears half of the first one's palette.
+  assert.match(game, /const RESOURCE_SKIN0 = RESOURCES\.map\(/,
+    "the stock resource skin must be captured so a re-skin can be undone");
+  assert.match(game, /function applyScenarioWorld\(sc\) \{\s*\n[^\n]*\n\s*RESOURCES\.forEach\(\(r, i\) => \{ r\.color = RESOURCE_SKIN0\[i\]\.color/,
+    "applyScenarioWorld must reset to the stock skin BEFORE applying the scenario's own");
+  // the reset has to come before the re-skin, or it erases it
+  assert.ok(skinBody.indexOf("RESOURCE_SKIN0[i].color") < skinBody.indexOf("RESOURCES[r.index].color = r.color"),
+    "the reset must precede the re-skin, not follow it");
+}

@@ -362,6 +362,12 @@
                                                                        // infectious phages, protists and the antibiotic.
     { key: "carb",    enzyme: "carbohydrase", color: "#6fa8ff", cal: 4 }, // 2 — sugars/polysaccharide, blue (4 kcal/g)
   ];
+  // The pristine skin, kept so a scenario's re-skin can be UNDONE. applyScenarioWorld writes straight
+  // into RESOURCES, which is a module-level singleton: without this, loading a scenario that recolours
+  // two classes and then a different one that recolours only the third leaves the first scenario's
+  // colours behind on the other two. Nothing errors; the second level just quietly wears half of the
+  // first one's palette.
+  const RESOURCE_SKIN0 = RESOURCES.map((r) => ({ color: r.color, enzyme: r.enzyme, label: r.label }));
   const BIOMASS_CAL = 4; // protist biomass motes (res = null) count as protein-grade calories
 
   // Marine particle types — large solid aggregates (radii in px; the cell is ~10px long).
@@ -7191,11 +7197,18 @@
   // so restoring a checkpoint can rebuild the same ocean without overwriting the constants the save
   // already restored — which may include the player's own tuning layered on top of the scenario.
   function applyScenarioWorld(sc) {
+    // back to the stock skin first, so nothing survives from a scenario loaded earlier in the session
+    RESOURCES.forEach((r, i) => { r.color = RESOURCE_SKIN0[i].color; r.enzyme = RESOURCE_SKIN0[i].enzyme; r.label = RESOURCE_SKIN0[i].label; });
     for (const r of sc.resources || []) {
       if (r.color) RESOURCES[r.index].color = r.color;
       if (r.enzymeLabel) RESOURCES[r.index].enzyme = r.enzymeLabel;
       if (r.label) RESOURCES[r.index].label = r.label;
     }
+    // The sub-chart LEGEND is built from these colours, and it was built once at boot -- which happens
+    // before a scenario has finished loading, because bootScenario is async. So the chart's stacked
+    // bands (which read RESOURCES at draw time) wore the scenario's palette while the key beside them
+    // still showed the stock one, and the two disagreed for the whole run.
+    updateSubLegend();
     useScenarioParticles(sc);   // swap the substrate set (oil droplets/tarballs vs marine snow)
     // #30: a scenario can turn the sea into a stratified water column (clamped Y + depth fields).
     if (sc.column && sc.column.enabled) { columnState = deriveColumn(sc.column); setWorldYMode(false); }
