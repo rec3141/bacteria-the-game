@@ -198,6 +198,7 @@
     },
     enzyme: { life: 5.0, maxRadius: 24, growTime: 0.4 },
     toxin: { life: 4.5, maxRadius: 40, growTime: 0.4, dose: 55, potency: 18, radiusPer: 0.34, // anti-protist antibiotic: fixed `dose` hit + lingering `potency`/s (NOT scaled by level); leveling GROWS the radius (radiusPer) so it hits more protists at once
+             maxCount: 400,                  // frame-time ceiling; a dying diatom bloom can release a LOT of clouds at once
              crossDist: 3, crossFactor: 1 }, // cross-reactive: bacteria a genetic distance ≥ crossDist from the releaser also take damage (×crossFactor)
     // EPS is a physical extracellular-polysaccharide block: it cannot be enzymatically digested,
     // but it ages away so a defended colony cannot permanently wall off the toroidal ocean. Its
@@ -278,6 +279,28 @@
       cystMealFactor: 0.45, cystEatChance: 0.45,         // cysts aren't hunted; a bumped one is usually resisted, rarely eaten (for little energy)
       killMotes: 8,                                      // biomass released as food when an antibiotic KILLS a protist (natural death releases nothing)
       virusEnergy: 5,                                    // protists also graze free-floating viruses — a small meal, and a top-down brake on phage blooms
+    },
+    // DIATOMS — a third organism class, alongside the bacteria you play and the protists that graze
+    // you. They are not bacteria with a flag set: they are eukaryotic algae, tens of times larger,
+    // they build a glass frustule, and they are strict phototrophs. A scenario opts in by authoring
+    // organisms.diatoms; with none authored, none exist and nothing below costs anything.
+    //
+    // SCALE. The game is already not to scale -- a bacterium is drawn ~10px for ~2um while marine snow
+    // is 300px for ~1mm -- so pxPerUm is a legibility convention, not a conversion. At 1.6 the
+    // authorable 5-100um range spans 8px (about a bacterium: you can barely tell it is there) to
+    // 160px (about a food particle: it dominates the water), which is the range that reads.
+    diatom: {
+      pxPerUm: 1.6,
+      maxCount: 400,           // memory/frame-time ceiling, like cell.maxCells — never scenario-settable
+      photoRate: 9,            // energy per second per unit area at full light (area scales with size)
+      metabolism: 1.6,         // per second, Q10-scaled; a big cell burns more, so this scales with area too
+      startEnergy: 60, maxEnergy: 260, divideEnergy: 190,
+      sinkSpeed: 5,            // px/s at 20um; scales with size, because a big frustule sinks faster
+      glideSpeed: 16,          // pennates only, and only against a surface -- the raphe needs something to grip
+      glideTurn: 1.1,          // how sharply a gliding pennate can change direction
+      chainDrift: 0.5,         // how much a chain sways about its long axis as it sinks
+      killMotes: 10,           // nutrient motes released when one dies -- a diatom is a big parcel of food
+      immigrateEvery: 14,      // seconds between diatoms drifting in, while below the authored count
     },
     phage: {
       greenCount: 18, radius: 3.6, life: [16, 24], maxCount: 2500, diffuse: 22, // measured backstop — still far above normal epidemics
@@ -894,6 +917,9 @@
   // --------------------------------------------------------------- game state
   let state = null, cells = [], substrates = [], enzymes = [], toxins = [], epsBlocks = [], nutrients = [],
       predators = [], phages = [], particles = [], flagPhase = 0, cam = { x: 0, y: 0 }, paused = false;
+  // Diatoms: a third organism class. Its own list for the same reason terrain has one — they are not
+  // bacteria, so they must not appear in the cell accounting, the phage host pool, or the genome charts.
+  let diatoms = [];
   // #30: fixed, solid scenery for a water column — sea ice overhead, sediment underfoot. Its own list,
   // deliberately not part of `substrates`: terrain is not food, and keeping it separate is what stops
   // it appearing in the food accounting, the diel particle budget, the resource-balance floor, the
@@ -1547,6 +1573,168 @@
       reproCd: CFG.predator.reproCooldown, toxT: 0, turboT: 0, dead: false };
   }
 
+  // ---------------------------------------------------------------- diatoms
+  // A diatom is a chain of `n` frustules laid along `angle`. Geometry is derived from `um` every time
+  // rather than stored, so a scenario can author size in micrometres and nothing else has to know
+  // about the pixel convention.
+  //
+  // "If they grow they do it into the z axis" -- a real diatom is boxed inside its own silica frustule,
+  // so it cannot expand sideways; it thickens instead, and division produces two cells the same width
+  // as the parent. That is why energy here buys DIVISION and never size: a diatom's drawn footprint is
+  // fixed for life. It is also why they do not elongate with energy the way a bacterium does.
+  function diatomUnit(d) { return d.um * CFG.diatom.pxPerUm; }        // long axis of ONE frustule, px
+  function diatomHalfW(d) { return diatomUnit(d) * (d.form === "pennate" ? 0.16 : 0.5); }
+  function diatomHalfLen(d) { return diatomUnit(d) * d.n * 0.5; }     // half the whole chain
+  // Area drives photosynthesis AND metabolism: a bigger cell intercepts more light and costs more to
+  // run. Normalised to a 20um single cell so the CFG rates read as "per typical diatom".
+  function diatomArea(d) { return d.n * (d.um / 20) * (d.um / 20); }
+  // Reserves scale with the cell, exactly as metabolism does. This is not a detail: with a flat store,
+  // metabolism scaling on area alone meant a 70um chain burned 98/s against a 260 ceiling and starved
+  // 2.7 SECONDS into a 120-second night, so every large diatom died before its first dawn while a 20um
+  // cell sat on 162 seconds of reserve. Scaling the store the same way makes starvation time
+  // independent of size, which is the right first-order answer -- how long you last on a full tank is
+  // about reserve-to-burn, and both are volume. Size then matters for what it should matter for:
+  // sinking, grazing, and how much light you intercept relative to your neighbours.
+  function diatomCap(d) { return CFG.diatom.maxEnergy * diatomArea(d); }
+  function diatomDivideAt(d) { return CFG.diatom.divideEnergy * diatomArea(d); }
+  function diatomStartEnergy(d) { return CFG.diatom.startEnergy * diatomArea(d); }
+  // Sampling points down the chain, in world coords -- used for collision and for drawing.
+  function diatomNodes(d) {
+    const u = diatomUnit(d), ax = Math.cos(d.angle), ay = Math.sin(d.angle), out = [];
+    for (let i = 0; i < d.n; i++) {
+      const t = (i - (d.n - 1) / 2) * u;
+      out.push([wrapX(d.x + ax * t), wrapY(d.y + ay * t)]);
+    }
+    return out;
+  }
+  function makeDiatom(spec, x, y) {
+    const d = { x: wrapX(x), y: wrapY(y), vx: 0, vy: 0,
+      id: spec.id, label: spec.label || "", color: spec.color || "#8fd6a8",
+      form: spec.form === "pennate" ? "pennate" : "centric",
+      um: clamp(spec.sizeUm || 20, 5, 100),
+      n: Math.max(1, Math.round(spec.chain || 1)),
+      toxin: spec.toxin || null,                 // authored toxin, released on death (see releaseDiatom)
+      angle: rand(0, 6.28), glideT: 0, sway: rand(0, 6.28),
+      energy: 0, age: 0, dead: false };
+    d.energy = diatomStartEnergy(d);
+    return d;
+  }
+  function diatomSpecs() { return (activeScenario && activeScenario.organisms && activeScenario.organisms.diatoms) || null; }
+  function diatomWant() {
+    const arr = diatomSpecs(); if (!arr) return 0;
+    let t = 0; for (const sp of arr) t += (sp.count || 0);
+    return Math.min(t, CFG.diatom.maxCount);
+  }
+  // Immigration keeps EACH authored type present, for the same reason bacteria do: a scenario naming a
+  // pennate and a centric is describing a community, and one of them quietly vanishing is the bug that
+  // made multi-organism levels play as one organism.
+  function immigrateDiatoms() {
+    const arr = diatomSpecs(); if (!arr || diatoms.length >= CFG.diatom.maxCount) return;
+    const have = new Map();
+    for (const d of diatoms) if (!d.dead) have.set(d.id, (have.get(d.id) || 0) + 1);
+    const short = arr.filter((sp) => (have.get(sp.id) || 0) < (sp.count || 0));
+    if (!short.length) return;
+    const sp = short[(Math.random() * short.length) | 0];
+    // Diatoms are phototrophs, so they belong in the light. Seed in the upper water rather than at a
+    // uniformly random depth, which in a deep column would drop most of them where they cannot live.
+    const y = columnState ? rand(0, WORLD_H * Math.min(0.8, columnState.photicFrac * 1.6)) : rand(0, WORLD_H);
+    const d = makeDiatom(sp, rand(0, WORLD_W), y);
+    if (columnState && terrain.length && !clearOfTerrain(d.x, d.y, diatomHalfW(d) + 4)) return;  // try again next tick
+    diatoms.push(d);
+  }
+  function releaseDiatom(d) {  // a dying diatom is a big parcel of food, like an antibiotic-killed protist
+    burst(d.x, d.y, d.color, 12);
+    const nodes = diatomNodes(d), spread = diatomHalfW(d) + 4;
+    for (let i = 0; i < CFG.diatom.killMotes && nutrients.length < CFG.nutrient.maxCount; i++) {
+      const nd = nodes[(Math.random() * nodes.length) | 0];
+      const a = rand(0, 6.28), sp = rand(10, 30);
+      nutrients.push({ x: wrapX(nd[0] + Math.cos(a) * rand(2, spread)), y: wrapY(nd[1] + Math.sin(a) * rand(2, spread)),
+        vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: CFG.nutrient.life, dead: false, res: null });
+    }
+    // An authored toxin is released where the cell died -- this is the domoic-acid mechanic: the alga
+    // is harmless until something kills it, and then the water where it died is the dangerous part.
+    if (d.toxin) spawnToxinCloud(d.x, d.y, d.toxin);
+  }
+  function updateDiatoms(dt) {
+    if (!diatoms.length && !diatomSpecs()) return;
+    const D = CFG.diatom, born = [];
+    // Top the bloom back up toward its authored count. Same reasoning as bacterial recolonisation:
+    // a type that has been grazed out must be able to come back, or the level is a countdown.
+    if (state) {
+      state.diatomT -= dt;
+      if (state.diatomT <= 0) { state.diatomT = D.immigrateEvery; immigrateDiatoms(); }
+    }
+    for (const d of diatoms) {
+      if (d.dead) continue;
+      d.age += dt;
+      const area = diatomArea(d);
+      // STRICT PHOTOTROPHY. No enzymes, no particles, no chemistry -- light is the only income, so a
+      // diatom carried below the photic zone is on a countdown whatever else is in the water.
+      const gain = clamp(columnLightAt(d.y), 0, 1) * D.photoRate * area * dt;
+      d.energy += gain;
+      if (state) { state.calLive[CAL_AUTO] += gain; state.calFull[CAL_AUTO] += gain; }
+      d.energy -= D.metabolism * area * env.metabolismMult * dt;
+      const cap = diatomCap(d); if (d.energy > cap) d.energy = cap;
+
+      // SINKING. Stokes: a bigger frustule falls faster. Chains sink faster still but sway as they go.
+      const sink = D.sinkSpeed * (d.um / 20) * Math.sqrt(d.n);
+      d.sway += dt * 0.7;
+      let vx = Math.sin(d.sway) * D.chainDrift * sink, vy = sink;
+
+      // GLIDING -- pennates only. A raphe needs a surface to grip, so a pennate adrift in open water
+      // has no more motility than a centric; it is only on a particle or the sediment that it moves.
+      if (d.form === "pennate") {
+        const touching = !clearOfTerrain(d.x, d.y, diatomHalfW(d) + 6) || particleUnderDiatom(d);
+        if (touching) {
+          d.glideT -= dt;
+          if (d.glideT <= 0) { d.glideT = rand(1.5, 4); d.angle += rand(-1, 1) * D.glideTurn; }
+          vx += Math.cos(d.angle) * D.glideSpeed;
+          vy += Math.sin(d.angle) * D.glideSpeed * 0.5;   // gravity still resists an upward glide
+        }
+      } else {
+        d.angle += Math.sin(d.sway * 0.6) * 0.25 * dt;    // a centric just turns slowly as it falls
+      }
+
+      d.x = wrapX(d.x + vx * dt);
+      d.y = wrapY(d.y + vy * dt);
+      collideDiatom(d);
+
+      if (d.energy <= 0) { d.dead = true; releaseDiatom(d); continue; }
+      if (d.energy >= diatomDivideAt(d) && diatoms.length + born.length < CFG.diatom.maxCount) {
+        // Division splits the chain's energy and adds a frustule to the chain if it is a chain-former,
+        // otherwise buds a separate cell alongside. Size never changes: growth went into z.
+        d.energy /= 2;
+        if (d.n > 1 && Math.random() < 0.6) { d.n = Math.min(d.n + 1, 12); }
+        else {
+          const nd = makeDiatom({ id: d.id, label: d.label, color: d.color, form: d.form,
+                                  sizeUm: d.um, chain: d.n, toxin: d.toxin },
+                                d.x + rand(-1, 1) * diatomHalfW(d) * 2, d.y + rand(-1, 1) * diatomHalfW(d) * 2);
+          nd.energy = d.energy; nd.angle = d.angle + rand(-0.5, 0.5);
+          born.push(nd);
+        }
+      }
+    }
+    for (const b of born) diatoms.push(b);
+    diatoms = diatoms.filter((d) => !d.dead);
+  }
+  // Diatoms are alive and solid: they collide with terrain and with particles like a cell does, rather
+  // than drifting through the scenery. Resolve each node of the chain.
+  function collideDiatom(d) {
+    const r = diatomHalfW(d) + 2;
+    for (const nd of diatomNodes(d)) {
+      for (const t of terrain) {
+        const push = pushCircleOut(t, nd[0], nd[1], r);
+        if (push) { d.x = wrapX(d.x + push.x); d.y = wrapY(d.y + push.y); }
+      }
+    }
+  }
+  function particleUnderDiatom(d) {
+    for (const nd of diatomNodes(d)) {
+      for (const s of substrates) if (s.phase === "live" && solidAtWorld(s, nd[0], nd[1])) return true;
+    }
+    return false;
+  }
+
   function newGame(isDemo) {
     demoWorld = !!isDemo;                    // set FIRST: makeSubstrate reads it while seeding
     // THE TUTORIAL IS A PETRI DISH. Shrink the world to the viewport, so everything the director
@@ -1566,6 +1754,9 @@
     // Never open the run wedged inside solid terrain or a sealed pore. Nudge the founder to open water
     // near where it wanted to be (mid-column, or its plume depth for a chemolithotroph).
     if (!isDemo && columnState && terrain.length) { const s = founderSpawn(first.y); first.x = s.x; first.y = s.y; }
+    // Seed the authored diatom bloom up front. Trickling it in at immigrateEvery would take minutes to
+    // reach the authored count, and a level whose whole subject is a bloom must open with one.
+    for (let i = 0, want = diatomWant(); i < want * 3 && diatoms.length < want; i++) immigrateDiatoms();
     for (let i = 0; i < Math.round(CFG.cell.startUpgrades); i++) grantRandomUpgrade(first); // testing aid
     // In the demo NOTHING is controlled: the attract mode is the simulation running itself, and a
     // cell left "controlled" with no one at the keys would just sit there tumbling in place.
@@ -1584,7 +1775,7 @@
       do { x = rand(0, WORLD_W); y = rand(0, WORLD_H); } while (toroDist2(x, y, WORLD_W/2, WORLD_H/2) < 550*550);
       predators.push(makePredator(x, y, null, rand(0, 25)));
     }
-    enzymes = []; toxins = []; epsBlocks = []; nutrients = []; particles = [];
+    enzymes = []; toxins = []; epsBlocks = []; nutrients = []; particles = []; diatoms = [];
     phages = [];
     if (!isDemo) for (let i = 0; i < CFG.phage.greenCount; i++) { // seed OFFSCREEN so no virus is on the opening view — they diffuse in
       const a = rand(0, 6.28), d = Math.hypot(VIEW_W, VIEW_H)/2 + rand(80, 500);
@@ -1596,6 +1787,7 @@
       day: 1, runId: Date.now(),   // runId is stable across days: continuing UPDATES the leaderboard entry, never adds a second one
       greenSeedT: rand(CFG.phage.greenSeed[0], CFG.phage.greenSeed[1]),
       predImmigrateT: CFG.predator.immigrateEvery, preyT: 0, turboBonus: 0,
+      diatomT: 0,          // countdown to the next diatom drifting in (0 = seed the bloom immediately)
       predRespawn: CFG.predator.immigrateEvery, predExtinct: false, // respawn interval halves each time protists go fully extinct
       predResist: 0, // protist antibiotic resistance (0-1 damage reduction); ratchets up on each extinction — a co-evolutionary arms race
       mortLive: [0, 0, 0, 0], mortFull: [0, 0, 0, 0], // cause-of-death tallies (grazing/viral/starvation/antibiotic) per sample interval
@@ -1653,7 +1845,7 @@
       cfg: JSON.parse(JSON.stringify(CFG)), state,
       entities: {
         cells, substrates: substrates.map(checkpointSubstrate), enzymes, toxins, eps: epsBlocks,
-        nutrients, predators, phages, particles,
+        nutrients, predators, phages, particles, diatoms,
       },
     };
     // Clone NOW, before IndexedDB has to open or wait behind an earlier write. The player may press
@@ -1870,6 +2062,9 @@
     }));
     enzymes = E.enzymes; toxins = E.toxins; epsBlocks = Array.isArray(E.eps) ? E.eps : []; nutrients = E.nutrients;
     predators = E.predators; phages = E.phages; particles = E.particles;
+    // Array.isArray, not `|| []`: a checkpoint written before diatoms existed has no such key, and a
+    // saved run must keep loading rather than throwing on the first frame that iterates them.
+    diatoms = Array.isArray(E.diatoms) ? E.diatoms : [];
     cam = { x: record.cam.x, y: record.cam.y }; flagPhase = Number(record.flagPhase) || 0;
     state.running = false; state.demo = false; demoWorld = false; paused = false;
     minimapCellSample = []; minimapCellSampleRun = null; minimapCellSampleT = -Infinity;
@@ -2970,7 +3165,7 @@
       }
     }
     updateEnzymes(dt); updateToxins(dt); updateEps(dt); rebuildEpsSpace();
-    updateNutrients(dt); updatePredators(dt); updatePhages(dt);
+    updateNutrients(dt); updatePredators(dt); updatePhages(dt); updateDiatoms(dt);
     // while you're a protist: keep control on a living grazer. Falling back to a bacterium needs EVERY
     // grazer dead at once, which their immigration all but rules out — so in practice, grazer is for keeps.
     if (state.role === "protist" && !controlledProtist()) {
@@ -3299,12 +3494,23 @@
     }
     enzymes = enzymes.filter((z) => z.life > 0);
   }
+  // A scenario-authored toxin, released where a producer dies rather than fired by a living cell. This
+  // is the domoic-acid shape: the alga is harmless while it lives, and the water where a bloom died is
+  // the dangerous part. genome is null, so it does not cross-react against bacteria the way a
+  // bacterial antibiotic does -- it drains grazers, which is who the real toxin harms.
+  function spawnToxinCloud(x, y, spec) {
+    if (toxins.length >= CFG.toxin.maxCount) return;
+    const life = spec.life || CFG.toxin.life;
+    toxins.push({ x: wrapX(x), y: wrapY(y), r: 4, life, life0: life, age: 0,
+      maxR: spec.radius || CFG.toxin.maxRadius, potency: spec.potency || CFG.toxin.potency,
+      color: spec.color || null, genome: null });
+  }
   function updateToxins(dt) { // antibiotic clouds drain the energy of any protist inside them → they starve
     const P = CFG.toxin;
     for (const z of toxins) {
       z.age += dt; z.life -= dt;
       const grow = Math.min(1, z.age/P.growTime);
-      z.r = z.maxR*grow*(0.6 + 0.4*clamp(z.life/P.life, 0, 1));
+      z.r = z.maxR*grow*(0.6 + 0.4*clamp(z.life/(z.life0 || P.life), 0, 1));
       const r2 = z.r*z.r;
       for (const pr of predatorSpace.query(z.x, z.y, z.r, predatorCandidates))
         if (!pr.dead && toroDist2(z.x, z.y, pr.x, pr.y) <= r2) { pr.energy -= z.potency*dt * (1 - (state.predResist || 0)); pr.toxT = 0.5; } // resistance blunts the lingering drain; mark poisoned → death here counts as a KILL
@@ -3766,6 +3972,7 @@
     for (const n of visibleSpatial(nutrientSpace, nutrientCandidates, CFG.nutrient.radius + 4)) drawNutrient(n);
     for (const q of particles) drawParticle(q);
     for (const ph of visibleSpatial(phageSpace, phageCandidates, CFG.phage.radius + 8)) drawPhage(ph);
+    for (const d of diatoms) if (!d.dead) drawDiatom(d);   // big and slow: behind the cells and grazers
     for (const pr of visibleSpatial(predatorSpace, predatorCandidates, CFG.predator.radius + 8)) drawPredator(pr);
     for (const c of visibleSpatial(cellSpace, cellCandidates, CFG.cell.maxHalf + CFG.cell.radius + 8)) drawCell(c);
     drawDemoFocus();      // inside the zoom transform, so the ring tracks the cell exactly
@@ -4083,6 +4290,53 @@
   function roundedCapsule(c, hl, r) {
     c.beginPath(); c.moveTo(-hl+r, -r); c.lineTo(hl-r, -r); c.arc(hl-r, 0, r, -Math.PI/2, Math.PI/2);
     c.lineTo(-hl+r, r); c.arc(-hl+r, 0, r, Math.PI/2, -Math.PI/2); c.closePath();
+  }
+
+  // A diatom is drawn as its chain of frustules. The two forms are genuinely different objects and
+  // must read as such at a glance: a centric is a radially symmetric disc (Coscinodiscus, Thalassiosira)
+  // and a pennate is a long bilateral boat with a raphe down its spine (Navicula, Pseudo-nitzschia).
+  // Chains are what most of them actually form in the water, so a chain is the default read, not a
+  // special case. Glass, not flesh: a pale rim and a translucent interior, so light shows through.
+  function drawDiatom(d) {
+    const cx = sx(d.x), cy = sy(d.y), halfL = diatomHalfLen(d), hw = diatomHalfW(d);
+    if (!onScreen(cx, cy, halfL + hw + 8)) return;
+    const u = diatomUnit(d), starved = 1 - clamp(d.energy/Math.max(1, diatomStartEnergy(d)), 0, 1);
+    ctx.save(); ctx.translate(cx, cy); ctx.rotate(d.angle);
+    ctx.globalAlpha = 0.92 - 0.35*clamp(starved, 0, 1);   // a starving cell pales as its plastids go
+    for (let i = 0; i < d.n; i++) {
+      const t = (i - (d.n - 1)/2) * u;
+      ctx.save(); ctx.translate(t, 0);
+      ctx.beginPath();
+      if (d.form === "centric") ctx.arc(0, 0, hw, 0, 6.28);
+      else ctx.ellipse(0, 0, u*0.5, hw, 0, 0, 6.28);
+      // The frustule's OWN colour has to survive: a white core stop washed every diatom out to a pale
+      // grey chain that read as bacteria. Keep the highlight as a narrow off-centre band -- glass with
+      // a sheen on it -- rather than a bright middle covering half the cell.
+      const g = ctx.createLinearGradient(0, -hw, 0, hw);
+      g.addColorStop(0, d.color);
+      g.addColorStop(0.34, "rgba(255,255,255,0.22)");
+      g.addColorStop(0.46, d.color);
+      g.addColorStop(1, d.color);
+      ctx.fillStyle = g; ctx.fill();
+      ctx.strokeStyle = "rgba(240,255,245,0.75)"; ctx.lineWidth = Math.max(0.8, hw*0.10); ctx.stroke();
+      // striae — the rows of pores that make a frustule legible as glass rather than a blob
+      ctx.strokeStyle = "rgba(255,255,255,0.34)"; ctx.lineWidth = Math.max(0.5, hw*0.05);
+      const rows = Math.min(9, Math.max(3, Math.round(u/7)));
+      ctx.beginPath();
+      for (let k = 1; k < rows; k++) {
+        const f = k/rows;
+        if (d.form === "centric") { const rr = hw*f; ctx.moveTo(rr, 0); ctx.arc(0, 0, rr, 0, 6.28); }
+        else { const xx = (f - 0.5)*u; ctx.moveTo(xx, -hw*0.82); ctx.lineTo(xx, hw*0.82); }
+      }
+      ctx.stroke();
+      // the raphe: the slit a pennate glides on. Only a pennate has one, and it is why only a pennate moves.
+      if (d.form === "pennate") {
+        ctx.strokeStyle = "rgba(255,255,255,0.6)"; ctx.lineWidth = Math.max(0.6, hw*0.14);
+        ctx.beginPath(); ctx.moveTo(-u*0.42, 0); ctx.lineTo(u*0.42, 0); ctx.stroke();
+      }
+      ctx.restore();
+    }
+    ctx.restore();
   }
 
   function drawPredator(pr) {
@@ -6098,6 +6352,19 @@
     "predator.safetyMax": "Hard cap on protists — a performance backstop, never ecologically binding.",
     "predator.minCount": "Population floor: below this, a new protist drifts in from offscreen.",
     "predator.immigrateEvery": "Seconds between immigration checks when the protist population has crashed.",
+    "diatom.pxPerUm": "Pixels per micrometre for diatoms. A legibility convention, not a conversion — the game is not to scale.",
+    "diatom.photoRate": "Energy per second a typical (20um, single) diatom fixes at full light. Scales with the cell's area.",
+    "diatom.metabolism": "Energy per second a typical diatom burns. Scales with area too, so a big cell needs more light.",
+    "diatom.startEnergy": "Energy a diatom drifts in with.",
+    "diatom.maxEnergy": "Most energy a diatom can bank.",
+    "diatom.divideEnergy": "Energy at which a diatom divides. Size never changes — a frustule cannot expand, so growth goes into z.",
+    "diatom.sinkSpeed": "How fast a 20um diatom sinks (px/s). Scales with size: a big frustule falls faster.",
+    "diatom.glideSpeed": "How fast a PENNATE glides along a surface. Centrics have no raphe and never move under their own power.",
+    "diatom.glideTurn": "How sharply a gliding pennate can change direction.",
+    "diatom.chainDrift": "How much a sinking chain sways about its long axis.",
+    "diatom.killMotes": "Food motes released when a diatom dies — a big parcel of biomass.",
+    "diatom.immigrateEvery": "Seconds between diatoms drifting in while the bloom is below its authored count.",
+    "toxin.maxCount": "Frame-time ceiling on lingering toxin clouds.",
     "predator.cystMealFactor": "Fraction of a normal meal's energy a protist gets from eating a cyst.",
     "predator.cystEatChance": "Chance a bumped cyst is actually eaten rather than resisting.",
     "predator.killMotes": "Food motes released when an ANTIBIOTIC kills a protist (dying of old age releases nothing).",
@@ -6317,6 +6584,9 @@
     /^touch/, /touchSpeedScale/, /Touch(\.|$)/, /^cell\.touch/,
     // the attract-mode dish, and the rendering grid — cosmetic/perf, not ecology
     /^demo\./, /^grid\./,
+    // diatom ceilings and the pixel convention: a scenario authors its diatoms in the organisms block,
+    // in micrometres. maxCount is a frame-time bound and pxPerUm is how the engine draws, not ecology.
+    /^diatom\.(maxCount|pxPerUm)$/, /^toxin\.maxCount$/,
     // The water column has its own authored block in the schema; setting its SHAPE twice, two ways,
     // would let a scenario contradict itself. But chemRate and photoRate are not part of that block —
     // they are rate constants that merely live under CFG.column, and how generous autotrophy is
@@ -6514,7 +6784,7 @@
       // v1 applies cells + blooms (immigrant/founder genome bundles). Grazer/phage tuning is done through
       // env.predator.* / env.phage.* (already whitelisted), so a dedicated grazers/phages block is not yet
       // a thing — reject it rather than accept-and-ignore, which would be a silent lie to the author.
-      const oErr = scOnlyKeys(raw.organisms, new Set(["cells", "blooms"]), "organisms");
+      const oErr = scOnlyKeys(raw.organisms, new Set(["cells", "blooms", "diatoms"]), "organisms");
       if (oErr) return scReject(oErr);
       const cellList = [].concat(raw.organisms.cells || [], (raw.organisms.blooms || []).map((b) => Object.assign({ bloom: true }, b)));
       const ids = new Set();
@@ -6541,6 +6811,54 @@
           genome: { enzLvl: [enz[0], enz[1], enz[2]], chemoLevel: g.chemoLevel|0, antibiotic: g.antibiotic|0,
             eps: g.eps|0, crispr: g.crispr === true, twitching: g.twitching === true, chemolithotroph: g.chemolithotroph === true, phototroph: g.phototroph === true },
           immigrateWeight: iw, bloom: c.bloom === true });
+      }
+
+      // ---- organisms.diatoms: a third organism class, not a bacterium with a flag ----
+      // Eukaryotic algae in a glass frustule: strict phototrophs, tens of times bigger than a
+      // bacterium, chain-forming, slowly sinking. Only pennates glide, because gliding needs a raphe.
+      // Size is authored in MICROMETRES because that is what a microbiologist knows about a diatom;
+      // the pixel convention is the engine's problem (CFG.diatom.pxPerUm).
+      if (raw.organisms.diatoms != null) {
+        if (!Array.isArray(raw.organisms.diatoms)) return scReject("organisms.diatoms must be an array");
+        if (raw.organisms.diatoms.length > 4) return scReject("at most 4 diatom types");
+        const dids = new Set();
+        for (const d of raw.organisms.diatoms) {
+          if (!d || typeof d !== "object") return scReject("diatom entry must be an object");
+          const dErr = scOnlyKeys(d, new Set(["id", "label", "color", "form", "sizeUm", "chain", "count", "toxin"]), "diatom");
+          if (dErr) return scReject(dErr);
+          const did = scStr(d.id, 40);
+          if (!did || dids.has(did)) return scReject("diatom id missing or duplicated");
+          dids.add(did);
+          if (d.form != null && d.form !== "pennate" && d.form !== "centric") return scReject('diatom.form must be "pennate" or "centric"');
+          if (d.sizeUm != null && (!Number.isFinite(d.sizeUm) || d.sizeUm < 5 || d.sizeUm > 100)) return scReject("diatom.sizeUm must be 5..100");
+          if (d.chain != null && (!Number.isInteger(d.chain) || d.chain < 1 || d.chain > 12)) return scReject("diatom.chain must be an integer 1..12");
+          if (d.count != null && (!Number.isInteger(d.count) || d.count < 0 || d.count > 200)) return scReject("diatom.count must be an integer 0..200");
+          const dcolor = d.color == null ? null : scColor(d.color);
+          if (d.color != null && !dcolor) return scReject("diatom color must be #rrggbb");
+          // An authored toxin, released where the cell DIES rather than fired by a living one.
+          let toxin = null;
+          if (d.toxin != null) {
+            const t = d.toxin;
+            if (!t || typeof t !== "object") return scReject("diatom.toxin must be an object");
+            const tErr = scOnlyKeys(t, new Set(["label", "color", "radius", "potency", "life"]), "diatom toxin");
+            if (tErr) return scReject(tErr);
+            if (t.radius != null && (!Number.isFinite(t.radius) || t.radius < 4 || t.radius > 400)) return scReject("toxin.radius must be 4..400");
+            if (t.potency != null && (!Number.isFinite(t.potency) || t.potency < 0 || t.potency > 200)) return scReject("toxin.potency must be 0..200");
+            if (t.life != null && (!Number.isFinite(t.life) || t.life < 0.5 || t.life > 60)) return scReject("toxin.life must be 0.5..60");
+            const tcolor = t.color == null ? null : scColor(t.color);
+            if (t.color != null && !tcolor) return scReject("toxin.color must be #rrggbb");
+            toxin = { label: scStr(t.label, 40) || "", color: tcolor,
+                      radius: Number.isFinite(t.radius) ? t.radius : null,
+                      potency: Number.isFinite(t.potency) ? t.potency : null,
+                      life: Number.isFinite(t.life) ? t.life : null };
+          }
+          organisms.diatoms = organisms.diatoms || [];
+          organisms.diatoms.push({ id: did, label: scStr(d.label, 40) || "", color: dcolor,
+            form: d.form === "pennate" ? "pennate" : "centric",
+            sizeUm: Number.isFinite(d.sizeUm) ? d.sizeUm : 20,
+            chain: Number.isInteger(d.chain) ? d.chain : 1,
+            count: Number.isInteger(d.count) ? d.count : 12, toxin });
+        }
       }
     }
 
