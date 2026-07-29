@@ -416,7 +416,7 @@ assert.match(game, /enzymes = \[\]; toxins = \[\]; epsBlocks = \[\]; nutrients =
 // 883px chain is a visible jump. Centrics looked fine only because their drift was already rate-based.
 {
   const w = world({ light: 1, terrainBands: [{ y0: 1400, y1: 2000 }] });
-  const d = w.makeDiatom({ ...PENNATE, sizeUm: 42, chain: 4 }, 500, 1398);
+  const d = w.makeDiatom({ ...PENNATE, sizeUm: 42, chain: 1 }, 500, 1398);   // solitary: the only motile form
   d.angle = 0; d.energy = 200;
   w.diatoms = [d];
   let worst = 0, prev = d.angle;
@@ -456,6 +456,31 @@ assert.match(game, /enzymes = \[\]; toxins = \[\]; epsBlocks = \[\]; nutrients =
   assert.ok(reset >= 0 && seed >= 0, "newGame must both reset and seed the bloom");
   assert.ok(seed > reset,
     "the bloom must be seeded AFTER the entity reset — seeded before it, the reset erases the whole bloom");
+}
+
+// ---- only a SOLITARY cell is motile ---------------------------------------------------------------
+// A pennate glides on its raphe; a chain of them is a colony, not a motile object. It was also a
+// gameplay problem: a rotating chain is a long capsule sweeping through the water, so it worked like a
+// propeller blade and brushed grazers off before they could bite.
+{
+  const FLOOR = [{ y0: 1400, y1: 2000 }];
+  const travel = (spec) => {
+    const w = world({ light: 1, terrainBands: FLOOR });
+    const d = w.makeDiatom(spec, 500, 1398); d.angle = 0; d.energy = 200;
+    w.diatoms = [d];
+    const x0 = d.x, a0 = d.angle;
+    for (let i = 0; i < 40; i++) w.updateDiatoms(0.1);
+    const cur = w.diatoms[0];
+    return { moved: Math.abs(cur.x - x0), turned: Math.abs(cur.angle - a0) };
+  };
+  const solo = travel({ ...PENNATE, sizeUm: 42, chain: 1 });
+  const chain = travel({ ...PENNATE, sizeUm: 42, chain: 5 });
+  assert.ok(solo.moved > chain.moved * 3,
+    `a solitary pennate glides and a chain of them does not (solo ${solo.moved.toFixed(0)}px vs chain ${chain.moved.toFixed(0)}px)`);
+  assert.equal(chain.turned, 0, "a chain must hold its orientation — a rotating chain sweeps grazers off");
+  const soloCentric = travel({ ...CENTRIC, sizeUm: 42, chain: 1 });
+  assert.ok(soloCentric.turned > 0, "a solitary centric still turns slowly as it falls");
+  assert.equal(travel({ ...CENTRIC, sizeUm: 42, chain: 5 }).turned, 0, "...but a centric chain does not");
 }
 
 console.log("Diatom contracts OK: light-only, sinking, pennate-only gliding, fixed size, biomass on death.");

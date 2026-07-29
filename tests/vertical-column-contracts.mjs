@@ -115,49 +115,29 @@ const chh = new Function(`
 const { chemAt } = chh();
 assert.ok(Math.abs(chemAt(1800) - 0.8) < 0.05, "the field is strongest at its peak depth");
 assert.ok(chemAt(1800) > chemAt(1400) && chemAt(1400) > chemAt(600), "it falls off away from the peak");
-assert.match(game, /const damp = columnEdgeDamp\(c\.y\);[\s\S]*?moveVx \* damp[\s\S]*?columnDriftVy\(c\)\) \* damp/,
-  "the soft-boundary damp is applied to cell movement");
-assert.match(game, /const pdamp = columnEdgeDamp\(pr\.y\);/, "grazers feel the soft boundary too");
-// the damp function: 1 in open water, easing to edgeMinSpeed at the very edge
-const edgeBlock = game.slice(game.indexOf("function columnEdgeDamp"), game.indexOf("\n  }", game.indexOf("function columnEdgeDamp")) + 4);
-const edh = (top, bottom) => new Function(`
-  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-  let WORLD_H = 2000, VIEW_H = 800, columnState = { photicFrac: 0.3 };
-  const terrainAtTop = ${top}, terrainAtBottom = ${bottom};
-  const CFG = { column: { bufferFrac: 0.25, edgeMinSpeed: 0.12 } };
-  ${edgeBlock}
-  return columnEdgeDamp;
-`)();
-// an UNBOUNDED edge still gets the cushion: with nothing solid there, it is all that stops you
-const edge = edh(false, false);
-assert.ok(Math.abs(edge(1000) - 1) < 1e-9, "open water is undamped");
-assert.ok(edge(0) <= 0.13 && edge(0) >= 0.11, "movement eases to edgeMinSpeed at the surface");
-assert.ok(edge(2000) <= 0.13, "and at the floor");
-assert.ok(edge(60) < edge(150) && edge(150) < edge(1000), "the closer to the edge, the slower");
+// ---- the soft edge cushion is GONE ----------------------------------------------------------------
+// Movement used to ease to edgeMinSpeed near the surface and the floor, so the column ended softly.
+// It worked against the game: things SETTLE at the edges -- detritus rains down, gold drifts there --
+// so the one place you most often need to reach was the one place you moved slowest. Terrain and the
+// camera clamp do the job better.
+assert.doesNotMatch(game, /columnEdgeDamp/, "the edge cushion must be gone, not merely unused");
+assert.doesNotMatch(game, /\* damp\b/, "and nothing may still be multiplying movement by it");
+assert.doesNotMatch(game, /pdamp/, "...including the grazers");
 
-// A BOUNDED edge gets none of it. The terrain collision already stops you there, and damping on top of
-// that is a second, invisible penalty for approaching scenery you are meant to work in -- the 800px
-// sea ice above all, which you are supposed to swim INTO.
+// ---- but the map has to SHOW where the sea ends ----------------------------------------------------
+// The minimap is centred on you and a whole world-height tall, so unless you are exactly mid-column
+// part of it shows nothing at all — and in the same black as deep water that reads as unexplored sea
+// rather than as the end of the world.
 {
-  const floored = edh(false, true);
-  assert.equal(floored(2000), 1, "no cushion at a floor that terrain already bounds");
-  assert.equal(floored(1900), 1, "...nor approaching it");
-  assert.ok(floored(0) <= 0.13, "but the open surface above it keeps its cushion");
-
-  const iced = edh(true, false);
-  assert.equal(iced(0), 1, "no cushion at an ice ceiling");
-  assert.ok(iced(2000) <= 0.13, "but the unbounded floor keeps its");
-
-  const both = edh(true, true);
-  assert.equal(both(0), 1, "fully enclosed: terrain does all the stopping");
-  assert.equal(both(2000), 1, "...at both edges");
-  assert.equal(both(1000), 1, "...and open water is untouched as ever");
+  const map = game.slice(game.indexOf("function drawMinimap"), game.indexOf("function drawDepthGauge"));
+  assert.match(map, /if \(!worldYWrap\) \{[\s\S]{0,400}?MY\(0\), bot = MY\(WORLD_H\)/,
+    "a column's map must mark the region outside the world, using the map's own Y mapping");
+  assert.match(map, /rgba\(150,160,170/, "...in grey, distinct from deep water");
+  assert.doesNotMatch(map.slice(0, map.indexOf("if (!worldYWrap)")), /worldYWrap \? /,
+    "the shading is column-only: on the torus every row of the map is real sea");
 }
-// the flags must actually be derived from the layers, or every edge looks unbounded forever
-assert.match(game, /terrainAtTop = terrainAtBottom = false;/, "buildTerrain must reset the bounded-edge flags");
-assert.match(game, /if \(raw && raw\.at === "top"\) terrainAtTop = true; else if \(raw\) terrainAtBottom = true;/,
-  "...and set them from the layers it is given");
-assert.match(game, /cvy = \(moveVy \+ columnDriftVy\(c\)\) \* damp/, "the column's vertical drift is added to cell movement");
+
+assert.match(game, /cvy = \(moveVy \+ columnDriftVy\(c\)\);/, "the column's vertical drift is added to cell movement");
 assert.match(game, /s\.vy \+ \(columnState \? CFG\.column\.particleSink : 0\)/, "detritus sinks down the column");
 const dvStart = game.indexOf("function columnDriftVy");
 const driftBlock = game.slice(dvStart, game.indexOf("\n  }", dvStart) + 4); // just the function body (no nested braces)

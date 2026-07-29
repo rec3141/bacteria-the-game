@@ -97,23 +97,12 @@
     if (c.y >= WORLD_H - 1 && vy > 0) vy = 0;       // resting on the benthos
     return vy;
   }
-  // Soft boundary: a viscous slowdown as you near the surface or floor, so the column ends in a cushion
-  // rather than a hard cut-off. 1 in open water. Torus = always 1.
-  //
-  // Applied ONLY to an edge that terrain does not already bound. Where there is a seabed or an ice
-  // ceiling, the collision stops you and the slowdown on top of it is a second, invisible penalty for
-  // approaching scenery you are meant to be able to work in -- the sea ice especially, which is now
-  // 800px of habitat you swim INTO. Where there is no terrain the cushion is all there is: 19 of the
-  // library's 20 column levels have no ceiling, because their top edge is the open sea surface, and
-  // dropping it globally would replace a cushion with an invisible wall in almost every one of them.
-  function columnEdgeDamp(y) {
-    if (!columnState) return 1;
-    const buffer = VIEW_H * CFG.column.bufferFrac;
-    const d = Math.min(terrainAtTop ? Infinity : y, terrainAtBottom ? Infinity : WORLD_H - y);
-    if (d >= buffer) return 1;
-    const t = clamp(d / Math.max(1, buffer), 0, 1);
-    return CFG.column.edgeMinSpeed + (1 - CFG.column.edgeMinSpeed) * t;
-  }
+  // The column used to end in a viscous cushion -- movement easing to edgeMinSpeed as you neared the
+  // surface or the floor -- so it stopped softly rather than at a hard cut-off. It is gone. Terrain
+  // and the camera clamp between them do the job better, and the cushion actively worked against the
+  // game: things SETTLE at the edges (detritus rains down, gold drifts there), so the one place you
+  // most often need to reach was the one place you moved slowest. bufferFrac and edgeMinSpeed remain
+  // in CFG as inert history rather than being removed from the wire format.
 
   const CFG = {
     cell: {
@@ -275,6 +264,11 @@
     predator: {
       count: 4, radius: 22, wanderSpeed: 25, chaseSpeed: 42.5, senseRange: 170, satiatedTime: 1,
       startEnergy: 100, mealEnergy: 58, metabolism: 10, // eats cells for energy, drains over time (raised 25% to curb the boom from doubled food)
+      // A CEILING, mirroring cell.maxEnergy against cell.divideThreshold (230 vs 175, so ~1.3x). There
+      // was none, and reproduction is gated on an 11s cooldown as well as on energy, so a well-fed
+      // grazer banked everything it ate while it waited: measured over 30s against a diatom bloom it
+      // reached 831 -- energy it could never spend, and a HUD bar pinned at full from 320 upward.
+      maxEnergy: 420,
       maturity: 8,                                       // no senescence — a grazer dies of STARVATION
                                                          // (or antibiotics), never of old age
       reproEnergy: 320, reproCooldown: 11,               // reproduction, gated only by feeding — faster so grazers can chase a bacterial boom
@@ -956,9 +950,6 @@
   // Diatoms: a third organism class. Its own list for the same reason terrain has one — they are not
   // bacteria, so they must not appear in the cell accounting, the phage host pool, or the genome charts.
   let diatoms = [];
-  // Which edges of the column terrain physically bounds. Read by columnEdgeDamp so the soft cushion is
-  // applied only where nothing solid already stops you.
-  let terrainAtTop = false, terrainAtBottom = false;
   // #30: fixed, solid scenery for a water column — sea ice overhead, sediment underfoot. Its own list,
   // deliberately not part of `substrates`: terrain is not food, and keeping it separate is what stops
   // it appearing in the food accounting, the diel particle budget, the resource-balance floor, the
@@ -1383,11 +1374,7 @@
   // a torus there is no surface or floor for it to attach to.
   function buildTerrain(layers) {
     terrain = [];
-    terrainAtTop = terrainAtBottom = false;
     if (!columnState || !Array.isArray(layers)) return;
-    for (const raw of layers) {                      // which edges end up physically bounded
-      if (raw && raw.at === "top") terrainAtTop = true; else if (raw) terrainAtBottom = true;
-    }
     layers.forEach((raw, li) => {
       const thickness = clamp(raw.thickness, 20, WORLD_H * 0.4);
       const layer = { at: raw.at === "top" ? "top" : "bottom", thickness,
@@ -1850,7 +1837,11 @@
       // centre. Without both, a chain lying along a surface flickered in and out of contact from frame
       // to frame, switching a 16px/s glide on and off -- which is a good part of why they looked like
       // they were jumping about.
-      if (d.form === "pennate") {
+      // MOTILITY IS FOR SOLITARY CELLS ONLY. A pennate glides on its raphe, and a chain of them is not
+      // a motile object -- the cells are locked in a colony and the thing as a whole just drifts. It
+      // was also a gameplay problem: a rotating chain is a long capsule sweeping through the water, so
+      // it worked like a propeller blade, brushing grazers off before they could bite.
+      if (d.form === "pennate" && d.n === 1) {
         const touching = diatomTouchingSurface(d);
         d.grip = touching ? 0.35 : Math.max(0, (d.grip || 0) - dt);
         if (touching || d.grip > 0) {
@@ -1866,9 +1857,12 @@
           vx += Math.cos(d.angle) * D.glideSpeed;
           vy += Math.sin(d.angle) * D.glideSpeed * 0.5;   // gravity still resists an upward glide
         }
-      } else {
-        d.angle += Math.sin(d.sway * 0.6) * 0.25 * dt;    // a centric just turns slowly as it falls
+      } else if (d.n === 1) {
+        d.angle += Math.sin(d.sway * 0.6) * 0.25 * dt;    // a solitary cell turns slowly as it falls
       }
+      // ...and a CHAIN does not turn at all. It still sinks and sways sideways, so it is not static,
+      // but it holds its orientation: the sweep of a rotating chain was flicking protists away from
+      // the very cells they were trying to eat.
 
       d.x = wrapX(d.x + vx * dt);
       d.y = wrapY(d.y + vy * dt);
@@ -3515,8 +3509,7 @@
     if (!near) for (const z of epsSpace.query(c.x, c.y, bpReach + CFG.eps.radius, epsCandidates)) {
       if (z.life > 0 && toroDist2(c.x, c.y, z.x, z.y) < (bpReach + z.r)**2) { near = true; break; }
     }
-    const damp = columnEdgeDamp(c.y);        // #30: soft-boundary slowdown near the surface/floor (1 in the torus)
-    const cvx = moveVx * damp, cvy = (moveVy + columnDriftVy(c)) * damp;   // add the column's vertical drift too
+    const cvx = moveVx, cvy = (moveVy + columnDriftVy(c));   // add the column's vertical drift too
     if (!near) { c.x = wrapX(c.x + cvx*dt); c.y = wrapY(c.y + cvy*dt); }
     else {
       const steps = clamp(Math.ceil(stepDist/2), 1, 8);
@@ -3868,8 +3861,7 @@
         const spd = (hunting ? base : base*0.5)/Math.sqrt(env.viscosity);
         pr.vx = Math.cos(pr.heading)*spd; pr.vy = Math.sin(pr.heading)*spd;
       }
-      const pdamp = columnEdgeDamp(pr.y);   // #30: grazers feel the same soft boundary
-      pr.x = wrapX(pr.x + pr.vx*pdamp*dt); pr.y = wrapY(pr.y + pr.vy*pdamp*dt);
+      pr.x = wrapX(pr.x + pr.vx*dt); pr.y = wrapY(pr.y + pr.vy*dt);
       collideCircle(pr, pr.r); // protists are too big to enter tunnels
       pr.pseudo += dt*4;
       const grazeReach = pr.r + CFG.cell.maxHalf + CFG.cell.radius + 2;
@@ -3940,6 +3932,7 @@
         newborns.push(off);
         burst(pr.x, pr.y, "#ff9ec0", 10);
       }
+      if (pr.energy > P.maxEnergy) pr.energy = P.maxEnergy;   // nothing banks past the ceiling
       // death: antibiotic KILL (energy gone while poisoned) releases biomass as food; natural death (senescence/starvation) releases nothing
       // Starvation is the only clock a grazer needs. Senescence used to kill it as well, and since
       // an unfed protist starves at startEnergy/metabolism (~69s) while its lifespan rolled 55-100s,
@@ -4740,6 +4733,16 @@
     const MX = (ex) => cx0 + dx(ex, anchor.x)*kx;
     const MY = (ey) => cy0 + dy(ey, anchor.y)*ky;
     ctx.beginPath(); ctx.rect(mx, my, mw, mh); ctx.clip(); // keep marks inside the frame
+    // WHERE THE SEA ENDS. The map is centred on you and is a whole world-height tall, so unless you are
+    // exactly mid-column part of it is showing nothing at all -- and drawn in the same black as deep
+    // water it reads as somewhere you have not explored rather than somewhere that does not exist.
+    // Only in a column: on the torus every row of the map is real sea.
+    if (!worldYWrap) {
+      ctx.fillStyle = "rgba(150,160,170,0.30)";
+      const top = MY(0), bot = MY(WORLD_H);
+      if (top > my) ctx.fillRect(mx, my, mw, top - my);
+      if (bot < my + mh) ctx.fillRect(mx, bot, mw, my + mh - bot);
+    }
     // particles are omitted — the map shows only the living things
     if (!isTouch) { // colony dots colored by generation (same palette as the chart); cysts hidden
       const used = [];
@@ -6680,6 +6683,7 @@
     "predator.mealEnergy": "Energy a protist gains per bacterium eaten.",
     "predator.metabolism": "Energy per second a protist burns — raise it to starve the grazers out.",
     "predator.maturity": "Seconds before a protist is old enough to reproduce.",
+    "predator.maxEnergy": "Most energy a protist can bank. Without a ceiling a well-fed grazer stockpiles far past what it can spend, since reproduction is also gated on a cooldown.",
     "predator.reproEnergy": "Energy a protist must reach to divide.",
     "predator.reproCooldown": "Minimum seconds between a protist's divisions.",
     "predator.safetyMax": "Hard cap on protists — a performance backstop, never ecologically binding.",
