@@ -483,4 +483,52 @@ assert.match(game, /enzymes = \[\]; toxins = \[\]; epsBlocks = \[\]; nutrients =
   assert.equal(travel({ ...CENTRIC, sizeUm: 42, chain: 5 }).turned, 0, "...but a centric chain does not");
 }
 
+// ---- the BROAD PHASE has to know about diatoms, or none of the above ever runs -------------------
+// updateCell only resolves collisions when a cheap bounding test says something solid is nearby.
+// Diatoms were missing from that test, so a cell meeting a chain in open water took the straight-line
+// path and swam through it. collideDiatomCircle was correct the whole time and simply never reached.
+//
+// My earlier test called collideRod directly and passed, which is precisely the mistake: it exercised
+// the function while bypassing the gate that decides whether the function is called. So this one runs
+// the real broad-phase predicate, sliced out of updateCell.
+{
+  const bp = game.slice(game.indexOf("// BROAD PHASE FIRST"), game.indexOf("const cvx = moveVx"));
+  assert.ok(bp.length > 400, "the broad phase must be extractable from updateCell");
+  // built outside the template: a ${} cannot nest inside another ${}
+  const bpCfg = JSON.stringify({ cell: { radius: 5, baseHalf: 9, maxHalf: 22, lenBaseEnergy: 55, elongK: 0.11 },
+                                 diatom: { pxPerUm: CFG.diatom.pxPerUm }, eps: { radius: 24 } });
+  const near = new Function(`
+    const WORLD_W = 2600, WORLD_H = 2000;
+    const CFG = ${bpCfg};
+    const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+    const dx=(a,b)=>{let d=a-b; if(d>WORLD_W/2)d-=WORLD_W; else if(d<-WORLD_W/2)d+=WORLD_W; return d;};
+    const dy=(a,b)=>a-b;
+    const toroDist2=(ax,ay,bx,by)=>{const x=dx(ax,bx),y=dy(ay,by);return x*x+y*y;};
+    ${grab("cellHalfLen")}
+    ${grab("diatomUnit")} ${grab("diatomHalfW")} ${grab("diatomHalfLen")}
+    return function (c, stepDist, substrates, terrain, diatoms) {
+      const epsCandidates = [], epsSpace = { query: () => [] };
+      ${bp}
+      return near;
+    };`)();
+
+  const chain = { x: 1000, y: 500, angle: 0, n: 5, um: 42, form: "pennate", dead: false };
+  const cellAt = (x, y, twitching) => ({ x, y, energy: 100, twitching: !!twitching });
+  // right on the chain, nothing else anywhere near
+  assert.equal(near(cellAt(1000, 500), 4, [], [], [chain]), true,
+    "a cell sitting on a diatom, with no particle or terrain nearby, must resolve collisions");
+  // out along the chain's length, not just at its centre
+  const end = 1000 + (42 * CFG.diatom.pxPerUm * 5) / 2 - 10;
+  assert.equal(near(cellAt(end, 500), 4, [], [], [chain]), true, "...anywhere along it");
+  // twitching must not exempt it: that is for food particles it is gripping, not for another organism
+  assert.equal(near(cellAt(1000, 500, true), 4, [], [], [chain]), true,
+    "a twitching cell is not exempt from diatoms — twitching lets it crawl through FOOD");
+  // and genuinely open water still takes the cheap path, or the optimisation is gone
+  assert.equal(near(cellAt(1000, 1500), 4, [], [], [chain]), false,
+    "open water must still skip collision resolution — that broad phase is why the frame rate holds");
+  assert.equal(near(cellAt(1000, 500), 4, [], [], []), false, "no diatoms, nothing to be near");
+  assert.equal(near(cellAt(1000, 500), 4, [], [], [{ ...chain, dead: true }]), false,
+    "a dead diatom is not an obstacle");
+}
+
 console.log("Diatom contracts OK: light-only, sinking, pennate-only gliding, fixed size, biomass on death.");

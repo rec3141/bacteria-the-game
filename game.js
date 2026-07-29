@@ -3509,6 +3509,18 @@
     if (!near) for (const z of epsSpace.query(c.x, c.y, bpReach + CFG.eps.radius, epsCandidates)) {
       if (z.life > 0 && toroDist2(c.x, c.y, z.x, z.y) < (bpReach + z.r)**2) { near = true; break; }
     }
+    // Diatoms, and NOT gated on twitching either -- for exactly the reason spelled out above about the
+    // ice. `near` decides whether this step resolves collisions AT ALL, and diatoms were missing from
+    // it, so a cell meeting a chain in open water took the cheap straight-line path and swam through.
+    // collideDiatomCircle was correct and was simply never reached: the cost was being paid on the
+    // frames a cell happened to be beside a particle, and nothing was bought with it. Protists show
+    // the contrast -- they call collideCircle unconditionally, with no broad phase, which is why they
+    // were the only things diatoms ever touched.
+    if (!near) for (const d of diatoms) {
+      if (d.dead) continue;
+      const dr = diatomHalfLen(d) + diatomHalfW(d) + bpReach;
+      if (toroDist2(c.x, c.y, d.x, d.y) < dr*dr) { near = true; break; }
+    }
     const cvx = moveVx, cvy = (moveVy + columnDriftVy(c));   // add the column's vertical drift too
     if (!near) { c.x = wrapX(c.x + cvx*dt); c.y = wrapY(c.y + cvy*dt); }
     else {
