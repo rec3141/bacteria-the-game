@@ -4751,7 +4751,8 @@
   // they photosynthesise. The gauge follows the WORLD's gradients; the third bar, which is about what
   // feeds YOU, still follows the cell.
   function drawDepthGauge(mx, my, mw, mh, vs, ps) {
-    const pc = controlledCell();
+    const pc = controlledCell();          // the cell you steer, or null (protist, or the attract sim)
+    const you = controlledEntity();       // whoever you ARE — used only for the "you are here" line
     if (!columnState) return;
     const chans = [];
     chans.push({ c: "#ffe9a8", f: (y) => clamp(columnLightAt(y), 0, 1) });
@@ -4782,11 +4783,16 @@
       }
       x += w + gap;
     }
-    // your depth, across the whole gauge — the same line the minimap diamond sits on
+    // Your depth, across the whole gauge — the same line the minimap diamond sits on. Guarded on
+    // `you`, because the gauge is no longer gated on there BEING a controlled cell: as a protist, and
+    // in the attract sim, controlledCell() is null. Dereferencing it here threw every single frame
+    // from inside the render loop the moment the gate was relaxed.
     ctx.globalAlpha = 1;
-    const py = my + clamp(pc.y / WORLD_H, 0, 1) * mh;
-    ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1.2 * ps;
-    ctx.beginPath(); ctx.moveTo(gx - gap, py); ctx.lineTo(gx + totalW + gap, py); ctx.stroke();
+    if (you) {
+      const py = my + clamp(you.y / WORLD_H, 0, 1) * mh;
+      ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1.2 * ps;
+      ctx.beginPath(); ctx.moveTo(gx - gap, py); ctx.lineTo(gx + totalW + gap, py); ctx.stroke();
+    }
     ctx.strokeStyle = "rgba(120,220,200,0.4)"; ctx.lineWidth = 1;
     ctx.strokeRect(gx - gap, my, totalW + gap * 2, mh);
     ctx.restore();

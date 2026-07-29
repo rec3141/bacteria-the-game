@@ -365,7 +365,47 @@ console.log("Vertical-column contract OK: Y-mode plumbing, no seam wrap, save/re
     "the scarcer-input bar is about what feeds YOU and must stay tied to the cell");
   // it hangs off the minimap so it inherits that widget's world-Y mapping and cannot drift from it
   assert.match(game, /drawDepthGauge\(mx, my, mw, mh, vs, ps\);/, "the gauge is drawn from the minimap, sharing its geometry");
-  assert.match(gauge, /my \+ clamp\(pc\.y \/ WORLD_H, 0, 1\) \* mh/, "your depth marker uses the same axis as the map");
+  assert.match(gauge, /my \+ clamp\(you\.y \/ WORLD_H, 0, 1\) \* mh/, "your depth marker uses the same axis as the map");
+
+  // RUN it with no controlled cell. Relaxing the gate above left `pc.y` being dereferenced below it,
+  // and as a protist -- or in the attract sim -- controlledCell() is null, so the gauge threw from
+  // inside the render loop on EVERY FRAME. Every assertion in this block still passed, because they
+  // all match source text and the crashing line was one I had not changed. Only calling it catches it.
+  {
+    const grab = (name) => {
+      const i = game.indexOf(`function ${name}(`);
+      let d = 0, j = game.indexOf("{", i), started = false;
+      for (; j < game.length; j++) {
+        if (game[j] === "{") { d++; started = true; }
+        else if (game[j] === "}") { d--; if (started && d === 0) { j++; break; } }
+      }
+      return game.slice(i, j);
+    };
+    const noop = () => {};
+    const run = (cell, entity, chem) => new Function(`
+      const WORLD_H = 2000;
+      const clamp = (v,a,b) => v<a?a:v>b?b:v;
+      const isTouch = false;
+      const columnState = { photicFrac: 0.3, chem: ${chem ? '{ color: "#d9c24a" }' : "null"} };
+      const columnLightAt = (y) => Math.exp(-(y/WORLD_H)/0.3);
+      const chemAt = () => 0.5;
+      const controlledCell = () => (${cell});
+      const controlledEntity = () => (${entity});
+      const ctx = new Proxy({}, { get: (t, k) => (k === "canvas" ? {} : () => {}) });
+      ${grab("drawDepthGauge")}
+      return drawDepthGauge;`)();
+
+    // a heterotroph bacterium: the case the relaxed gate is FOR
+    run("{ y: 900 }", "{ y: 900 }", false)(0, 0, 150, 115, 1, 1);
+    // playing as a protist: controlledCell() is null but you still exist
+    run("null", "{ y: 900 }", true)(0, 0, 150, 115, 1, 1);
+    // the attract sim: nothing is controlled at all
+    run("null", "null", false)(0, 0, 150, 115, 1, 1);
+    run("null", "null", true)(0, 0, 150, 115, 1, 1);
+    // an autotroph with both gradients — the combined bar path
+    run('{ y: 900, phototroph: true, chemolithotroph: true }', "{ y: 900 }", true)(0, 0, 150, 115, 1, 1);
+    void noop;
+  }
   assert.match(gauge, /Math\.min\(chans\[0\]\.f\(y\), chans\[1\]\.f\(y\)\)/,
     "with both gradients the gauge shows the limiting factor — the bar you actually swim toward");
   assert.match(gauge, /isTouch \? mx \+ mw \+ gap \* 2 : mx - totalW - gap \* 2/,
