@@ -1079,6 +1079,9 @@
       // steering; this is what lets every lineage on the chart show its own genome. phylo preserves
       // the full event ancestry too, including losses that correctly disappear from the current genome.
       ups: [], phylo: [],
+      // Which authored archetype this cell descends from, or null in a stock ocean. Only used to keep
+      // a scenario's organisms from disappearing -- see immigrateBacteria.
+      arche: null,
       enzLvl: [0, 0, 1] }; // per-enzyme expression level [lipase, protease, carbohydrase]; 0 = locked, carb starts at 1
   }
   // Build an adaptation log from a genome, for cells that were never *granted* anything — immigrants
@@ -1558,7 +1561,7 @@
     const first = makeCell(WORLD_W/2, WORLD_H/2, CFG.cell.startEnergy, -Math.PI/2, 1);
     // #28: in a scenario the founder carries the first authored archetype's genome (e.g. the alkB oil
     // degrader), so the run opens as the organism the lesson describes rather than a bare cell.
-    if (!isDemo) { const arche = scenarioArchetypes(); if (arche && arche.length) { applyGenomeBundle(first, arche[0].genome); first.ups = genomeUps(first); first.phylo = first.ups.slice();
+    if (!isDemo) { const arche = scenarioArchetypes(); if (arche && arche.length) { applyGenomeBundle(first, arche[0].genome); first.arche = arche[0].id; first.ups = genomeUps(first); first.phylo = first.ups.slice();
       if (columnState && columnState.chem && first.chemolithotroph) first.y = wrapY(columnState.chem.peakFrac * WORLD_H); } } // a chemosynthesizer starts IN its plume
     // Never open the run wedged inside solid terrain or a sealed pore. Nudge the founder to open water
     // near where it wanted to be (mid-column, or its plume depth for a chemolithotroph).
@@ -2370,6 +2373,16 @@
     for (const a of arr) { r -= a.immigrateWeight; if (r <= 0) return a; }
     return arr[0];
   }
+  // Which authored types have nobody left alive. This is the whole point of the archetype system: a
+  // scenario that names three organisms is describing a COMMUNITY, and a community whose members go
+  // extinct one by one and never return is just the founder with extra steps.
+  function missingArchetypes() {
+    const arr = scenarioArchetypes();
+    if (!arr || arr.length < 2) return [];              // one organism cannot lose its community
+    const alive = new Set();
+    for (const c of cells) if (c.alive && c.arche) alive.add(c.arche);
+    return arr.filter((a) => !alive.has(a.id));
+  }
   function applyGenomeBundle(c, g) {
     c.enzLvl[0] = g.enzLvl[0]; c.enzLvl[1] = g.enzLvl[1]; c.enzLvl[2] = Math.max(1, g.enzLvl[2]);
     c.chemoLevel = g.chemoLevel | 0; c.chemotaxis = c.chemoLevel > 0;
@@ -2383,12 +2396,27 @@
     for (let i = 0; i < n && cells.length < CFG.cell.maxCells; i++) {
       const a = rand(0, 6.28), d = Math.hypot(VIEW_W, VIEW_H)/2 + rand(60, 380);
       const c = makeCell(cam.x + Math.cos(a)*d, cam.y + Math.sin(a)*d, CFG.cell.startEnergy, rand(0, 6.28), 1);
-      // Prefer to REVIVE something this run already evolved (a cyst waking up). Only if nothing has
-      // died yet — the opening minutes — do we invent a genome from scratch.
-      if (!reviveGenome(c)) {
-        const arche = pickScenarioArchetype();      // in a scenario, immigrants are its authored archetypes
+      // Where an immigrant's genome comes from, in priority order.
+      //
+      // 1. RECOLONISATION. A scenario type with nobody left alive is the next thing to drift in. This
+      //    has to be tested BEFORE reviveGenome, which is what quietly broke every community
+      //    scenario: the dead-bank fills within the first minute of any real run, and from then on
+      //    every immigrant was a revival of an already-seen genome -- overwhelmingly the founder's own
+      //    lineage. The authored organisms got a brief opening window and then never appeared again,
+      //    so a level designed around three organisms played as one. It is also the honest mechanism:
+      //    these cells drift in from a wider ocean, and that ocean still has them when this patch of
+      //    water does not.
+      // 2. REVIVAL of something this run already evolved (a cyst waking up).
+      // 3. A fresh genome -- the scenario's archetypes if it has any, otherwise a random one.
+      const gone = missingArchetypes();
+      let arche = null, revived = false;
+      if (gone.length) arche = gone[(Math.random()*gone.length)|0];
+      else if (reviveGenome(c)) revived = true;
+      else arche = pickScenarioArchetype();     // null in a stock ocean -> the random genome below
+      if (!revived) {
         if (arche) {
           applyGenomeBundle(c, arche.genome);
+          c.arche = arche.id;
           // a chemosynthesizer drifts in AT its plume depth (± its spread), not at a random depth
           if (columnState && columnState.chem && c.chemolithotroph) c.y = wrapY((columnState.chem.peakFrac + rand(-1, 1)*columnState.chem.spread) * WORLD_H);
         } else {
@@ -2656,6 +2684,7 @@
     d1.enzLvl = c.enzLvl.slice(); d2.enzLvl = c.enzLvl.slice();
     d1.ups = d2.ups = c.ups || [];   // the adaptation log is heritable too (shared until one of them adapts)
     d1.phylo = d2.phylo = c.phylo || c.ups || []; // event ancestry survives gain and gene loss alike
+    d1.arche = d2.arche = c.arche || null;   // lineage identity, so a type can be seen to have died out
     if (c.infectedGreen) { d2.infectedGreen = true; d2.lysisT = c.lysisT; d2.viralLoad = c.viralLoad; burst(c.x, c.y, "#7CFC5A", 8); } // virus (whole load) segregates into one daughter; d1 (your lineage) stays clean
     cells.splice(cells.indexOf(c), 1, d1, d2);
     if (c.controlled) state.gen++; // count a generation only when the cell YOU are steering divides
