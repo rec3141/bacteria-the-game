@@ -295,7 +295,12 @@
       photoRate: 9,            // energy per second per unit area at full light (area scales with size)
       metabolism: 1.6,         // per second, Q10-scaled; a big cell burns more, so this scales with area too
       startEnergy: 60, maxEnergy: 260, divideEnergy: 190,
-      sinkSpeed: 5,            // px/s at 20um; scales with size, because a big frustule sinks faster
+      // px/s at 20um, scaling with size. Deliberately SLOW: at 5 a 90um chain crossed the entire
+      // 2000px column in 36 seconds, so a bloom rained out and died before a single game-day was
+      // over. At 1.2 a big chain takes about half a day to fall through and a small solitary cell is
+      // effectively suspended -- which is the actual contrast that matters, because it is why large
+      // chain-formers dominate a turbulent spring bloom and vanish from a stratified summer one.
+      sinkSpeed: 1.2,
       glideSpeed: 16,          // pennates only, and only against a surface -- the raphe needs something to grip
       glideTurn: 1.1,          // how sharply a gliding pennate can change direction
       chainDrift: 0.5,         // how much a chain sways about its long axis as it sinks
