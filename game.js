@@ -318,6 +318,10 @@
       // big cell is proportionally harder. Silica is a grazing defence -- that is what it is FOR --
       // and without this a protist stripped a frustule every frame it touched one.
       grazeChance: 0.22,
+      grazeEvery: 0.5,         // seconds between bite ATTEMPTS on a diatom. A grazer in a dense bloom
+                               // is in contact most frames; without this it would roll the dice sixty
+                               // times a second and strip a chain regardless of how tough it is.
+
       killMotes: 10,           // nutrient motes released when one dies -- a diatom is a big parcel of food
       immigrateEvery: 14,      // seconds between diatoms drifting in, while below the authored count
     },
@@ -1628,7 +1632,7 @@
       vx: 0, vy: 0, r: CFG.predator.radius, satiated: 0, controlled: false,
       heading: rand(0, 6.28), wobble: rand(0, 6.28), pseudo: rand(0, 6.28),
       age: age || 0, energy: energy == null ? CFG.predator.startEnergy : energy,
-      reproCd: CFG.predator.reproCooldown, toxT: 0, turboT: 0, dead: false };
+      reproCd: CFG.predator.reproCooldown, toxT: 0, turboT: 0, grazeCd: 0, dead: false };
   }
 
   // ---------------------------------------------------------------- diatoms
@@ -3808,6 +3812,7 @@
       if (pr.reproCd > 0) pr.reproCd -= dt;
       if (pr.toxT > 0) pr.toxT -= dt;
       if (pr.satiated > 0) pr.satiated -= dt;
+      if (pr.grazeCd > 0) pr.grazeCd -= dt;
       const tutorialWaiting = pr.tutorialGrace > 0;
       if (tutorialWaiting) pr.tutorialGrace = Math.max(0, pr.tutorialGrace - dt);
       const hunting = !tutorialWaiting && pr.satiated <= 0;
@@ -3831,11 +3836,12 @@
         const sensed = hunting ? cellSpace.query(pr.x, pr.y, P.senseRange, cellCandidates) : [];
         // only ACTIVE cells are hunted — cysts are ignored by the chase (still eaten if bumped into, below)
         if (hunting) for (const c of sensed) { if (!c.alive || c.cyst) continue; const d = toroDist2(pr.x, pr.y, c.x, c.y); if (d < td) { td = d; target = c; } }
-        // Diatoms are prey too, and in a bloom they are the LARGEST thing a grazer can eat. Leaving
-        // them out made the level's whole primary producer invisible to its consumers: protists swam
-        // through a dense bloom hunting bacteria and ignoring the food beside them. It is also the
-        // route domoic acid actually travels -- the grazer is poisoned by eating the alga.
-        if (hunting) for (const dt2 of diatoms) {
+        // Diatoms are prey too, and in a bloom they are the LARGEST thing a grazer can eat -- it is
+        // also the route domoic acid actually travels, since the grazer is poisoned by eating the alga.
+        // But only once nothing better is in range: bacteria are the primary prey, and a bloom puts a
+        // diatom node nearer than any cell almost everywhere, so ranking them together would have
+        // grazers permanently distracted by algae and the player never hunted at all.
+        if (hunting && !target) for (const dt2 of diatoms) {
           if (dt2.dead) continue;
           for (const nd of diatomNodes(dt2)) {
             const d = toroDist2(pr.x, pr.y, nd[0], nd[1]);
@@ -3886,7 +3892,14 @@
         // worrying at a big chain mostly fails, which is why big chain-formers survive grazing pressure
         // that wipes out small naked cells. Without this a protist stripped a frustule on every frame
         // it touched one and a chain evaporated on contact.
-        if (Math.random() >= CFG.diatom.grazeChance / Math.max(1, dm.um / 20)) { pr.satiated = P.satiatedTime * 0.3; break; }
+        // A FAILED bite costs an attempt, nothing else. Setting `satiated` here was a deadlock:
+        // hunting is `satiated <= 0`, so in a dense bloom -- where a grazer is touching a chain most
+        // frames and fails 90% of bites -- satiated never reached 0, hunting stayed false, and the
+        // protists chased nothing and ate nothing at all. Cranking count, speed and senseRange could
+        // not help, because none of those are read while hunting is false.
+        if (pr.grazeCd > 0) break;
+        pr.grazeCd = CFG.diatom.grazeEvery;
+        if (Math.random() >= CFG.diatom.grazeChance / Math.max(1, dm.um / 20)) break;
         pr.energy += P.mealEnergy * clamp(dm.um / 20, 0.4, 4);
         if (pr.controlled) state.score += CFG.cycle.protistEatScore;
         if (dm.toxin) {                       // the dose is in the cell, so eating it is the exposure
@@ -6669,6 +6682,7 @@
     "diatom.killMotes": "Food motes released per frustule when a diatom cell dies, at 20um — scales with the cell's size.",
     "diatom.exudateFrac": "Share of what a diatom fixes that leaks out as dissolved carbon. This is what feeds the phycosphere while the bloom is ALIVE.",
     "diatom.exudateMote": "How much leaked carbon makes one edible mote. Lower = a finer, steadier drizzle of food around every chain.",
+    "diatom.grazeEvery": "Seconds between a grazer's bite attempts on a diatom — without it, contact means sixty rolls a second.",
     "diatom.grazeChance": "Odds a grazer gets through a 20um frustule on one contact, divided by the cell's size. The frustule is armour — this is why big chain-formers survive grazing that wipes out naked cells.",
     "diatom.grazeToxinDose": "Fraction of a toxic frustule's potency a grazer takes as a one-off dose when it eats one. This is how domoic acid actually travels: it is eaten, not fired.",
     "diatom.immigrateEvery": "Seconds between diatoms drifting in while the bloom is below its authored count.",
