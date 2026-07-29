@@ -98,11 +98,18 @@
     return vy;
   }
   // Soft boundary: a viscous slowdown as you near the surface or floor, so the column ends in a cushion
-  // rather than a hard cut-off. 1 in open water; eases to edgeMinSpeed at the very edge. Torus = always 1.
+  // rather than a hard cut-off. 1 in open water. Torus = always 1.
+  //
+  // Applied ONLY to an edge that terrain does not already bound. Where there is a seabed or an ice
+  // ceiling, the collision stops you and the slowdown on top of it is a second, invisible penalty for
+  // approaching scenery you are meant to be able to work in -- the sea ice especially, which is now
+  // 800px of habitat you swim INTO. Where there is no terrain the cushion is all there is: 19 of the
+  // library's 20 column levels have no ceiling, because their top edge is the open sea surface, and
+  // dropping it globally would replace a cushion with an invisible wall in almost every one of them.
   function columnEdgeDamp(y) {
     if (!columnState) return 1;
     const buffer = VIEW_H * CFG.column.bufferFrac;
-    const d = Math.min(y, WORLD_H - y);
+    const d = Math.min(terrainAtTop ? Infinity : y, terrainAtBottom ? Infinity : WORLD_H - y);
     if (d >= buffer) return 1;
     const t = clamp(d / Math.max(1, buffer), 0, 1);
     return CFG.column.edgeMinSpeed + (1 - CFG.column.edgeMinSpeed) * t;
@@ -317,8 +324,8 @@
       // Odds a grazer gets THROUGH the frustule on a contact, for a 20um cell; divided by size, so a
       // big cell is proportionally harder. Silica is a grazing defence -- that is what it is FOR --
       // and without this a protist stripped a frustule every frame it touched one.
-      grazeChance: 0.22,
-      grazeEvery: 0.5,         // seconds between bite ATTEMPTS on a diatom. A grazer in a dense bloom
+      grazeChance: 0.6,
+      grazeEvery: 0.25,         // seconds between bite ATTEMPTS on a diatom. A grazer in a dense bloom
                                // is in contact most frames; without this it would roll the dice sixty
                                // times a second and strip a chain regardless of how tough it is.
 
@@ -949,6 +956,9 @@
   // Diatoms: a third organism class. Its own list for the same reason terrain has one — they are not
   // bacteria, so they must not appear in the cell accounting, the phage host pool, or the genome charts.
   let diatoms = [];
+  // Which edges of the column terrain physically bounds. Read by columnEdgeDamp so the soft cushion is
+  // applied only where nothing solid already stops you.
+  let terrainAtTop = false, terrainAtBottom = false;
   // #30: fixed, solid scenery for a water column — sea ice overhead, sediment underfoot. Its own list,
   // deliberately not part of `substrates`: terrain is not food, and keeping it separate is what stops
   // it appearing in the food accounting, the diel particle budget, the resource-balance floor, the
@@ -1373,7 +1383,11 @@
   // a torus there is no surface or floor for it to attach to.
   function buildTerrain(layers) {
     terrain = [];
+    terrainAtTop = terrainAtBottom = false;
     if (!columnState || !Array.isArray(layers)) return;
+    for (const raw of layers) {                      // which edges end up physically bounded
+      if (raw && raw.at === "top") terrainAtTop = true; else if (raw) terrainAtBottom = true;
+    }
     layers.forEach((raw, li) => {
       const thickness = clamp(raw.thickness, 20, WORLD_H * 0.4);
       const layer = { at: raw.at === "top" ? "top" : "bottom", thickness,
@@ -2300,7 +2314,7 @@
   }
 
   function controlledCell() { return cells.find((c) => c.controlled && c.alive); }
-  function controlledProtist() { return predators.find((p) => p.controlled); }
+  function controlledProtist() { return predators.find((p) => p.controlled && !p.dead); }
 
   // ---------------------------------------------------------------- background simulation / tutorial
   // The title needs only the autonomous simulation as a living background. The interactive
@@ -6392,7 +6406,10 @@
     if (el.toast && el.toast.classList.contains("show")) positionToast(); // keep the announcement pinned above the cell
     const ent = controlledEntity(), e = ent ? ent.energy : 0;
     const full = protist ? CFG.predator.reproEnergy : CFG.cell.divideThreshold; // "full" = ready to divide
-    el.energyFill.style.width = Math.min(100, e/full*100) + "%";
+    // clamped BOTH ways: a negative width is invalid CSS, so the browser ignores the assignment and
+    // the bar silently freezes at whatever it last showed. A protist can be driven below zero by a
+    // toxin dose in the same frame it is culled, and a frozen bar is worse than an empty one.
+    el.energyFill.style.width = clamp(e/full*100, 0, 100) + "%";
     el.energyTxt.textContent = Math.round(e);
     let activeCount = 0, cystCount = 0;
     for (const cell of cells) if (cell.alive) { if (cell.cyst) cystCount++; else activeCount++; }
