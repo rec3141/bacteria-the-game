@@ -54,6 +54,7 @@ function world({ specs = null, light = 1, terrainBands = [], substrates = [] } =
     const dx = (a,b) => { let v = a-b; if (v > WORLD_W/2) v -= WORLD_W; else if (v < -WORLD_W/2) v += WORLD_W; return v; };
     const dy = (a,b) => a-b;
     const toroDist2 = (ax,ay,bx,by) => { const x = dx(ax,bx), y = dy(ay,by); return x*x + y*y; };
+    const angleTo = (from, to) => { let d = to - from; while (d > Math.PI) d -= 2*Math.PI; while (d < -Math.PI) d += 2*Math.PI; return d; };
     ${src}
     return { makeDiatom, updateDiatoms, diatomDivide, killDiatomCell, diatomMotes, collideDiatomCircle,
              diatomNodes, diatomHalfLen, diatomHalfW, diatomArea,
@@ -366,26 +367,70 @@ assert.match(game, /enzymes = \[\]; toxins = \[\]; epsBlocks = \[\]; nutrients =
   assert.equal(d.n, 3, "it just gets shorter");
 }
 
-// ---- diatoms are solid: they get in the way of anything trying to swim through -------------------
-// In a dense bloom the chains ARE the terrain. Each frustule is its own body, so a long chain is a
-// wall rather than one blob at its centre.
+// ---- diatoms are solid ALONG THEIR WHOLE LENGTH, not just at the node centres --------------------
+// A frustule is an ellipse as long as the chain's node spacing. Collided as a circle of its half-WIDTH
+// it left holes between the nodes wider than the discs themselves -- 46px on P. obtusa, 100px on
+// P. seriata -- and a cell swam straight between the cells of a chain. Only centrics were ever solid,
+// because there half-width happens to equal half the spacing, which is why this went unnoticed: the
+// old test probed a node CENTRE, the one place the broken version still worked.
 {
   const w = world({ light: 1 });
-  const d = w.makeDiatom({ ...CENTRIC, sizeUm: 60, chain: 5 }, 1000, 300);
+  const probeAt = (spec, frac) => {
+    const d = w.makeDiatom(spec, 1000, 300);
+    d.angle = 0;
+    w.diatoms = [d];
+    const L = w.diatomHalfLen(d);
+    const px0 = d.x + (frac * 2 - 1) * L * 0.9;      // a point along the spine, 0 = one end, 1 = other
+    const probe = { x: px0, y: d.y, vx: 0, vy: 0 };
+    w.collideDiatomCircle(probe, 5);
+    return Math.hypot(probe.x - px0, probe.y - d.y);
+  };
+  for (const spec of [{ ...PENNATE, sizeUm: 42, chain: 4 }, { ...PENNATE, sizeUm: 92, chain: 6 },
+                      { ...CENTRIC, sizeUm: 15, chain: 8 }, { ...PENNATE, sizeUm: 30, chain: 1 }]) {
+    // sample right THROUGH the chain, including the midpoints between frustules
+    for (const frac of [0.06, 0.18, 0.31, 0.5, 0.69, 0.82, 0.94]) {
+      const moved = probeAt(spec, frac);
+      assert.ok(moved > 0.5,
+        `${spec.form} ${spec.sizeUm}um x${spec.chain}: a cell at ${(frac*100)|0}% along the chain must be pushed out (moved ${moved.toFixed(1)}px)`);
+    }
+  }
+}
+{
+  // ...and clear water either side of it is still clear
+  const w = world({ light: 1 });
+  const d = w.makeDiatom({ ...PENNATE, sizeUm: 92, chain: 6 }, 1000, 300);
   d.angle = 0;
   w.diatoms = [d];
-  const nodes = w.diatomNodes(d);
-  // a cell sitting exactly on the THIRD frustule, well away from the chain's centre
-  const probe = { x: nodes[3][0], y: nodes[3][1], vx: 30, vy: 0 };
-  w.collideDiatomCircle(probe, 5);
-  assert.ok(Math.hypot(probe.x - nodes[3][0], probe.y - nodes[3][1]) > 1,
-    "a cell inside a frustule must be pushed out of it");
-  // clear water is left alone
-  const free = { x: nodes[0][0], y: nodes[0][1] - 500, vx: 30, vy: 0 };
-  const fx = free.x, fy = free.y;
-  w.collideDiatomCircle(free, 5);
-  assert.equal(free.x, fx, "open water must not be obstructed");
-  assert.equal(free.y, fy, "...at all");
+  const L = w.diatomHalfLen(d), hw = w.diatomHalfW(d);
+  for (const [ox, oy] of [[L + 60, 0], [-(L + 60), 0], [0, hw + 40], [0, -(hw + 40)]]) {
+    const probe = { x: d.x + ox, y: d.y + oy, vx: 0, vy: 0 };
+    const bx = probe.x, by = probe.y;
+    w.collideDiatomCircle(probe, 5);
+    assert.equal(probe.x, bx, "open water beside a chain must not be obstructed");
+    assert.equal(probe.y, by, "...at all");
+  }
+}
+
+// ---- a gliding pennate TURNS rather than snapping --------------------------------------------------
+// The turn used to be applied whole in a single frame -- up to 63 degrees, with no dt -- which on an
+// 883px chain is a visible jump. Centrics looked fine only because their drift was already rate-based.
+{
+  const w = world({ light: 1, terrainBands: [{ y0: 1400, y1: 2000 }] });
+  const d = w.makeDiatom({ ...PENNATE, sizeUm: 42, chain: 4 }, 500, 1398);
+  d.angle = 0; d.energy = 200;
+  w.diatoms = [d];
+  let worst = 0, prev = d.angle;
+  for (let i = 0; i < 120; i++) {
+    w.updateDiatoms(1 / 30);
+    const cur = w.diatoms[0].angle;
+    let da = cur - prev; while (da > Math.PI) da -= 2*Math.PI; while (da < -Math.PI) da += 2*Math.PI;
+    worst = Math.max(worst, Math.abs(da));
+    prev = cur;
+  }
+  const cap = CFG.diatom.glideTurnRate / 30 + 1e-6;
+  assert.ok(worst <= cap * 1.05,
+    `a pennate must never turn more than glideTurnRate*dt in one frame (worst ${worst.toFixed(3)} rad vs cap ${cap.toFixed(3)})`);
+  assert.ok(worst > 0, "...but it must still turn");
 }
 
 // ---- and the engine must actually CALL that collision on the path cells use ------------------------

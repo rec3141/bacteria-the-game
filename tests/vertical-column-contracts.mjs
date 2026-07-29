@@ -347,10 +347,22 @@ console.log("Vertical-column contract OK: Y-mode plumbing, no seam wrap, save/re
 // swim; the HUD chip says whether it is working HERE, which is what you want while already moving.
 {
   const gauge = game.slice(game.indexOf("function drawDepthGauge"), game.indexOf("function drawMiniDiamond"));
-  // shown only when the cell you steer actually lives on these gradients — to a heterotroph they are
-  // scenery, and a gauge for something you cannot eat is clutter over the ocean
-  assert.match(gauge, /if \(!columnState \|\| !pc \|\| !\(pc\.phototroph \|\| pc\.chemolithotroph\)\) return;/,
-    "the gauge appears only for an autotroph in a column");
+  // Shown for any water column. It USED to require the cell you steer to be an autotroph, on the
+  // reasoning that to a heterotroph the gradients are scenery — and that was right until diatoms
+  // existed. The light profile now decides where the bloom lives, when it collapses, and therefore
+  // where the food and the toxin are; in a level built around a bloom the player is usually a
+  // heterotroph, so the sea's structure was hidden from exactly the person who needed to read it.
+  assert.match(gauge, /if \(!columnState\) return;/,
+    "the gauge appears for any water column, not only for an autotroph");
+  assert.doesNotMatch(gauge, /!pc \|\| !\(pc\.phototroph \|\| pc\.chemolithotroph\)/,
+    "the old metabolism gate must not come back");
+  assert.match(gauge, /chans\.push\(\{ c: "#ffe9a8", f: \(y\) => clamp\(columnLightAt\(y\), 0, 1\) \}\);/,
+    "light is always a channel in a column");
+  assert.match(gauge, /if \(columnState\.chem\) chans\.push/,
+    "the chemical channel needs a plume to describe, not a chemolithotroph to read it");
+  // ...but the combined bar answers "what feeds ME", so that one stays tied to the cell
+  assert.match(gauge, /pc && pc\.phototroph && pc\.chemolithotroph/,
+    "the scarcer-input bar is about what feeds YOU and must stay tied to the cell");
   // it hangs off the minimap so it inherits that widget's world-Y mapping and cannot drift from it
   assert.match(game, /drawDepthGauge\(mx, my, mw, mh, vs, ps\);/, "the gauge is drawn from the minimap, sharing its geometry");
   assert.match(gauge, /my \+ clamp\(pc\.y \/ WORLD_H, 0, 1\) \* mh/, "your depth marker uses the same axis as the map");

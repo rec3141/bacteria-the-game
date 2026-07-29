@@ -302,7 +302,9 @@
       // chain-formers dominate a turbulent spring bloom and vanish from a stratified summer one.
       sinkSpeed: 1.2,
       glideSpeed: 16,          // pennates only, and only against a surface -- the raphe needs something to grip
-      glideTurn: 1.1,          // how sharply a gliding pennate can change direction
+      glideTurn: 1.1,          // how far a gliding pennate may swing its heading in one decision
+      glideTurnRate: 0.5,      // ...and how fast it TURNS to it, rad/s. Applying the swing in one
+                               // frame is a snap, not a turn, and on a long chain it reads as a jump.
       chainDrift: 0.5,         // how much a chain sways about its long axis as it sinks
       // EXUDATES. A healthy diatom leaks a large share of what it fixes as dissolved organic carbon --
       // in the real ocean often a quarter of primary production -- and that leak is why a phycosphere
@@ -1573,20 +1575,28 @@
     if (!diatoms.length) return;
     for (const d of diatoms) {
       if (d.dead) continue;
-      const dr = diatomHalfW(d);
-      // cheap chain-level reject before touching the per-frustule maths
-      const far = diatomHalfLen(d) + dr + radius;
-      if (toroDist2(obj.x, obj.y, d.x, d.y) > far*far) continue;
-      for (const nd of diatomNodes(d)) {
-        let ex = dx(obj.x, nd[0]), ey = dy(obj.y, nd[1]), dist = Math.hypot(ex, ey);
-        const overlap = dr + radius - dist;
-        if (overlap <= 0) continue;
-        if (dist < 0.001) { ex = Math.cos(d.angle); ey = Math.sin(d.angle); dist = 1; }
-        const nx = ex/dist, ny = ey/dist;
-        obj.x = wrapX(obj.x + nx*overlap); obj.y = wrapY(obj.y + ny*overlap);
-        const vn = obj.vx*nx + obj.vy*ny;
-        if (vn < 0) { obj.vx -= vn*nx; obj.vy -= vn*ny; }
-      }
+      const hw = diatomHalfW(d), L = diatomHalfLen(d), far = L + hw + radius;
+      // work in the diatom's LOCAL frame so the torus wrap is handled once, at the top
+      const lx = dx(obj.x, d.x), ly = dy(obj.y, d.y);
+      if (lx*lx + ly*ly > far*far) continue;
+      // A CAPSULE down the chain's spine, not one circle per frustule. A frustule is an ellipse as
+      // long as the chain's node spacing, so collided as a circle of its half-WIDTH it left holes
+      // between the nodes wider than the discs themselves -- 46px on P. obtusa, 100px on P. seriata --
+      // and a cell simply swam between the cells of the chain. Only the centrics were ever solid,
+      // because there half-width happens to equal half the spacing.
+      const ax = Math.cos(d.angle), ay = Math.sin(d.angle);
+      const reach = Math.max(0, L - hw);                 // the spine, minus the round caps
+      const t = clamp(lx*ax + ly*ay, -reach, reach);
+      const ox = lx - ax*t, oy = ly - ay*t;              // offset from the nearest point on the spine
+      let dist = Math.hypot(ox, oy);
+      const overlap = hw + radius - dist;
+      if (overlap <= 0) continue;
+      let nx, ny;
+      if (dist < 0.001) { nx = -ay; ny = ax; }           // dead centre: push out sideways
+      else { nx = ox/dist; ny = oy/dist; }
+      obj.x = wrapX(obj.x + nx*overlap); obj.y = wrapY(obj.y + ny*overlap);
+      const vn = obj.vx*nx + obj.vy*ny;
+      if (vn < 0) { obj.vx -= vn*nx; obj.vy -= vn*ny; }
     }
   }
   // Resolve a moving circle against food particles and EPS. Twitching cells skip only the former.
@@ -1666,7 +1676,7 @@
       chainMax: Math.max(1, Math.round(spec.chain || 1)),
       dvx: 0, dvy: 0, grip: 0, leak: 0,
       toxin: spec.toxin || null,                 // authored toxin, released on death (see releaseDiatom)
-      angle: rand(0, 6.28), glideT: 0, sway: rand(0, 6.28),
+      angle: rand(0, 6.28), glideT: 0, glideTarget: null, sway: rand(0, 6.28),
       energy: 0, age: 0, dead: false };
     d.energy = diatomStartEnergy(d);
     return d;
@@ -1827,7 +1837,14 @@
         d.grip = touching ? 0.35 : Math.max(0, (d.grip || 0) - dt);
         if (touching || d.grip > 0) {
           d.glideT -= dt;
-          if (d.glideT <= 0) { d.glideT = rand(1.5, 4); d.angle += rand(-1, 1) * D.glideTurn; }
+          // Pick a new heading, then TURN to it. This used to apply the whole turn in a single
+          // frame -- up to 63 degrees with no dt -- which on an 883px chain is a violent snap. The
+          // centrics looked fine only because their drift was already rate-based.
+          if (d.glideT <= 0) { d.glideT = rand(1.5, 4); d.glideTarget = d.angle + rand(-1, 1) * D.glideTurn; }
+          if (d.glideTarget != null) {
+            const da = angleTo(d.angle, d.glideTarget), step = D.glideTurnRate * dt;
+            d.angle += Math.abs(da) <= step ? da : (da > 0 ? step : -step);
+          }
           vx += Math.cos(d.angle) * D.glideSpeed;
           vy += Math.sin(d.angle) * D.glideSpeed * 0.5;   // gravity still resists an upward glide
         }
@@ -4685,22 +4702,6 @@
     ctx.fillStyle = isTouch ? "rgba(4,20,26,0.94)" : "rgba(4,20,26,0.7)";
     ctx.strokeStyle = "rgba(120,220,200,0.4)";
     ctx.lineWidth = 1; ctx.fillRect(mx, my, mw, mh); ctx.strokeRect(mx, my, mw, mh);
-    // THE LIGHT REGIME, on the map. In a column, depth is the axis every decision is made on -- where
-    // the diatoms can live, where a phototroph must stay, how far down is a one-way trip -- and the
-    // HUD only ever gives you the single number under your own cell. Wash the map with the actual
-    // photic profile so the gradient is a place you can see rather than a value you have to infer.
-    // Scaled by the current surface light, so it drains away at dusk and comes back at dawn.
-    if (columnState) {
-      const surface = clamp(state && state.light != null ? state.light : 0, 0, 1);
-      const grad = ctx.createLinearGradient(0, my, 0, my + mh);
-      for (let i = 0; i <= 8; i++) {
-        const f = i/8;
-        // columnLightAt takes a WORLD y; the map's own top edge is world y = 0 regardless of the pan
-        const lit = surface * Math.exp(-f / Math.max(0.05, columnState.photicFrac));
-        grad.addColorStop(f, `rgba(255,238,170,${(0.30*lit).toFixed(3)})`);
-      }
-      ctx.fillStyle = grad; ctx.fillRect(mx, my, mw, mh);
-    }
     const kx = mw/WORLD_W, ky = mh/WORLD_H;
     // CENTERED on the player: everything is drawn relative to your cell (toroidal wrap via dx/dy),
     // so you stay in the middle and the world scrolls under you — much easier to navigate the wrap.
@@ -4743,17 +4744,22 @@
   // so a bar beside it is automatically the same depth axis — the marker on the gauge and the diamond
   // on the map sit at the same height, and no extra bookkeeping can make them disagree.
   //
-  // Shown only when the cell you are steering actually lives on these gradients. To a heterotroph
-  // they are scenery, and a gauge for something you cannot eat is just clutter over the ocean.
+  // This used to be shown ONLY to a cell that lives on these gradients, on the reasoning that to a
+  // heterotroph they are scenery and a gauge for something you cannot eat is clutter. Diatoms broke
+  // that: the light profile now governs where the bloom lives, when it collapses and therefore where
+  // the food and the toxin are, so in a column it is structure every player is reading whether or not
+  // they photosynthesise. The gauge follows the WORLD's gradients; the third bar, which is about what
+  // feeds YOU, still follows the cell.
   function drawDepthGauge(mx, my, mw, mh, vs, ps) {
     const pc = controlledCell();
-    if (!columnState || !pc || !(pc.phototroph || pc.chemolithotroph)) return;
+    if (!columnState) return;
     const chans = [];
-    if (pc.phototroph) chans.push({ c: "#ffe9a8", f: (y) => clamp(columnLightAt(y), 0, 1) });
-    if (pc.chemolithotroph && columnState.chem) chans.push({ c: columnState.chem.color, f: (y) => chemAt(y) });
+    chans.push({ c: "#ffe9a8", f: (y) => clamp(columnLightAt(y), 0, 1) });
+    if (columnState.chem) chans.push({ c: columnState.chem.color, f: (y) => chemAt(y) });
     // With both, the third bar is what actually feeds you: the scarcer input. It is the one to swim
     // toward, so it gets its own column rather than leaving the player to intersect two in their head.
-    if (chans.length === 2) chans.push({ c: "#8dffdc", f: (y) => Math.min(chans[0].f(y), chans[1].f(y)), wide: true });
+    if (chans.length === 2 && pc && pc.phototroph && pc.chemolithotroph)
+      chans.push({ c: "#8dffdc", f: (y) => Math.min(chans[0].f(y), chans[1].f(y)), wide: true });
 
     const bw = 7 * vs, gap = 3 * vs;
     const totalW = chans.reduce((a, ch) => a + (ch.wide ? bw * 1.6 : bw) + gap, 0) - gap;
@@ -6651,7 +6657,8 @@
     "diatom.divideEnergy": "Energy at which a diatom divides. Size never changes — a frustule cannot expand, so growth goes into z.",
     "diatom.sinkSpeed": "How fast a 20um diatom sinks (px/s). Scales with size: a big frustule falls faster.",
     "diatom.glideSpeed": "How fast a PENNATE glides along a surface. Centrics have no raphe and never move under their own power.",
-    "diatom.glideTurn": "How sharply a gliding pennate can change direction.",
+    "diatom.glideTurn": "How far a gliding pennate may swing its heading in one decision.",
+    "diatom.glideTurnRate": "How fast it turns to that heading (rad/s). Applying the swing in one frame is a snap, not a turn.",
     "diatom.chainDrift": "How much a sinking chain sways about its long axis.",
     "diatom.killMotes": "Food motes released per frustule when a diatom cell dies, at 20um — scales with the cell's size.",
     "diatom.exudateFrac": "Share of what a diatom fixes that leaks out as dissolved carbon. This is what feeds the phycosphere while the bloom is ALIVE.",
