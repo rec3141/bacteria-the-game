@@ -22,7 +22,7 @@ const grab = (name) => {
 const FNS = ["diatomUnit", "diatomHalfW", "diatomHalfLen", "diatomArea",
              "diatomCap", "diatomDivideAt", "diatomStartEnergy", "diatomNodes",
              "makeDiatom", "diatomSpecs", "diatomWant", "immigrateDiatoms",
-             "diatomMotes", "killDiatomCell", "releaseDiatom",
+             "diatomMotes", "killDiatomCell", "releaseDiatom", "collideDiatomCircle",
              "updateDiatoms", "diatomDivide", "diatomTouchingSurface", "collideDiatom", "particleUnderDiatom"];
 
 // A stub ocean. `light` is a fixed value so photosynthesis is testable without the diel cycle, and
@@ -51,8 +51,11 @@ function world({ specs = null, light = 1, terrainBands = [], substrates = [] } =
     const pushCircleOut = (b, wx, wy, r) =>
       (wy + r > b.y0 && wy - r < b.y1) ? { x: 0, y: (wy < (b.y0+b.y1)/2 ? -1 : 1) * 4 } : null;
     const clearOfTerrain = (wx, wy, r) => !terrain.some((b) => wy + r > b.y0 && wy - r < b.y1);
+    const dx = (a,b) => { let v = a-b; if (v > WORLD_W/2) v -= WORLD_W; else if (v < -WORLD_W/2) v += WORLD_W; return v; };
+    const dy = (a,b) => a-b;
+    const toroDist2 = (ax,ay,bx,by) => { const x = dx(ax,bx), y = dy(ay,by); return x*x + y*y; };
     ${src}
-    return { makeDiatom, updateDiatoms, diatomDivide, killDiatomCell, diatomMotes,
+    return { makeDiatom, updateDiatoms, diatomDivide, killDiatomCell, diatomMotes, collideDiatomCircle,
              diatomNodes, diatomHalfLen, diatomHalfW, diatomArea,
              diatomCap, diatomStartEnergy, diatomUnit,
              diatomWant, immigrateDiatoms, releaseDiatom,
@@ -332,5 +335,82 @@ assert.match(game, /diatoms = Array\.isArray\(E\.diatoms\) \? E\.diatoms : \[\];
   "a checkpoint written before diatoms existed must still load");
 assert.match(game, /enzymes = \[\]; toxins = \[\]; epsBlocks = \[\]; nutrients = \[\]; particles = \[\]; diatoms = \[\];/,
   "a new run must start with an empty bloom");
+
+// ---- a bitten cell dies where the bite was, and a middle bite BREAKS the chain --------------------
+// Killing the end of the chain regardless of where the grazer actually was meant a protist could nudge
+// one end of an 883px P. seriata chain and a frustule vanished from the other, most of a screen away.
+{
+  const w = world({ light: 1 });
+  const d = w.makeDiatom({ ...CENTRIC, chain: 5 }, 1000, 300);
+  d.angle = 0;
+  w.diatoms = [d];
+  const nodes = w.diatomNodes(d).map(([x]) => Math.round(x));
+  w.killDiatomCell(d, 2);                       // bite the MIDDLE cell
+  assert.equal(w.diatoms.length, 2, "a bite out of the middle must cut the chain in two");
+  const [near, far] = w.diatoms;
+  assert.equal(near.n + far.n, 4, "four frustules survive a five-cell chain losing one");
+  assert.equal(far.angle, d.angle, "the freed half keeps its orientation");
+  // and each half stays where its cells already were, rather than snapping into a new centre
+  const nearX = w.diatomNodes(near).map(([x]) => Math.round(x));
+  assert.ok(Math.abs(nearX[0] - nodes[0]) <= 1, "the near half must not move");
+  const farX = w.diatomNodes(far).map(([x]) => Math.round(x));
+  assert.ok(Math.abs(farX[farX.length - 1] - nodes[4]) <= 1, "nor the far half");
+}
+{
+  // an END bite just shortens it -- no spurious second chain
+  const w = world({ light: 1 });
+  const d = w.makeDiatom({ ...CENTRIC, chain: 4 }, 1000, 300);
+  w.diatoms = [d];
+  w.killDiatomCell(d, 3);
+  assert.equal(w.diatoms.length, 1, "biting the end must not split anything");
+  assert.equal(d.n, 3, "it just gets shorter");
+}
+
+// ---- diatoms are solid: they get in the way of anything trying to swim through -------------------
+// In a dense bloom the chains ARE the terrain. Each frustule is its own body, so a long chain is a
+// wall rather than one blob at its centre.
+{
+  const w = world({ light: 1 });
+  const d = w.makeDiatom({ ...CENTRIC, sizeUm: 60, chain: 5 }, 1000, 300);
+  d.angle = 0;
+  w.diatoms = [d];
+  const nodes = w.diatomNodes(d);
+  // a cell sitting exactly on the THIRD frustule, well away from the chain's centre
+  const probe = { x: nodes[3][0], y: nodes[3][1], vx: 30, vy: 0 };
+  w.collideDiatomCircle(probe, 5);
+  assert.ok(Math.hypot(probe.x - nodes[3][0], probe.y - nodes[3][1]) > 1,
+    "a cell inside a frustule must be pushed out of it");
+  // clear water is left alone
+  const free = { x: nodes[0][0], y: nodes[0][1] - 500, vx: 30, vy: 0 };
+  const fx = free.x, fy = free.y;
+  w.collideDiatomCircle(free, 5);
+  assert.equal(free.x, fx, "open water must not be obstructed");
+  assert.equal(free.y, fy, "...at all");
+}
+
+// ---- and the engine must actually CALL that collision on the path cells use ------------------------
+// collideRod probes -> collideCircle -> here. Testing the function in isolation proves nothing if
+// nothing invokes it.
+{
+  // grab(), not a slice between two comment markers: "// Resolve the rod against" sits ABOVE
+  // collideCircle in the file, so that slice was empty and the assertion passed on nothing.
+  assert.match(grab("collideCircle"), /collideDiatomCircle\(obj, radius\);/,
+    "collideCircle must resolve diatoms, or nothing that swims ever notices them");
+  assert.match(grab("collideRod"), /collideCircle\(probe, CFG\.cell\.radius, skipParticles\)/,
+    "a cell must reach collideCircle through its rod probes");
+}
+
+// ---- the bloom must actually EXIST when the run starts ---------------------------------------------
+// It was seeded with the founder and then wiped by newGame's entity reset twenty lines later, so every
+// diatom level opened with an empty sea and refilled at one cell per immigrateEvery -- 26 minutes to
+// reach an authored 114, in a five-minute day. Every other symptom followed from that: nothing to
+// collide with, nothing to graze, nothing to see.
+{
+  const reset = game.indexOf("nutrients = []; particles = []; diatoms = [];");
+  const seed = game.indexOf("for (let i = 0, want = diatomWant(); i < want * 3");
+  assert.ok(reset >= 0 && seed >= 0, "newGame must both reset and seed the bloom");
+  assert.ok(seed > reset,
+    "the bloom must be seeded AFTER the entity reset — seeded before it, the reset erases the whole bloom");
+}
 
 console.log("Diatom contracts OK: light-only, sinking, pennate-only gliding, fixed size, biomass on death.");

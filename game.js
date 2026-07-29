@@ -312,6 +312,10 @@
       // How much of a toxic frustule's potency a grazer takes on as a one-off dose when it eats one.
       // Below 1 because the lingering cloud left by the same cell hits it as well.
       grazeToxinDose: 0.8,
+      // Odds a grazer gets THROUGH the frustule on a contact, for a 20um cell; divided by size, so a
+      // big cell is proportionally harder. Silica is a grazing defence -- that is what it is FOR --
+      // and without this a protist stripped a frustule every frame it touched one.
+      grazeChance: 0.22,
       killMotes: 10,           // nutrient motes released when one dies -- a diatom is a big parcel of food
       immigrateEvery: 14,      // seconds between diatoms drifting in, while below the authored count
     },
@@ -1698,28 +1702,59 @@
   // Kill one frustule off the end of the chain. Diatoms do not die all at once: a chain starved below
   // the photic zone comes apart cell by cell, which is both what happens and far more legible than a
   // six-cell chain blinking out of existence. The chain is only truly dead when the last cell goes.
-  function killDiatomCell(d) {
-    const nodes = diatomNodes(d), at = nodes[nodes.length - 1];
-    burst(at[0], at[1], d.color, 8);
+  // Kill ONE frustule. `at` selects which, defaulting to the end of the chain (which is how starvation
+  // works: the chain comes apart from its tip). A grazer passes the cell it actually bit, because
+  // killing the end regardless meant a protist could nudge one end of an 883px chain and a frustule
+  // vanished from the other, most of a screen away.
+  //
+  // Losing a MIDDLE cell breaks the chain in two, which is exactly what happens: everything past the
+  // gap is no longer attached to anything. The far half becomes its own diatom rather than teleporting
+  // into line with the near half.
+  function killDiatomCell(d, at) {
+    const nodes = diatomNodes(d);
+    const idx = (at == null || at < 0 || at >= d.n) ? d.n - 1 : at;
+    const spot = nodes[idx];
+    burst(spot[0], spot[1], d.color, 8);
     const spread = diatomHalfW(d) + 4, want = diatomMotes(d);
     for (let i = 0; i < want && nutrients.length < CFG.nutrient.maxCount; i++) {
       const a = rand(0, 6.28), sp = rand(10, 30);
-      nutrients.push({ x: wrapX(at[0] + Math.cos(a) * rand(2, spread)), y: wrapY(at[1] + Math.sin(a) * rand(2, spread)),
+      nutrients.push({ x: wrapX(spot[0] + Math.cos(a) * rand(2, spread)), y: wrapY(spot[1] + Math.sin(a) * rand(2, spread)),
         vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: CFG.nutrient.life, dead: false, res: null });
     }
     // The toxin is INSIDE the cell, so it is released by the cell that died -- which is why a chain
     // coming apart poisons the water steadily rather than all at once.
-    if (d.toxin) spawnToxinCloud(at[0], at[1], d.toxin);
+    if (d.toxin) spawnToxinCloud(spot[0], spot[1], d.toxin);
     if (d.n <= 1) { d.dead = true; return; }
-    // Keep the surviving cells where they are: the chain is drawn centred, so shortening it would
-    // otherwise slide every remaining frustule sideways.
-    const u = diatomUnit(d), ax = Math.cos(d.angle), ay = Math.sin(d.angle);
-    d.x = wrapX(d.x - ax * u * 0.5);
-    d.y = wrapY(d.y - ay * u * 0.5);
+
+    const before = idx, after = d.n - idx - 1;   // frustules either side of the gap
+    if (before > 0 && after > 0 && diatoms.length < CFG.diatom.maxCount) {
+      // a bite out of the middle: the far side is cut loose as its own chain, where it already is
+      const far = makeDiatom({ id: d.id, label: d.label, color: d.color, form: d.form,
+                               sizeUm: d.um, chain: after, toxin: d.toxin }, 0, 0);
+      far.chainMax = d.chainMax;
+      far.angle = d.angle;
+      far.energy = d.energy * (after / (before + after));
+      const u = diatomUnit(d), ax = Math.cos(d.angle), ay = Math.sin(d.angle);
+      // centre of the far run, in world coords: midway between its first and last surviving node
+      const cx = (nodes[idx + 1][0] + nodes[d.n - 1][0]) / 2, cy = (nodes[idx + 1][1] + nodes[d.n - 1][1]) / 2;
+      far.x = wrapX(cx); far.y = wrapY(cy);
+      diatoms.push(far);
+      d.energy *= before / (before + after);
+      // and the near run keeps its own cells where they are
+      const ncx = (nodes[0][0] + nodes[idx - 1][0]) / 2, ncy = (nodes[0][1] + nodes[idx - 1][1]) / 2;
+      d.x = wrapX(ncx); d.y = wrapY(ncy);
+      d.n = before;
+      void u; void ax; void ay;
+      return;
+    }
+    // an end cell: shorten, keeping the survivors exactly where they were
+    const u = diatomUnit(d), ax = Math.cos(d.angle), ay = Math.sin(d.angle), sign = idx === 0 ? 1 : -1;
+    d.x = wrapX(d.x + sign * ax * u * 0.5);
+    d.y = wrapY(d.y + sign * ay * u * 0.5);
     d.n -= 1;
     // The rest of the chain gets a small reprieve rather than instantly failing the same test again --
     // otherwise the whole chain unravels within one frame, which is the thing this is meant to avoid.
-    d.energy = diatomCap(d) * 0.06;
+    d.energy = Math.max(d.energy, diatomCap(d) * 0.06);
   }
   // The whole organism at once: grazed to nothing, or cleared away.
   function releaseDiatom(d) {
@@ -1902,9 +1937,6 @@
     // Never open the run wedged inside solid terrain or a sealed pore. Nudge the founder to open water
     // near where it wanted to be (mid-column, or its plume depth for a chemolithotroph).
     if (!isDemo && columnState && terrain.length) { const s = founderSpawn(first.y); first.x = s.x; first.y = s.y; }
-    // Seed the authored diatom bloom up front. Trickling it in at immigrateEvery would take minutes to
-    // reach the authored count, and a level whose whole subject is a bloom must open with one.
-    for (let i = 0, want = diatomWant(); i < want * 3 && diatoms.length < want; i++) immigrateDiatoms();
     for (let i = 0; i < Math.round(CFG.cell.startUpgrades); i++) grantRandomUpgrade(first); // testing aid
     // In the demo NOTHING is controlled: the attract mode is the simulation running itself, and a
     // cell left "controlled" with no one at the keys would just sit there tumbling in place.
@@ -1924,6 +1956,12 @@
       predators.push(makePredator(x, y, null, rand(0, 25)));
     }
     enzymes = []; toxins = []; epsBlocks = []; nutrients = []; particles = []; diatoms = [];
+    // Seed the authored bloom AFTER that reset, not before it. It was seeded up with the founder and
+    // then wiped by this very line twenty lines later, so every diatom level opened with an empty sea
+    // and refilled at one cell per immigrateEvery -- 26 minutes to reach an authored 114, in a
+    // five-minute day. Every symptom followed from there: nothing to collide with, nothing to graze,
+    // nothing to see. A level whose subject is a bloom has to OPEN with one.
+    for (let i = 0, want = diatomWant(); i < want * 3 && diatoms.length < want; i++) immigrateDiatoms();
     phages = [];
     if (!isDemo) for (let i = 0; i < CFG.phage.greenCount; i++) { // seed OFFSCREEN so no virus is on the opening view — they diffuse in
       const a = rand(0, 6.28), d = Math.hypot(VIEW_W, VIEW_H)/2 + rand(80, 500);
@@ -3816,9 +3854,22 @@
       if (hunting && diatoms.length) for (const dm of diatoms) {
         if (dm.dead) continue;
         const reach = pr.r + diatomHalfW(dm);
-        let hit = false;
-        for (const nd of diatomNodes(dm)) if (toroDist2(pr.x, pr.y, nd[0], nd[1]) < reach*reach) { hit = true; break; }
-        if (!hit) continue;
+        // WHICH cell was bitten. Killing the end of the chain regardless of where the grazer actually
+        // was meant a protist could nudge one end and a frustule vanished from the other -- and on a
+        // 883px chain that is most of a screen away.
+        let hitIdx = -1, hitD = reach*reach;
+        const nodes = diatomNodes(dm);
+        for (let k = 0; k < nodes.length; k++) {
+          const dd = toroDist2(pr.x, pr.y, nodes[k][0], nodes[k][1]);
+          if (dd < hitD) { hitD = dd; hitIdx = k; }
+        }
+        if (hitIdx < 0) continue;
+        // THE FRUSTULE IS ARMOUR. That is what it is for: silica is a grazing defence, and the larger
+        // the cell the harder it is to get into. So a contact is an ATTEMPT, not a meal -- a grazer
+        // worrying at a big chain mostly fails, which is why big chain-formers survive grazing pressure
+        // that wipes out small naked cells. Without this a protist stripped a frustule on every frame
+        // it touched one and a chain evaporated on contact.
+        if (Math.random() >= CFG.diatom.grazeChance / Math.max(1, dm.um / 20)) { pr.satiated = P.satiatedTime * 0.3; break; }
         pr.energy += P.mealEnergy * clamp(dm.um / 20, 0.4, 4);
         if (pr.controlled) state.score += CFG.cycle.protistEatScore;
         if (dm.toxin) {                       // the dose is in the cell, so eating it is the exposure
@@ -3826,7 +3877,7 @@
           pr.energy -= pot * CFG.diatom.grazeToxinDose * (1 - (state.predResist || 0));
           pr.toxT = 0.6;                      // marks a death here as a toxin KILL, like an antibiotic
         }
-        killDiatomCell(dm);
+        killDiatomCell(dm, hitIdx);
         pr.satiated = P.satiatedTime;
         break;
       }
@@ -4634,6 +4685,22 @@
     ctx.fillStyle = isTouch ? "rgba(4,20,26,0.94)" : "rgba(4,20,26,0.7)";
     ctx.strokeStyle = "rgba(120,220,200,0.4)";
     ctx.lineWidth = 1; ctx.fillRect(mx, my, mw, mh); ctx.strokeRect(mx, my, mw, mh);
+    // THE LIGHT REGIME, on the map. In a column, depth is the axis every decision is made on -- where
+    // the diatoms can live, where a phototroph must stay, how far down is a one-way trip -- and the
+    // HUD only ever gives you the single number under your own cell. Wash the map with the actual
+    // photic profile so the gradient is a place you can see rather than a value you have to infer.
+    // Scaled by the current surface light, so it drains away at dusk and comes back at dawn.
+    if (columnState) {
+      const surface = clamp(state && state.light != null ? state.light : 0, 0, 1);
+      const grad = ctx.createLinearGradient(0, my, 0, my + mh);
+      for (let i = 0; i <= 8; i++) {
+        const f = i/8;
+        // columnLightAt takes a WORLD y; the map's own top edge is world y = 0 regardless of the pan
+        const lit = surface * Math.exp(-f / Math.max(0.05, columnState.photicFrac));
+        grad.addColorStop(f, `rgba(255,238,170,${(0.30*lit).toFixed(3)})`);
+      }
+      ctx.fillStyle = grad; ctx.fillRect(mx, my, mw, mh);
+    }
     const kx = mw/WORLD_W, ky = mh/WORLD_H;
     // CENTERED on the player: everything is drawn relative to your cell (toroidal wrap via dx/dy),
     // so you stay in the middle and the world scrolls under you — much easier to navigate the wrap.
@@ -6589,6 +6656,7 @@
     "diatom.killMotes": "Food motes released per frustule when a diatom cell dies, at 20um — scales with the cell's size.",
     "diatom.exudateFrac": "Share of what a diatom fixes that leaks out as dissolved carbon. This is what feeds the phycosphere while the bloom is ALIVE.",
     "diatom.exudateMote": "How much leaked carbon makes one edible mote. Lower = a finer, steadier drizzle of food around every chain.",
+    "diatom.grazeChance": "Odds a grazer gets through a 20um frustule on one contact, divided by the cell's size. The frustule is armour — this is why big chain-formers survive grazing that wipes out naked cells.",
     "diatom.grazeToxinDose": "Fraction of a toxic frustule's potency a grazer takes as a one-off dose when it eats one. This is how domoic acid actually travels: it is eaten, not fired.",
     "diatom.immigrateEvery": "Seconds between diatoms drifting in while the bloom is below its authored count.",
     "toxin.maxCount": "Frame-time ceiling on lingering toxin clouds.",
