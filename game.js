@@ -7964,7 +7964,8 @@
       const html = await res.text();
       const m = html.match(/name="build"\s+content="([^"]*)"/);
       const live = m && m[1];
-      if (live && live !== "__BUILD__" && live !== BUILD && el.updateBtn) el.updateBtn.classList.remove("hidden");
+      // the placeholder is split so deploy.sh's stamping (s/__BUILD__/…/g) can't rewrite this sentinel too
+      if (live && live !== "__" + "BUILD__" && live !== BUILD && el.updateBtn) el.updateBtn.classList.remove("hidden");
     } catch (e) {}
   }
   if (el.updateBtn) el.updateBtn.addEventListener("click", forceUpdate);
