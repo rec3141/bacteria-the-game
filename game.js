@@ -487,7 +487,7 @@
     updateBtn: document.getElementById("updateBtn"),
     enz: [document.getElementById("enz0"), document.getElementById("enz1"), document.getElementById("enz2")],
     abilChemo: document.getElementById("abilChemo"), abilCrispr: document.getElementById("abilCrispr"),
-    abilTwitch: document.getElementById("abilTwitch"), enzTox: document.getElementById("enzTox"),
+    abilTwitch: document.getElementById("abilTwitch"), geneMore: document.getElementById("geneMore"), enzTox: document.getElementById("enzTox"),
     enzEps: document.getElementById("enzEps"),
     chart: document.getElementById("chart"), legend: document.getElementById("chartlegend"),
     scores: document.getElementById("scores"), scoresList: document.getElementById("scoresList"),
@@ -1993,7 +1993,7 @@
     for (let i = 0, want = diatomWant(); i < want * 3 && diatoms.length < want; i++) immigrateDiatoms();
     phages = [];
     if (!isDemo) for (let i = 0; i < CFG.phage.greenCount; i++) { // seed OFFSCREEN so no virus is on the opening view — they diffuse in
-      const a = rand(0, 6.28), d = Math.hypot(VIEW_W, VIEW_H)/2 + rand(80, 500);
+      const a = rand(0, 6.28), d = viewHalfDiag() + rand(80, 500);
       phages.push(makePhage("green", wrapX(first.x + Math.cos(a)*d), wrapY(first.y + Math.sin(a)*d)));
     }
     // first gold is spawned by the always-on-board respawn logic (same buried-in-particle rule)
@@ -2298,7 +2298,7 @@
       stopDemo(); Audio.init(); Music.start(Audio.ctx()); applyAudioMode(); justFinishedTs = null;
       restoreCheckpoint(found.record);
       [el.title, el.over, el.scores, el.help, el.science].forEach((screen) => screen && screen.classList.add("hidden"));
-      if (shortLandscapeActive() && el.chartwrap) el.chartwrap.classList.add("collapsed");
+      if (isTouch && el.chartwrap) el.chartwrap.classList.add("collapsed"); // phone: the ocean first, charts a tap away
       continueDay();
     } catch (error) {
       console.warn("Could not restore saved game", error);
@@ -2804,7 +2804,7 @@
   }
   function immigrateBacteria(n) { // a diversity of bacteria drift in from offscreen (varied genomes)
     for (let i = 0; i < n && cells.length < CFG.cell.maxCells; i++) {
-      const a = rand(0, 6.28), d = Math.hypot(VIEW_W, VIEW_H)/2 + rand(60, 380);
+      const a = rand(0, 6.28), d = viewHalfDiag() + rand(60, 380);
       const c = makeCell(cam.x + Math.cos(a)*d, cam.y + Math.sin(a)*d, CFG.cell.startEnergy, rand(0, 6.28), 1);
       // Where an immigrant's genome comes from, in priority order.
       //
@@ -2925,10 +2925,33 @@
     pr.turboT = Math.min(C.turboSecs + (state.turboBonus || 0), C.turboMaxSecs);
     Audio.play("enzyme", 0.5);
   }
+  // On a phone the cell digests by itself (autoEnzyme), so the release button stops being an enzyme
+  // trigger and becomes a WEAPON: the two deployables that are a choice rather than a chore — who to
+  // poison (antibiotic), where to wall off (EPS). It has its own slot, state.touchWeapon, so nothing
+  // the auto-digest does can change what the button fires.
+  const touchAuto = () => isTouch && !!CFG.touch.autoEnzyme;
+  function touchWeapons(c) { return c ? ownedDeployables(c).filter((id) => id === AB || id === EPS) : []; }
+  function touchWeapon(c) {
+    const w = touchWeapons(c); if (!w.length) return null;
+    if (!w.includes(state.touchWeapon)) state.touchWeapon = w[0];   // first one you evolve is loaded
+    return state.touchWeapon;
+  }
+  let _noWeaponHintT = -1e9;
+  function hintNoWeapon() {
+    const now = performance.now(); if (now - _noWeaponHintT < 2500) return; // don't nag on every tap
+    _noWeaponHintT = now;
+    showAnnouncement("No weapon yet — your cell digests food by itself", "#cfe0da", "🧬");
+  }
   function playerEnzyme() {
     if (!state || !state.running) return;
     if (state.role === "protist") { protistTurbo(); return; }   // Space = turbo when you're the grazer
     const c = controlledCell(); if (!c) return;
+    if (touchAuto()) {
+      const w = touchWeapon(c);
+      if (w == null) { hintNoWeapon(); return; }
+      if (w === AB ? releaseAntibiotic(c) : releaseEps(c)) Audio.play("enzyme", w === AB ? 0.55 : 0.5);
+      return;
+    }
     if (!ownedDeployables(c).includes(state.activeEnzyme)) state.activeEnzyme = ownedDeployables(c)[0] ?? 2;
     if (state.activeEnzyme === AB) {
       if (releaseAntibiotic(c)) Audio.play("enzyme", 0.55);
@@ -2966,8 +2989,13 @@
       bd = d; best = s; bres = res;
     }
     if (!best) return;
-    state.activeEnzyme = bres;                            // load the right one, so the HUD tells the truth
-    if (releaseEnzyme(c, bres)) { Audio.play("enzyme", 0.5); c.autoEnzT = CFG.touch.autoEnzymeEvery; }
+    // Never touch state.activeEnzyme here. It used to be overwritten with whatever auto-fire picked,
+    // which silently swapped out a loaded antibiotic: tap release to poison a grazer and out came
+    // lipase. Instead the fired gene flashes on the HUD (autoFired), so you can SEE the cell digest.
+    if (releaseEnzyme(c, bres)) {
+      Audio.play("enzyme", 0.5); c.autoEnzT = CFG.touch.autoEnzymeEvery;
+      c.autoFired = bres; c.autoFiredT = state.elapsed;
+    }
     else c.autoEnzT = 0.3;
   }
   function releaseAntibiotic(c) {
@@ -2999,8 +3027,15 @@
   function cycleEnzyme(dir) {                // dir -1 steps back; default forward
     if (!state || !state.running) return;
     const c = controlledCell(); if (!c) return;
-    const owned = ownedDeployables(c); if (owned.length < 2) return; // nothing else to load
     const step = dir === -1 ? -1 : 1;
+    if (touchAuto()) {                         // phone: the swipe cycles weapons, not enzymes
+      const w = touchWeapons(c); if (w.length < 2) return;
+      const i = Math.max(0, w.indexOf(touchWeapon(c)));
+      state.touchWeapon = w[(i + step + w.length) % w.length];
+      announceDeployable(state.touchWeapon); Audio.play("eat", 0.3);
+      return;
+    }
+    const owned = ownedDeployables(c); if (owned.length < 2) return; // nothing else to load
     let cur = owned.indexOf(state.activeEnzyme); if (cur < 0) cur = 0;
     state.activeEnzyme = owned[(cur + step + owned.length) % owned.length];
     announceDeployable(state.activeEnzyme);
@@ -3009,6 +3044,7 @@
   // directly load a specific deployable by tapping its gene (0-2 enzymes, 3 antibiotic, 4 EPS)
   function selectEnzyme(id) {
     if (!state || !state.running) return;
+    if (touchAuto()) return;                   // phone gene strip is read-only (auto-digest picks enzymes)
     const c = controlledCell(); if (!c) return;
     if (!ownedDeployables(c).includes(id)) return;
     if (state.activeEnzyme === id) return;
@@ -4219,7 +4255,18 @@
   // world -> screen (nearest wrapped image to the camera)
   function sx(wx) { return VIEW_W/2 + dx(wx, cam.x); }
   function sy(wy) { return VIEW_H/2 + dy(wy, cam.y); }
-  const onScreen = (x, y, m) => x > -m && x < VIEW_W + m && y > -m && y < VIEW_H + m;
+  // Half the view's diagonal in WORLD units: the radius past which a spawn is guaranteed off-screen.
+  // Dividing by ZOOM matters on a phone (ZOOM ~0.57), where the screen shows far more world than its
+  // pixel size suggests — without it "just offscreen" spawns landed in plain view and popped in.
+  function viewHalfDiag() { return Math.hypot(VIEW_W, VIEW_H)/(2*(ZOOM || 1)); }
+  // sx/sy are PRE-zoom coordinates, and draw() scales them about the centre by ZOOM. So the visible
+  // box is centre ± VIEW/(2·ZOOM), not 0..VIEW. On a phone ZOOM is ~0.57 (the canvas is smaller than
+  // the 800px design), and culling against 0..VIEW only drew the middle ~57% of the screen — things
+  // vanished well inside the edges.
+  const onScreen = (x, y, m) => {
+    const z = ZOOM || 1, hw = VIEW_W/(2*z) + m, hh = VIEW_H/(2*z) + m;
+    return Math.abs(x - VIEW_W/2) < hw && Math.abs(y - VIEW_H/2) < hh;
+  };
   // In a water column the camera STOPS at the surface and the floor instead of centring on the cell
   // all the way to the edge. Two things come out of that: the view never shows the void beyond the
   // world (a sea continuing past its own ceiling), and pressing on into the boundary visibly stops
@@ -6346,6 +6393,14 @@
     if (p) { p.style.background = prev || "transparent"; p.style.visibility = prev ? "visible" : "hidden"; }
     if (n) { n.style.background = next || "transparent"; n.style.visibility = next ? "visible" : "hidden"; }
   }
+  // the word under a deck button: what a tap does right now (+ ⇅ when a swipe has something to cycle)
+  function captionRolo(btn, text, swipeable, off) {
+    if (!btn) return;
+    const cap = btn.querySelector(".rcap");
+    const t = text + (swipeable ? " ⇅" : "");
+    if (cap && cap.textContent !== t) cap.textContent = t;
+    btn.classList.toggle("off", !!off);
+  }
   // What you currently ARE, drawn in dark ink on the lineage button's face: a flagellated rod, or a
   // blobby grazer once a role-swap has flipped you. Only redrawn when the role changes — the face
   // color underneath carries the lineage, so the ink never has to change.
@@ -6390,28 +6445,35 @@
     if (!isTouch || !el.tEnz) return;        // the deck only exists on a phone
     const sprite = el.tLin && el.tLin.querySelector(".rsprite");
     if (state && state.role === "protist") { // a grazer has no enzymes — the button is a sprint
-      paintRolo(el.tEnz, "#ffd24a", null, null);
+      paintRolo(el.tEnz, "#ffd24a", null, null); captionRolo(el.tEnz, "sprint", false, false);
       const pr = controlledProtist();
       if (el.tLin && pr) {
-        paintRolo(el.tLin, "#ff9ec0", null, null);
+        paintRolo(el.tLin, "#ff9ec0", null, null); captionRolo(el.tLin, "lineage", false, false);
         drawRoleSprite(sprite, "protist");
       }
       return;
     }
-    const owned = c ? ownedDeployables(c) : [2];
-    let i = owned.indexOf(state.activeEnzyme); if (i < 0) i = 0;
-    const many = owned.length > 1;
-    paintRolo(el.tEnz, deployColor(owned[i]),
-      many ? deployColor(owned[(i - 1 + owned.length) % owned.length]) : null,
-      many ? deployColor(owned[(i + 1) % owned.length]) : null);
+    if (touchAuto()) {                       // the button is a weapon slot: antibiotic / EPS / nothing yet
+      const w = touchWeapon(c), n = touchWeapons(c).length;
+      if (w == null) { paintRolo(el.tEnz, "rgba(255,255,255,.06)", null, null); captionRolo(el.tEnz, "no weapon", false, true); }
+      else { paintRolo(el.tEnz, deployColor(w), null, null); captionRolo(el.tEnz, w === AB ? "antibiotic" : "EPS", n > 1, false); }
+    } else {
+      const owned = c ? ownedDeployables(c) : [2];
+      let i = owned.indexOf(state.activeEnzyme); if (i < 0) i = 0;
+      const many = owned.length > 1;
+      paintRolo(el.tEnz, deployColor(owned[i]),
+        many ? deployColor(owned[(i - 1 + owned.length) % owned.length]) : null,
+        many ? deployColor(owned[(i + 1) % owned.length]) : null);
+      captionRolo(el.tEnz, deployName(owned[i]).toLowerCase(), many, false);
+    }
 
     if (el.tLin && c) {
       const { ks } = lineageReps();
       let j = ks.indexOf(lineageKey(c)); if (j < 0) j = 0;
       const multi = ks.length > 1;
-      paintRolo(el.tLin, levelColor(traitMask(c), upgradeTier(c)),
-        multi ? lineageKeyColor(ks[(j - 1 + ks.length) % ks.length]) : null,
-        multi ? lineageKeyColor(ks[(j + 1) % ks.length]) : null);
+      // no peeking neighbours any more (they read as stray blobs); the caption says how many there are
+      paintRolo(el.tLin, levelColor(traitMask(c), upgradeTier(c)), null, null);
+      captionRolo(el.tLin, multi ? `lineage ${j + 1}/${ks.length}` : "lineage", multi, !multi);
       drawRoleSprite(sprite, "bacterium");
     }
   }
@@ -6441,23 +6503,35 @@
     syncRolodex(c);
     const pc = controlledCell();
     const amp = (n) => n >= 1 ? ` <span class="amp">×${n}</span>` : ""; // expression as gene amplification (×N); shown from ×1 so the chip width doesn't jump
+    // What the highlight means: on desktop the loaded deployable; on a phone (auto-digest) the loaded
+    // WEAPON, while the enzyme the cell just fired by itself flashes for a moment.
+    const auto = touchAuto(), loaded = auto ? touchWeapon(pc) : state.activeEnzyme;
+    if (document.body.classList.contains("autodigest") !== auto) document.body.classList.toggle("autodigest", auto);
+    const justFired = (i) => auto && pc && pc.autoFired === i && state.elapsed - pc.autoFiredT < 0.4;
     for (let i = 0; i < 3; i++) if (el.enz[i]) {
       const lvl = pc ? pc.enzLvl[i] : (i === 2 ? 1 : 0), owned = lvl > 0;
       el.enz[i].classList.toggle("owned", owned);
-      el.enz[i].classList.toggle("active", owned && i === state.activeEnzyme);
+      el.enz[i].classList.toggle("active", owned && !auto && i === loaded);
+      el.enz[i].classList.toggle("firing", owned && justFired(i));
       el.enz[i].innerHTML = RESOURCES[i].enzyme + (owned ? amp(lvl) : "");
     }
     if (el.enzTox) { const lvl = pc ? pc.antibiotic : 0, owned = lvl > 0;
       el.enzTox.classList.toggle("owned", owned);
-      el.enzTox.classList.toggle("active", owned && state.activeEnzyme === 3);
+      el.enzTox.classList.toggle("active", owned && loaded === AB);
       el.enzTox.innerHTML = "antibiotic" + (owned ? amp(lvl) : ""); }
     if (el.enzEps) { const lvl = pc ? pc.eps || 0 : 0, owned = lvl > 0;
       el.enzEps.classList.toggle("owned", owned);
-      el.enzEps.classList.toggle("active", owned && state.activeEnzyme === EPS);
+      el.enzEps.classList.toggle("active", owned && loaded === EPS);
       el.enzEps.innerHTML = "EPS" + (owned ? amp(lvl) : ""); }
     if (el.abilChemo) { const on = !!(pc && pc.chemotaxis); el.abilChemo.classList.toggle("owned", on); el.abilChemo.innerHTML = "chemotaxis" + (on ? amp(pc.chemoLevel) : ""); }
     if (el.abilCrispr) el.abilCrispr.classList.toggle("owned", !!(pc && pc.crispr));
     if (el.abilTwitch) el.abilTwitch.classList.toggle("owned", !!(pc && pc.twitching));
+    // phone strip shows only the genes you HAVE; this chip counts the rest, so there's still a goal
+    if (el.geneMore && isTouch && el.genome) {
+      const left = el.genome.querySelectorAll(".gene:not(.owned)").length;
+      const t = left ? `+${left} to find` : "complete";
+      if (el.geneMore.textContent !== t) el.geneMore.textContent = t;
+    }
   }
 
   // -------------------------------------------------------------------- loop
@@ -6509,7 +6583,7 @@
     stopDemo(); Audio.init(); Music.start(Audio.ctx()); applyAudioMode(); justFinishedTs = null;
     el.title.classList.add("hidden"); el.over.classList.add("hidden");
     setCheckpointStatus("");
-    if (shortLandscapeActive() && el.chartwrap) el.chartwrap.classList.add("collapsed");
+    if (isTouch && el.chartwrap) el.chartwrap.classList.add("collapsed"); // phone: the ocean first, charts a tap away
     newGame();
   }
   el.startBtn.addEventListener("click", start);
@@ -7717,6 +7791,7 @@
   }
   function setLatched(on) {
     touchLatched = on;
+    if (el.stickBase) el.stickBase.classList.remove("arming");
     if (on) {
       touchRunT = CFG.cell.touchRunSecs;         // (re-)latching refills the run
       touchLatchVec.x = touchVec.x; touchLatchVec.y = touchVec.y; // remember how hard it was pushed
@@ -7734,6 +7809,16 @@
       if (touchVec.active && touchAtMax) setLatched(true);
     }, Math.max(0, CFG.cell.touchLatchSecs) * 1000);
   }
+  // The run lock is invisible until you know it exists. Explain it ONCE, at the moment it would have
+  // helped: the first time you let go mid-swim and the cell stops dead.
+  function hintLatchOnce() {
+    let seen = false;
+    try { seen = localStorage.getItem("bacteria.latchHint") === "1"; localStorage.setItem("bacteria.latchHint", "1"); } catch (e) {}
+    if (seen || _latchHinted) return;
+    _latchHinted = true;
+    showAnnouncement("Tip: hold the stick at its edge to keep swimming hands-free", "#57e0c0", "➜");
+  }
+  let _latchHinted = false;
   function releaseStick() { // full stop (used when pausing / opening a menu)
     _stickId = null; touchVec.active = false; touchVec.x = touchVec.y = 0;
     touchAtMax = false; touchRunT = 0; clearLatchTimer(); setLatched(false);
@@ -7756,6 +7841,7 @@
         if (atMax && !touchAtMax) armLatch();       // just arrived at the rim — start the clock
         else if (!atMax && touchAtMax) clearLatchTimer(); // eased off it — the dwell has to start over
         touchAtMax = atMax;
+        base.classList.toggle("arming", atMax && !touchLatched); // the rim glows while the lock is arming
         if (d > dead) {
           // ANALOG: the vector carries how FAR you pushed, not just which way. Magnitude ramps
           // 0→1 from the dead-zone out to the rim, and the mover turns it into thrust — so a
@@ -7786,11 +7872,12 @@
           touchLatchVec.x = touchVec.x; touchLatchVec.y = touchVec.y;
           park(touchVec.x*stickMaxR, touchVec.y*stickMaxR); // knob stays thrown: the run is still on
         } else {                                    // never dwelled at the rim → releasing just stops
+          if ((touchVec.x || touchVec.y) && live() && !state.demo) hintLatchOnce(); // ...which is exactly when to explain the lock
           touchVec.x = touchVec.y = 0;
           setLatched(false);
           park(0, 0);
         }
-        base.classList.remove("on");
+        base.classList.remove("on", "arming");
       };
       zone.addEventListener("pointerup", lift);
       zone.addEventListener("pointercancel", lift);
@@ -7918,10 +8005,11 @@
     scoreDevice = on ? "touch" : "desktop";
     ZOOM = on ? touchZoom() * viewScale() : 1;
 
-    // The genes are controls on a phone, so they live above the touch buttons. Put them back
-    // beside the desktop HUD when a convertible returns to a fine primary pointer.
-    const right = document.getElementById("deckRight");
-    if (on && genomeRow && right) right.insertBefore(genomeRow, right.firstChild);
+    // On a phone the genes are a read-only strip across the top of the control deck (the cell picks
+    // its own enzymes), out of the thumbs' way. Put them back beside the desktop HUD when a
+    // convertible returns to a fine primary pointer.
+    const deck = el.touch, row = document.getElementById("deckRow");
+    if (on && genomeRow && deck) deck.insertBefore(genomeRow, row || deck.firstChild);
     else if (!on && genomeRow && genomeHome && genomeHome.parentNode)
       genomeHome.parentNode.insertBefore(genomeRow, genomeHome.nextSibling);
 

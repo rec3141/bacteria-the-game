@@ -689,6 +689,43 @@
   body.touch .gene { font-size: 10.5px; padding: 4px 7px; text-align: center; white-space: nowrap;
     line-height: 1.2; border-radius: 6px; }
 
+  /* ---- phone deck, gameplay pass ----
+     Captions: each deck button says what a tap does right now (set from game.js), with ⇅ when a
+     swipe has something to cycle. They replace the neighbours that used to peek out behind the
+     face, which read as stray coloured blobs rather than "swipe for more". */
+  .rolo .rprev, .rolo .rnext { display: none; }
+  .rolo .rcap { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 5px;
+    z-index: 3; font-size: 10.5px; font-weight: 600; letter-spacing: .2px; white-space: nowrap;
+    color: rgba(220,240,234,.88); pointer-events: none; text-shadow: 0 1px 2px rgba(0,0,0,.8); }
+  .tbtn.rolo.off .rface { border: 1.5px dashed rgba(255,255,255,.3); box-shadow: none; }
+  .tbtn.rolo.off .rcap, .tbtn.rolo.off .rsprite { opacity: .5; }
+  #tbtns { padding-bottom: 18px; align-items: flex-end; } /* room for the captions; bottoms aligned so they line up */
+  /* The gene strip is a read-only readout across the top of the deck: only the genes you have, and a
+     "+N to find" chip for the rest. With auto-digest on, the cell picks its own enzyme, so the chips
+     aren't buttons any more; the one it just fired flashes. */
+  body.touch #touch .genome-row { width: 100%; }
+  body.touch #touch .genome { justify-content: center; }
+  body.touch .gene:not(.owned) { display: none; }
+  body.touch.autodigest .gene { pointer-events: none; }
+  .gene-more { display: none; }
+  body.touch .gene-more { display: inline-block; font-size: 10px; line-height: 1.2; padding: 4px 7px;
+    border: 1px dashed rgba(255,255,255,.22); border-radius: 6px; opacity: .55; white-space: nowrap; }
+  .gene.firing { color: #fff; transition: none;
+    background: color-mix(in srgb, var(--gc) 48%, rgba(6,22,27,.9));
+    box-shadow: 0 0 0 1.5px var(--gc), 0 0 14px 0 var(--gc); }
+  /* Folded charts keep the live counts on show, so the ocean gets the space without going blind. */
+  body.touch #chartwrap.collapsed::before { content: "▾ charts"; display: inline; font-size: 10.5px;
+    opacity: .5; margin-right: 10px; white-space: nowrap; }
+  body.touch:not(.short-landscape) #chartwrap.collapsed { display: flex; align-items: center; padding: 6px 12px; }
+  body.touch:not(.short-landscape) #chartwrap.collapsed > #chartlegend { display: flex; margin: 0; flex: 1 1 auto; }
+  body.touch #chartwrap.collapsed #chartTitle { display: none; }
+  /* The stick's lock zone, drawn: a faint ring where the knob has to sit to lock a run, which
+     lights up while the lock is arming. */
+  #stickBase::after { content: ""; position: absolute; inset: 14%; border-radius: 50%;
+    border: 1px dashed rgba(255,255,255,.16); pointer-events: none; }
+  #stickBase.arming { border-color: var(--accent); transition: box-shadow .2s, border-color .2s;
+    box-shadow: 0 0 0 1px var(--accent), 0 0 12px -4px var(--accent); }
+
   /* A phone in landscape is a different geometry: stacking charts, ocean and a portrait-sized
      deck leaves almost no ocean at 844×390 or 667×375. Put the deck beside the stage, size every
      control from viewport HEIGHT, and keep the auto-collapsed charts as an optional overlay pill. */
@@ -769,6 +806,7 @@
           <span class="gene" id="abilChemo">chemotaxis</span>
           <span class="gene" id="abilTwitch">twitching</span>
           <span class="gene" id="abilCrispr">CRISPR</span>
+          <span class="gene-more" id="geneMore"></span>
         </div>
       </div>
     </div>
@@ -822,7 +860,7 @@
             <li><kbd>Space</kbd> — fire the loaded gene. An <b>enzyme</b> dissolves food, the <b>antibiotic</b> poisons protists, and <b>EPS</b> places a temporary barrier ahead. As a protist, Space is a <b>sprint</b>.</li>
             <li><kbd>Tab</kbd> — load a different gene &nbsp;·&nbsp; <kbd>Shift</kbd> — take control of another lineage</li>
             <li><kbd>M</kbd> — sound &nbsp;·&nbsp; <kbd>Esc</kbd> or any unused key — pause and high scores</li>
-            <li class="touchonly"><b>On a phone</b> every control sits below the water, clear of your thumbs. The <b>thumbstick</b> steers; hold it at full stretch for a moment to <b>lock in a run</b>, and the cell keeps swimming until the lock winds down. Tap the stick's center to stop early. The two round buttons are keyed by <b>color, not label</b> — the small one is your lineage, the big one your loaded gene. Tap to fire, swipe to cycle. Chips in the <b>genome row</b> load a gene directly, and the chart folds away with a swipe.</li>
+            <li class="touchonly"><b>On a phone</b> every control sits below the water, clear of your thumbs. The <b>thumbstick</b> steers; hold it out at the dashed ring for a moment to <b>lock in a run</b>, and the cell keeps swimming hands-free until the lock winds down (tap the stick's center to stop early). Your cell <b>digests food by itself</b> — the genome strip flashes each enzyme as it fires — so the big button is your <b>weapon</b>: the antibiotic or EPS once you evolve them (swipe to switch). The small button hands control to another lineage. Tap the chart bar at the top to open the charts.</li>
           </ul>
         </section>
         <section>
@@ -1061,10 +1099,12 @@
         <button id="tLin" class="tbtn rolo" aria-label="Switch lineage — swipe up or down to cycle">
           <span class="rprev"></span><span class="rnext"></span>
           <span class="rface"></span><canvas class="rsprite" width="44" height="44"></canvas>
+          <span class="rcap"></span>
         </button>
-        <button id="tEnz" class="tbtn big rolo" aria-label="Release loaded enzyme — swipe up or down to change it">
+        <button id="tEnz" class="tbtn big rolo" aria-label="Fire your weapon — swipe up or down to change it">
           <span class="rprev"></span><span class="rnext"></span>
           <span class="rface"></span>
+          <span class="rcap"></span>
         </button>
         <button id="tPause" class="tbtn pause" aria-label="Pause">❚❚</button>
       </div>
